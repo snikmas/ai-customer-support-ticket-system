@@ -14,7 +14,6 @@ logging.info("created tables")
 #i guess.. we should put all configuration to the oncfig file later
 
 router = APIRouter()
-all_tickets = {}
 
 app = FastAPI()
 
@@ -33,8 +32,8 @@ def create_ticket(cur_ticket : TicketCreate):
     #check if its exists? id? its impossible, cmon
     #another problem do we have to save as id -> boejct (where we also put an id or?)
     # anyway, its doesnt matter really. later we would put everything to the database
-    all_tickets[ticket.id] = ticket
-    # and put it to the db/etc
+
+    db.insert_data(ticket.__dict__, 'Tickets')
     return {"res": ticket}
 
 
@@ -44,9 +43,16 @@ def get_tickets():
     # i guess we have to show only part of the infromation. again: from who this request?
     # if from user - not all. create model? but its != ticket create. let's firstly try to return all tickets with all info
 
+    db_res = db.get_tickets()
+    all_tickets = []
+    for row in db_res:
+        all_tickets.append(dict(row))
+
     return {"res": all_tickets}
 
 @app.get("/tickets/{id}")
 def get_ticket(id: str):
-    ticket = all_tickets.get(id)
+    db_res = db.get_tickets(id)
+    ticket = dict(db_res)
+
     return {"res": ticket}

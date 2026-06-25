@@ -1,7 +1,9 @@
 import sqlite3
+from main import logging
 
 def get_connect():
     connect = sqlite3.connect("tickets_system.db")
+    connect.row_factory = sqlite3.Row
     return connect
 
 def create_tables():
@@ -18,39 +20,14 @@ def create_tables():
             assigned_agent_id TEXT NOT NULL,
             status TEXT NOT NULL,
             priority TEXT NOT NULL,
+            tags TEXT NOT NULL,
 
             updated_at TEXT NOT NULL,
             due_at TEXT NOT NULL
         );
     '''
 
-    agent_table = '''
-        CREATE TABLE IF NOT EXISTS Agents (
-            id TEXT PRIMARY KEY,
-            nickname NOT NULL UNIQUE,
-            avatar_url TEXT,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            role TEXT NOT NULL,
-            phone TEXT NOT NULL UNIQUE,
-            email TEXT NOT NULL UNIQUE,
-
-            created_at TEXT NOT NULL
-            );
-    '''
-
-    # shouldnt we think that cilent.. is one of the agent role?
-    #so create not separately clients/agents.. create users where you can put roles? 
-    client_table = '''
-        CREATE TABLE IF NOT EXISTS Clients (
-            id TEXT PRIMARY KEY,
-            nickname NOT NULL UNIQUE,
-            avatar_url TEXT,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            );
-    '''
-
+    # agent and clients would be here
     users_table = '''
         CREATE TABLE IF NOT EXISTS Users(
             id TEXT PRIMARY KEY,
@@ -71,24 +48,29 @@ def create_tables():
     conn.commit()
 
 def insert_data(data, table: str):
+    print(data, type(data))
     conn = get_connect()
     cursor = conn.cursor()
     # can we do it easier? or have to write all tihngs by hand as 2-3 diffferent functions?
     match table:
-        case "Users":
+        case "Tickets":
             insert_query = '''
                 INSERT INTO Tickets (id, title, description, category, tags,
                                     assigned_agent_id, status, priority, updated_at, 
-                                    created_at, due_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);    
+                                    created_at, due_at) 
+                                    VALUES(:id, :title, :description, :category, :tags,
+                                    :assigned_agent_id, :status, :priority, :updated_at, 
+                                    :created_at, :due_at);    
             '''
-        case "Tickets":
+        case "Users":
             insert_query = '''
                 INSERT INTO Users (id, nickname, avatar_url, first_name, last_name, 
                                     created_at, role, phone, email, created_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                                    VALUES (:id, :nickname, :avatar_url, :first_name, :last_name, 
+                                    :created_at, :role, :phone, :email, :created_at)'
             '''
 
-    cursor.execute(data, insert_query)
+    cursor.execute(insert_query, data)
     conn.commit()
 
 def get_tickets(id: str | None = None) -> tuple:
