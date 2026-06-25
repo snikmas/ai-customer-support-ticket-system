@@ -8,7 +8,7 @@ class Status(Enum):
     ON_HOLD = 'On hold'
     RESOLVED = 'Resolved'
     CLOSED = 'Closed'
-    REOPENED =      'Reopened'
+    REOPENED = 'Reopened'
 
 class Category(Enum):
     API_ERROR       = "API_Error"
@@ -49,7 +49,15 @@ class Tag(Enum):
     
 
 class Priority(Enum):
-  CRITICAL = 'critical',
-  HIGH = 'high',
-  NORMAL = 'normal',
+  CRITICAL = 'critical'
+  HIGH = 'high'
+  NORMAL = 'normal'
   LOW = 'low'
+
+
+
+#   NEW -> due_at = now + 2 hours
+#   OPEN -> due_at = now + 6 hours
+#   IN_PROGRESS -> due_at = now + 12 hours
+#   REOPENED -> due_at = now + 4 hours
+#   PENDING / ON_HOLD / RESOLVED / CLOSED -> no due_at change
