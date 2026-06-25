@@ -1,8 +1,15 @@
-from fastapi import FastApi
+from fastapi import FastAPI, APIRouter
+from src.models.models import Ticket, Agent, Client, TicketCreate
 
+router = APIRouter()
     
-app = FastApi()
+app = FastAPI()
 
-@app.get("/health")
-def health():
-    return {"response": "ok"}
+@app.post("/ticket")
+def create_ticket(ticket : TicketCreate):
+    return {}
+
+
+@app.get("/tickets")
+def get_tickets():
+    return {}
