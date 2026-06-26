@@ -29,10 +29,11 @@ def create_ticket(cur_ticket : TicketCreate):
                     created_at=datetime.now(),
                     due_at=now + timedelta(hours=2))
 
-    #check if its exists? id? its impossible, cmon
-    #another problem do we have to save as id -> boejct (where we also put an id or?)
-    # anyway, its doesnt matter really. later we would put everything to the database
-
+    ticket.category = ticket.category.value
+    ticket.tags = '[]'
+    ticket.status = ticket.status.value
+    ticket.priority = ticket.priority.value
+    ticket.assigned_agent_id = ''
     db.insert_data(ticket.__dict__, 'Tickets')
     return {"res": ticket}
 
@@ -47,12 +48,14 @@ def get_tickets():
     all_tickets = []
     for row in db_res:
         all_tickets.append(dict(row))
-
     return {"res": all_tickets}
 
 @app.get("/tickets/{id}")
 def get_ticket(id: str):
     db_res = db.get_tickets(id)
-    ticket = dict(db_res)
 
+    if not db_res: 
+        return HTTPException(404, detail="No ticket found")
+    ticket = dict(db_res[0])
+    
     return {"res": ticket}

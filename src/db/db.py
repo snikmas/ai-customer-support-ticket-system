@@ -22,6 +22,7 @@ def create_tables():
             priority TEXT NOT NULL,
             tags TEXT NOT NULL,
 
+            created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             due_at TEXT NOT NULL
         );
@@ -78,17 +79,19 @@ def get_tickets(id: str | None = None) -> tuple:
     cursor = conn.cursor()
 
     if id:
-        get_tickets = "SELECT * FROM Tickets WHERE id = id"
+        get_tickets = "SELECT * FROM Tickets WHERE id = ?"
+        cursor.execute(get_tickets, (id,))
     else:
         get_tickets = "SELECT * FROM Tickets"
+        cursor.execute(get_tickets) 
 
-    cursor.execute(get_tickets)
     return cursor.fetchall()
     
 def get_user_info(id: str) -> tuple:
     conn = get_connect()
     cursor = conn.cursor()
 
-    get_info = "SELECT * FROM Users WHERE id = id"
-    cursor.execute(get_info)
+    get_info = "SELECT * FROM Users WHERE id = ?"
+
+    cursor.execute(get_info, (id,))
     return cursor.fetchone
