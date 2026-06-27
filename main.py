@@ -5,57 +5,21 @@ from datetime import datetime, timedelta
 from src.constants import helpers
 import logging
 import src.db.db as db
+from src.routers import users, tickets
 
 logging.basicConfig(level=logging.INFO)
+db.create_tables()
 logger = logging.getLogger(__name__)
 
-db.create_tables()
 logging.info("created tables")
-#i guess.. we should put all configuration to the oncfig file later
 
-router = APIRouter()
+#i guess.. we should put all configuration to the oncfig file later
 
 app = FastAPI()
 
-@app.post("/tickets")
-def create_ticket(cur_ticket : TicketCreate):
-    # 1) generate an id 
-    cur_id = helpers.generate_id()
+app.include_router(users.router)
+app.include_router(tickets.router)
 
-    now = datetime.now()
-    ticket = Ticket(id=cur_id, 
-                    **cur_ticket.model_dump(), 
-                    updated_at=datetime.now(), 
-                    created_at=datetime.now(),
-                    due_at=now + timedelta(hours=2))
-
-    ticket.category = ticket.category.value
-    ticket.tags = '[]'
-    ticket.status = ticket.status.value
-    ticket.priority = ticket.priority.value
-    ticket.assigned_agent_id = ''
-    db.insert_data(ticket.__dict__, 'Tickets')
-    return {"res": ticket}
-
-
-
-@app.get("/tickets")
-def get_tickets():
-    # i guess we have to show only part of the infromation. again: from who this request?
-    # if from user - not all. create model? but its != ticket create. let's firstly try to return all tickets with all info
-
-    db_res = db.get_tickets()
-    all_tickets = []
-    for row in db_res:
-        all_tickets.append(dict(row))
-    return {"res": all_tickets}
-
-@app.get("/tickets/{id}")
-def get_ticket(id: str):
-    db_res = db.get_tickets(id)
-
-    if not db_res: 
-        return HTTPException(404, detail="No ticket found")
-    ticket = dict(db_res[0])
-    
-    return {"res": ticket}
+@app.get("/")
+async def root():
+    return {"res": "hiiii"}

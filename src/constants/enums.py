@@ -54,7 +54,23 @@ class Priority(Enum):
   NORMAL = 'normal'
   LOW = 'low'
 
-
+class Roles(Enum):
+    # System-level
+    SUPER_ADMIN = "super_admin"    # Full system access, can manage other admins
+    ADMIN = "admin"                # Can manage users, settings, and all tickets
+    
+    # Support team
+    MANAGER = "manager"            # Can assign tickets, manage agents, view reports
+    AGENT = "agent"                # Handles tickets, can reply and resolve
+    AGENT_READONLY = "agent_readonly"  # Can view tickets but not modify (training)
+    
+    # End users
+    USER = "user"                  # Regular user - creates and views own tickets
+    GUEST = "guest"                # Limited access, can only view public info
+    
+    # Special
+    BOT = "bot"                    # Automated system user (for webhooks/automation)
+    API = "api"                    # API integration user
 
 #   NEW -> due_at = now + 2 hours
 #   OPEN -> due_at = now + 6 hours

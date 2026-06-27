@@ -1,4 +1,7 @@
 tickets_system.db
+tickets_system.db-journal
+.codex
+.agents
 AGENTS.md
 notes/
 QUIZ.md
