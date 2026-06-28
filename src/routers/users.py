@@ -7,7 +7,7 @@ router = APIRouter(
     tags=["users"]
 )
 
-@router.get("/")
+@router.get("/", status_code=200)
 async def get_users():
     db_res = db.get_users()
     all_users = []
@@ -19,7 +19,7 @@ async def get_users():
         return {"res": "No users"}
 
 
-@router.get("/{id}")
+@router.get("/{id}", status_code=200)
 async def get_user(id: str):
     db_res = db.get_user(id)
     if not db_res: 
@@ -46,7 +46,7 @@ async def create_user(cur_user: models.UserCreate):
     db.insert_user(user.__dict__)
     return {"res": user}
 
-@router.patch("/{id}")
+@router.patch("/{id}", status_code=200)
 async def update_user(id: str, new_info: models.UserUpdate):
     updated_info = new_info.model_dump(exclude_unset=True)
 
@@ -58,7 +58,7 @@ async def update_user(id: str, new_info: models.UserUpdate):
         raise HTTPException(400, detail="Error during updating")
     return {"res": "The User was updated successfully"}
     
-@router.delete("/{id}")
+@router.delete("/{id}", status_code=200)
 async def delete_user(id: str):
     # we can frisly check if a ticket exist and later delete it? or check it using delete?
     affected_rows = db.delete_user(id)
@@ -66,7 +66,7 @@ async def delete_user(id: str):
         raise HTTPException(404, detail="No affected rows")
     return {"res": "The user was deleted successfully"}
 
-@router.delete("/")
+@router.delete("/", status_code=200)
 async def delete_all_users():
     affected_rows = db.delete_all_users()
     return {"res": f"{affected_rows} user(s) was/were deleted"}

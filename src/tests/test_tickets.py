@@ -45,8 +45,6 @@ def test_get_ticket():
         data = response.json()
         ticket_id = data['res']['id']
 
-        saved_ticket = db.get_ticket(ticket_id)
-
         response = client.get(f"/tickets/{ticket_id}")
         if response:
             data = response.json()

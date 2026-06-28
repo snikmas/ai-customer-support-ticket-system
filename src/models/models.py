@@ -60,7 +60,6 @@ class User(BaseModel):
     role: str # later put what kind of
     updated_at: datetime
     created_at: datetime
-    
 
 class UserUpdate(BaseModel):
     nickname: str | None = None
