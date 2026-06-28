@@ -30,7 +30,7 @@ async def get_user(id: str):
     return {"res": user}
 
 
-@router.post("/")
+@router.post("/", status_code=201)
 async def create_user(cur_user: models.UserCreate):
     # 1) generate an id 
     cur_id = constants.generate_id()
@@ -53,7 +53,7 @@ async def update_user(id: str, new_info: models.UserUpdate):
     if not updated_info:
         raise HTTPException(400, detail="No fields to update")
     
-    affected_row = db.update_ticket(id, updated_info)
+    affected_row = db.update_user(id, updated_info)
     if (affected_row == 0):
         raise HTTPException(400, detail="Error during updating")
     return {"res": "The User was updated successfully"}
@@ -65,3 +65,8 @@ async def delete_user(id: str):
     if affected_rows == 0:
         raise HTTPException(404, detail="No affected rows")
     return {"res": "The user was deleted successfully"}
+
+@router.delete("/")
+async def delete_all_users():
+    affected_rows = db.delete_all_users()
+    return {"res": f"{affected_rows} user(s) was/were deleted"}

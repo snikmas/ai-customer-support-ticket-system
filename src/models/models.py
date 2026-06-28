@@ -19,7 +19,7 @@ class Ticket(BaseModel):
     tags: list[Tag]
 
 
-    assigned_agent_id: str = None # cor assignee_id
+    assigned_agent_id: str | None = None # cor assignee_id
     status: Status = Status.NEW
     priority: Priority = Priority.NORMAL
 

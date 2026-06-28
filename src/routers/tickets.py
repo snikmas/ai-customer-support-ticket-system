@@ -31,7 +31,7 @@ async def get_ticket(id: str):
     return {"res": ticket}
 
 
-@router.post("/")
+@router.post("/", status_code=201)
 async def create_ticket(cur_ticket: models.TicketCreate):
     # 1) generate an id 
     cur_id = constants.generate_id()
@@ -43,17 +43,19 @@ async def create_ticket(cur_ticket: models.TicketCreate):
                     created_at=datetime.now(),
                     due_at=now + timedelta(hours=2))
 
-    ticket.category = ticket.category.value
+    ticket.category = str(ticket.category.value)
     ticket.tags = '[]'
-    ticket.status = ticket.status.value
-    ticket.priority = ticket.priority.value
+    ticket.status = str(ticket.status.value)
+    ticket.priority = str(ticket.priority.value)
     ticket.assigned_agent_id = ''
+    print(ticket)
     db.insert_ticket(ticket.__dict__)
     return {"res": ticket}
 
-@router.patch("/{id}")
+@router.patch("/{id}", status_code=201)
 async def update_ticket(new_info: models.TicketUpdate, id: str):
     updated_info = new_info.model_dump(exclude_unset=True)
+    print(updated_info)
 
     if not updated_info:
         raise HTTPException(400, detail="No fields to update")
@@ -70,3 +72,8 @@ async def delete_ticket(id: str):
     if affected_rows == 0:
         raise HTTPException(404, detail="No affected rows")
     return {"res": "A ticket was deleted successfully"}
+
+@router.delete("/")
+async def delete_all_tickets():
+    res = db.delete_all_tickets()
+    return {"res": f"{res} ticket(s) was deleted"}

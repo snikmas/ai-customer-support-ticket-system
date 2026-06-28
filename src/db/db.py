@@ -1,5 +1,7 @@
 import sqlite3
+import json
 from src.models.models import Ticket, User
+from src.constants.helpers import logger
 
 def get_connect():
     connect = sqlite3.connect("tickets_system.db")
@@ -60,7 +62,7 @@ def insert_user(data: User):
     cursor = conn.cursor()
     insert_query = '''
         INSERT INTO Users (id, nickname, avatar_url, first_name, last_name, 
-                            created_at, role, phone, email, created_at, updated_at)
+                            role, phone, email, created_at, updated_at)
         VALUES (:id, :nickname, :avatar_url, :first_name, :last_name, 
                 :role, :phone, :email, :created_at, :updated_at);
         '''
@@ -109,6 +111,16 @@ def delete_user(id: str) -> int:
     conn.commit()
     return cursor.rowcount
 
+def delete_all_users() -> int:
+    conn = get_connect()
+    cursor = conn.cursor()
+    query = "DELETE FROM Users;"
+    
+    cursor.execute(query)
+    conn.commit()
+    return cursor.rowcount
+
+
 # ==========================================================================
 # ============================ TICKETS =====================================
 
@@ -148,15 +160,14 @@ def get_ticket(id: str):
 def update_ticket(id: str, new_info: dict) -> int:
     conn = get_connect()
     cursor = conn.cursor()
-
-
-    # have to do.. dynamic query. i dont wanna do robust validation etc right now, can add it later (cuz we also have to check
-    # the rights of the user)
-
+    if "tags" in new_info and new_info['tags'] is not None:
+        new_info['tags'] = json.dumps([tag.value for tag in new_info['tags']])
     dynamic_params = ", ".join([f"{key} = ?"for key in new_info.keys()])
+
     query = f"UPDATE Tickets SET {dynamic_params} WHERE id = ?;"
 
-    values = list(new_info.values())
+    values = [str(value) for value in new_info.values()]
+    print(values)
     values.append(id)
     cursor.execute(query, values)
     conn.commit()
@@ -170,4 +181,13 @@ def delete_ticket(id: str) -> int:
     cursor.execute(query, (id,))
     conn.commit()
 
+    return cursor.rowcount
+
+def delete_all_tickets():
+    conn = get_connect()
+    cursor = conn.cursor()
+    query = "DELETE FROM Tickets;"
+    
+    cursor.execute(query)
+    conn.commit()
     return cursor.rowcount
