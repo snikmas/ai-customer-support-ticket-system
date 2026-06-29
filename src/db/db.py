@@ -1,5 +1,6 @@
 import sqlite3
 import json
+from enum import Enum
 from src.models.models import Ticket, User
 from src.constants.helpers import logger
 from datetime import datetime
@@ -185,8 +186,7 @@ def update_ticket(id: str, new_info: dict) -> int:
 
     query = f"UPDATE Tickets SET {dynamic_params} WHERE id = ?;"
 
-    values = [str(value) for value in new_info.values()]
-    print(values)
+    values = [value.value if isinstance(value, Enum) else str(value) for value in new_info.values()]
     values.append(id)
     cursor.execute(query, values)
     conn.commit()

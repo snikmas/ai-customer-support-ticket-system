@@ -22,8 +22,6 @@ async def get_tickets():
 @router.get("/{id}")
 async def get_ticket(id: str):
     db_res = db.get_ticket(id)
-    print(db_res)
-    print(type(db_res))
     if not db_res: 
         raise HTTPException(404, detail="No ticket found")
     ticket = dict(db_res)
@@ -85,7 +83,8 @@ async def update_ticket(new_info: models.TicketUpdate, ticket_id: str, requester
         
     if 'status' in updated_info.keys():
         new_status = constants.Status(updated_info['status'])
-        if constants.is_valid_status_transition(is_ticket['status'], new_status) == False:
+        old_status = constants.Status(is_ticket["status"])
+        if constants.is_valid_status_transition(old_status, new_status) == False:
             raise HTTPException(409, detail="Invalid status field")
         assigned_agent = updated_info.get('assigned_agent_id') or is_ticket['assigned_agent_id'] or None
         if not assigned_agent:

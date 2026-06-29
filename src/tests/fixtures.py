@@ -6,6 +6,9 @@ import src.db as db
 
 @pytest.fixture
 def setup_db():
+    db.delete_all_tickets()
+    db.delete_all_users()
+
     admin = models.User(
         id='001',
         nickname='Admin',
@@ -72,6 +75,11 @@ def setup_db():
         created_at=datetime.now(),
         due_at=datetime.now() + timedelta(hours=2)
     )
+
+    new_ticket.category = str(new_ticket.category.value)
+    new_ticket.tags = str(new_ticket.tags)
+    new_ticket.status = str(new_ticket.status.value)
+    new_ticket.priority = str(new_ticket.priority.value)
     
     assigned_ticket = models.Ticket(
         id="12321",
@@ -88,13 +96,18 @@ def setup_db():
         due_at=datetime.now() + timedelta(hours=2)
     )
 
+    assigned_ticket.category = str(assigned_ticket.category.value)
+    assigned_ticket.tags = str(assigned_ticket.tags)
+    assigned_ticket.status = str(assigned_ticket.status.value)
+    assigned_ticket.priority = str(assigned_ticket.priority.value)
+
     db.insert_user(admin.__dict__)
     db.insert_user(ordinary_user.__dict__)
     db.insert_user(random_agent.__dict__)
     db.insert_user(assigned_agent.__dict__)
 
-    db.insert_ticket(new_ticket)
-    db.insert_ticket(assigned_ticket)
+    db.insert_ticket(new_ticket.__dict__)
+    db.insert_ticket(assigned_ticket.__dict__)
 
 
     yield {
