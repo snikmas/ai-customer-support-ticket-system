@@ -21,14 +21,18 @@ def create_tables():
             description NOT NULL,
             category TEXT NOT NULL,
 
-            assigned_agent_id TEXT NOT NULL,
+            assigned_agent_id TEXT,
+            creator_user_id TEXT NOT NULL,
             status TEXT NOT NULL,
             priority TEXT NOT NULL,
-            tags TEXT NOT NULL,
+            tags TEXT TEXT NOT NULL,
 
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            due_at TEXT NOT NULL
+            due_at TEXT NOT NULL,
+
+            FOREIGN KEY (creator_user_id) REFERENCES Users(id),
+            FOREIGN KEY (assigned_agent_id) REFERENCES Users(id)
         );
     '''
 
@@ -48,6 +52,15 @@ def create_tables():
             updated_at TEXT NOT NULL
             )
     '''
+
+    ownership = '''
+        CREATE TABLE Ownership(
+            user_id   TEXT NOT NULL,
+            ticket_id TEXT NOT NULL,
+            assigned_id?
+        )
+'''
+
 
     cursor.execute(tickets_table)
     cursor.execute(users_table)

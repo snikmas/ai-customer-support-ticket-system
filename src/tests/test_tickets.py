@@ -52,6 +52,7 @@ def test_get_ticket():
             assert new_ticket_id == ticket_id
     finally:
         db.delete_ticket(ticket_id)
+        db.delete_user(new_ticket_id)
 
 def test_update_tickets():
     ticket_id = None
