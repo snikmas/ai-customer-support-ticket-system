@@ -30,17 +30,20 @@ async def get_ticket(id: str):
     
     return {"res": ticket}
 
-
 @router.post("/", status_code=201)
-async def create_ticket(cur_ticket: models.TicketCreate):
-    # 1) generate an id 
+async def create_ticket(cur_ticket: models.TicketCreate, user_id: str):
     cur_id = constants.generate_id()
-
     now = datetime.now()
+
+    is_user = db.get_user(user_id)
+    print(f"check user id: {is_user}, type: {type(is_user)}")
+    if is_user is None:
+        raise HTTPException(404, detail="The user id doesn't exist")
     ticket = models.Ticket(id=cur_id, 
                     **cur_ticket.model_dump(), 
                     updated_at=datetime.now(), 
                     created_at=datetime.now(),
+                    creator_user_id=is_user['id'],
                     due_at=now + timedelta(hours=2))
 
     ticket.category = str(ticket.category.value)
@@ -48,19 +51,48 @@ async def create_ticket(cur_ticket: models.TicketCreate):
     ticket.status = str(ticket.status.value)
     ticket.priority = str(ticket.priority.value)
     ticket.assigned_agent_id = ''
-    print(ticket)
+
+
     db.insert_ticket(ticket.__dict__)
     return {"res": ticket}
 
-@router.patch("/{id}", status_code=201)
-async def update_ticket(new_info: models.TicketUpdate, id: str):
+@router.patch("/{ticket_id}", status_code=201)
+async def update_ticket(new_info: models.TicketUpdate, ticket_id: str, requester_id: str):
     updated_info = new_info.model_dump(exclude_unset=True)
-    print(updated_info)
 
     if not updated_info:
         raise HTTPException(400, detail="No fields to update")
     
-    affected_row = db.update_ticket(id, updated_info)
+    # check the user: just users shouldn't be able change a ticket
+    requester = db.get_user(requester_id)
+    is_ticket = db.get_ticket(ticket_id)
+    if is_ticket is None:
+        raise HTTPException(404, "The Ticket not found")
+
+    if requester is None:
+        raise HTTPException(400, detail="No requester information")
+
+    roles = constants.Roles
+    if requester['role'] in [roles.USER.value, roles.GUEST.value, roles.BOT.value, roles.API.value]:
+        raise HTTPException(403, detail="No rights to update a ticket")
+    elif requester['role'] == roles.AGENT.value:
+        if requester['id'] != is_ticket['assigned_agent_id']:
+            raise HTTPException(403, detail="You don't have rights to update this ticket")
+    
+    if "assigned_agent_id" in updated_info.keys():
+        if requester['role'] not in [roles.ADMIN.value, roles.MANAGER.value, roles.SUPER_ADMIN.value]:
+            raise HTTPException(403, detail="No rights to update a ticket")
+        
+    if 'status' in updated_info.keys():
+        new_status = constants.Status(updated_info['status'])
+        if constants.is_valid_status_transition(is_ticket['status'], new_status) == False:
+            raise HTTPException(409, detail="Invalid status field")
+        assigned_agent = updated_info.get('assigned_agent_id') or is_ticket['assigned_agent_id'] or None
+        if not assigned_agent:
+            raise HTTPException(404, detail="For updating a ticket requires an agent id")
+    
+
+    affected_row = db.update_ticket(ticket_id, updated_info)
     if (affected_row == 0):
         raise HTTPException(400, detail="Error during updating")
     return {"res": "A ticket was updated successfully"}

@@ -20,6 +20,7 @@ class Ticket(BaseModel):
 
 
     assigned_agent_id: str | None = None # cor assignee_id
+    creator_user_id: str
     status: Status = Status.NEW
     priority: Priority = Priority.NORMAL
 

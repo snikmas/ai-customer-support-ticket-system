@@ -2,6 +2,8 @@ from src import db
 from fastapi.testclient import TestClient
 from main import app
 from src import constants
+import fixtures
+
 client = TestClient(app)
 
 # =========================================================================

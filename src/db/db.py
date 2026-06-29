@@ -2,6 +2,7 @@ import sqlite3
 import json
 from src.models.models import Ticket, User
 from src.constants.helpers import logger
+from datetime import datetime
 
 def get_connect():
     connect = sqlite3.connect("tickets_system.db")
@@ -82,7 +83,7 @@ def insert_user(data: User):
     cursor.execute(insert_query, data)
     conn.commit()
 
-def get_user(id: str) -> tuple:
+def get_user(id: str) -> dict:
     conn = get_connect()
     cursor = conn.cursor()
 
@@ -90,7 +91,9 @@ def get_user(id: str) -> tuple:
 
     cursor.execute(get_info, (id,))
     conn.commit()
-    return cursor.fetchone()
+    row = cursor.fetchone()
+
+    return dict(row) if row else None
 
 def get_users() -> tuple:
     conn = get_connect()
@@ -105,6 +108,7 @@ def update_user(id: str, new_info: dict) -> int:
     conn = get_connect()
     cursor = conn.cursor()
 
+    new_info['updated_at'] = datetime.now()
     dynamic_params = ", ".join([f"{info} = ?" for info in new_info])
 
     values = list(new_info.values())
@@ -142,10 +146,10 @@ def insert_ticket(data: Ticket):
     cursor = conn.cursor()
     insert_query = '''
         INSERT INTO Tickets (id, title, description, category, tags,
-                            assigned_agent_id, status, priority, updated_at, 
+                            assigned_agent_id, creator_user_id, status, priority, updated_at, 
                             created_at, due_at) 
         VALUES(:id, :title, :description, :category, :tags,
-                            :assigned_agent_id, :status, :priority, :updated_at, 
+                            :assigned_agent_id, :creator_user_id, :status, :priority, :updated_at, 
                             :created_at, :due_at);    
         '''
     
@@ -161,20 +165,22 @@ def get_tickets() -> tuple:
     conn.commit()
     return cursor.fetchall()
 
-def get_ticket(id: str):
+def get_ticket(id: str) -> dict:
     conn = get_connect()
     cursor = conn.cursor()
 
     get_tickets = "SELECT * FROM Tickets WHERE id = ?;"
     cursor.execute(get_tickets, (id,))
     conn.commit()
-    return cursor.fetchone()
+    ticket = cursor.fetchone()
+    return dict(ticket) if ticket else None
 
 def update_ticket(id: str, new_info: dict) -> int:
     conn = get_connect()
     cursor = conn.cursor()
     if "tags" in new_info and new_info['tags'] is not None:
         new_info['tags'] = json.dumps([tag.value for tag in new_info['tags']])
+    new_info['updated_at'] = datetime.now()
     dynamic_params = ", ".join([f"{key} = ?"for key in new_info.keys()])
 
     query = f"UPDATE Tickets SET {dynamic_params} WHERE id = ?;"

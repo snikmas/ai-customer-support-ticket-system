@@ -2,16 +2,18 @@ from src import db
 from fastapi.testclient import TestClient
 from main import app
 from src import constants
+from .fixtures import setup_db
+
 client = TestClient(app)
 
 # =========================================================================
 # ===================== END POINTS ========================================
-def test_get_all_tickets():
+def test_is_endpoint_gets_all_tickets():
     response = client.get("/tickets")
     assert response.status_code == 200, response.text()
     assert "res" in response.json()
 
-def test_create_ticket():
+def test_is_endpoint_creates_ticket():
     ticket_id = None
     try:
         response = client.post("/tickets", json = {
@@ -31,7 +33,7 @@ def test_create_ticket():
         if ticket_id is not None:
             db.delete_ticket(ticket_id)
 # do i need it?
-def test_get_ticket():
+def test_is_endpoint_works_get_ticket():
     ticket_id = None
     try:
         response = client.post("/tickets", json = {
@@ -54,7 +56,7 @@ def test_get_ticket():
         db.delete_ticket(ticket_id)
         db.delete_user(new_ticket_id)
 
-def test_update_tickets():
+def test_is_endpoint_works_update_tickets():
     ticket_id = None
     try:
         response = client.post("/tickets", json = {
@@ -83,3 +85,21 @@ def test_update_tickets():
     finally:
         if ticket_id is not None:
             db.delete_ticket(ticket_id)
+
+# ==================================================================================
+# ===================== TEST PATCH ENDPOINT ========================================
+# here should be a helper 
+def test_user_changes_ticket_should_raise_exception(setup_db):
+    pass
+def test_no_updated_info_should_raise_exception(setup_db):
+    pass
+def test_ticket_doesnt_exist(setup_db):
+    pass
+def test_user_doesnt_exist(setup_db):
+    pass
+def test_user_tries_change_ticket_should_raise_exception(setup_db):
+    pass
+def test_only_assigned_agent_manager_admins_should_be_able_update(setup_db):
+    pass
+def test_invalid_status_transition(setup_db):
+    pass
