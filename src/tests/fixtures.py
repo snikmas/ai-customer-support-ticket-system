@@ -17,7 +17,7 @@ def setup_db():
         last_name='Smith',
         phone='123456789',
         email='admin@mail.ru',
-        role=const.Roles.ADMIN,
+        role=const.Role.ADMIN,
         updated_at=datetime.now(),
         created_at=datetime.now(),
     )
@@ -30,7 +30,7 @@ def setup_db():
         last_name='Green',
         phone='1111111111',
         email='dear_mail@gmail.com',
-        role=const.Roles.AGENT,
+        role=const.Role.AGENT,
         updated_at=datetime.now(),
         created_at=datetime.now(),
     )
@@ -43,7 +43,7 @@ def setup_db():
         last_name="Brown",
         phone='222222222',
         email='random_main@gmail.ru',
-        role=const.Roles.AGENT,
+        role=const.Role.AGENT,
         updated_at=datetime.now(),
         created_at=datetime.now(),
     )
@@ -56,7 +56,7 @@ def setup_db():
         last_name="Norris",
         phone='55555',
         email='my_mail@gmail.com',
-        role=const.Roles.USER,
+        role=const.Role.USER,
         updated_at=datetime.now(),
         created_at=datetime.now(),
     )

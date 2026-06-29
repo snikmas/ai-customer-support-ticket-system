@@ -54,7 +54,7 @@ class Priority(Enum):
   NORMAL = 'normal'
   LOW = 'low'
 
-class Roles(Enum):
+class Role(Enum):
     # System-level
     SUPER_ADMIN = "super_admin"    # Full system access, can manage other admins
     ADMIN = "admin"                # Can manage users, settings, and all tickets

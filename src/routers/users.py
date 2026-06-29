@@ -37,7 +37,7 @@ async def create_user(cur_user: models.UserCreate):
 
     user = models.User(id=cur_id, 
                     **cur_user.model_dump(), 
-                    role=constants.Roles.USER,
+                    role=constants.Role.USER,
                     updated_at=datetime.now(), 
                     created_at=datetime.now()
                     )

@@ -70,15 +70,15 @@ async def update_ticket(new_info: models.TicketUpdate, ticket_id: str, requester
     if requester is None:
         raise HTTPException(400, detail="No requester information")
 
-    roles = constants.Roles
-    if requester['role'] in [roles.USER.value, roles.GUEST.value, roles.BOT.value, roles.API.value]:
+    role = constants.Role
+    if requester['role'] in [role.USER.value, role.GUEST.value, role.BOT.value, role.API.value]:
         raise HTTPException(403, detail="No rights to update a ticket")
-    elif requester['role'] == roles.AGENT.value:
+    elif requester['role'] == role.AGENT.value:
         if requester['id'] != is_ticket['assigned_agent_id']:
             raise HTTPException(403, detail="You don't have rights to update this ticket")
     
     if "assigned_agent_id" in updated_info.keys():
-        if requester['role'] not in [roles.ADMIN.value, roles.MANAGER.value, roles.SUPER_ADMIN.value]:
+        if requester['role'] not in [role.ADMIN.value, role.MANAGER.value, role.SUPER_ADMIN.value]:
             raise HTTPException(403, detail="No rights to update a ticket")
         
     if 'status' in updated_info.keys():
