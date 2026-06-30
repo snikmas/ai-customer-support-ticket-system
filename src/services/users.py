@@ -5,10 +5,11 @@ from src.models import models as api_models
 from src.db import models as db_models
 from src.db import operations
 
-
-
-def create_user(user_data: api_models.UserCreate, requester_user: api_models.User) -> db_models.User:
+def create_user(user_data: api_models.UserCreate, requester: api_models.User) -> db_models.User:
     now = datetime.now()
+
+    if (check_for_access(requester, constants.Role.USER)) is False:
+        raise PermissionError
 
     user = db_models.User(
         id=constants.generate_id(),
@@ -25,54 +26,61 @@ def create_user(user_data: api_models.UserCreate, requester_user: api_models.Use
     operations.create_user(user)
     return user
 
-def get_user(id: str, requester_user: api_models.User) -> db_models.User | None:
-    if check_for_access(requester_user, constants.Role.USER) is False:
-        return None
+def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sure is it a db user or api model
+    if check_for_access(requester, constants.Role.USER) is False:
+        raise PermissionError
     
-    return operations.get_user(id)
+    user = operations.get_user(id)
+    if user is None:
+        raise ValueError("user_not_found")
+    
+    return user
 
-def get_all_users(requester_user: api_models.User) -> list[db_models.User] | None:
-    if check_for_access(requester_user, constants.Role.MANAGER) is False:
-        return None
+def get_all_users(requester: api_models.User) -> list[db_models.User]:
+    if check_for_access(requester, constants.Role.MANAGER) is False:
+        raise PermissionError
 
     return operations.get_users()
 
 def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, requester: api_models.User) -> db_models.User:
-
-    if not updated_info: return None
-
     user = operations.get_user(requester.id)
     if user is None:
-        return None #user not found
+        raise ValueError("user_not_found")
 
     updated_info = updated_info.model_dump(exclude_unset=True)
+    if not updated_info:
+        raise ValueError("empty_update")
 
     if user.id != updated_info_id or 'role' in updated_info.keys():
         if check_for_access(user, constants.Role.ADMIN) is False:
-            return None
+            raise PermissionError
 
-    return operations.update_user(id, updated_info)
+    res = operations.update_user(updated_info_id, updated_info)
+    if res is None:
+        raise ValueError("Some error during updating, the operation canceled")
+    return res
 
-
-def delete_user(id: str, reqiester_user: api_models.User) -> db_models.User:
+def delete_user(id: str, reqiester_user: api_models.User) -> None:
     user = operations.get_user(reqiester_user.id) # if its exist?
 
-    if user is None: return None
+    if user is None:
+        raise ValueError("user_not_found")
 
     if user.id != id:
         if check_for_access(user, constants.Role.ADMIN) is False: 
-            return None
+            raise PermissionError
     
-    return operations.delete_user(id)
+    if operations.delete_user(id) is not True:
+        raise ValueError("Some error during deleting, the operation cancelled")
 
 
-def delete_all_users(requester: api_models.User) -> db_models.User:
-    user = operations.get_user(requester.id)
-
-    if user is None:
-        return None
+def delete_all_users(requester: api_models.User) -> int:
+    requester = operations.get_user(requester.id)
+    if requester is None:
+        raise ValueError("user_not_found")
     
-    if check_for_access(user, constants.Role.SUPER_ADMIN) is False:
-        return None
+    if check_for_access(requester, constants.Role.SUPER_ADMIN) is False:
+        raise PermissionError
     
-    return operations.delete_all_users()
+    deleted_users = operations.delete_all_users()
+    return deleted_users

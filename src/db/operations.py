@@ -9,9 +9,9 @@ from datetime import datetime
 
 # ==============================================================
 # ======================= USER =================================
-def create_user(user_data: User) -> None:
+def create_user(user_data: User) -> User:
     with Session(engine) as session:
-        user = User(
+        user = User(  
             id=user_data.id,
             nickname=user_data.nickname,
             avatar_url=user_data.avatar_url,
@@ -26,13 +26,14 @@ def create_user(user_data: User) -> None:
 
         session.add(user)
         session.commit()
+    return user # it error -> it throws exception
 
-def get_user(id: str) -> (User | None):
+def get_user(id: str) -> User | None:
     with Session(engine) as session:
         result = session.get(User, id)
         return result
 
-def get_users() -> (list[User] | None):
+def get_users() -> list[User]:
     with Session(engine) as session:
         query = select(User)
         return session.scalars(query).all()
@@ -42,7 +43,7 @@ def update_user(id: str, new_info: dict) -> User | None:
         user = session.get(User, id)
 
         if user is None:
-            return
+            return None
         
         for field, value in new_info.items():
             setattr(user, field, value)
@@ -53,15 +54,16 @@ def update_user(id: str, new_info: dict) -> User | None:
         return user
 
 
-def delete_user(id: str) -> None:
+def delete_user(id: str) -> bool:
     with Session(engine) as session:
         # more layer safety:
         user = session.get(User, id)
         if user is None:
-            return 
+            return False
         
         session.delete(user)
         session.commit()
+        return True 
         
 def delete_all_users() -> int:
     with Session(engine) as session:
@@ -73,7 +75,7 @@ def delete_all_users() -> int:
 # ==============================================================
 # ======================= TICKETS ==============================
 
-def create_ticket(ticket_data: Ticket) -> None:
+def create_ticket(ticket_data: Ticket) -> Ticket:
     with Session(engine) as session:
         ticket = Ticket(
             id=ticket_data.id,
@@ -91,41 +93,43 @@ def create_ticket(ticket_data: Ticket) -> None:
 
         session.add(ticket)
         session.commit()
+        return ticket
 
-
-def get_ticket(id: str) -> (Ticket | None):
+def get_ticket(id: str) -> Ticket | None:
     with Session(engine) as session:
         result = session.get(Ticket, id)
         return result
     
-def get_tickets() -> (list[User] | None):
+def get_tickets() -> list[Ticket]:
     with Session(engine) as session:
         query = select(Ticket)
         return session.scalars(query).all()
 
-def update_ticket(id: str, new_info: dict) -> None:
+def update_ticket(id: str, new_info: dict) -> Ticket | None:
     with Session(engine) as session:
         ticket = session.get(Ticket, id)
 
         if ticket is None:
-            return
-        
+            return None
+
         for field, value in new_info.items():
             setattr(ticket, field, value)
         ticket.updated_at = datetime.now()
 
         session.commit()
-        return
+        session.refresh(ticket)
+        return ticket
 
 
-def delete_ticket(id: str) -> None:
+def delete_ticket(id: str) -> bool:
     with Session(engine) as session:
         ticket = session.get(Ticket, id)
         if ticket is None:
-            return
+            return False
         
         session.delete(ticket)
         session.commit()
+        return True
 
 def delete_all_tickets() -> int:
     with Session(engine) as session:

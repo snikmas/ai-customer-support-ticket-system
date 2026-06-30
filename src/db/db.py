@@ -1,3 +1,4 @@
+# DEPRECATED
 import sqlite3
 import json
 from enum import Enum

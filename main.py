@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter
-from src.models.models import Ticket, Agent, Client, TicketCreate
+from src.models.models import Ticket, TicketCreate
 from fastapi import HTTPException
 from datetime import datetime, timedelta
 from src.constants import helpers
