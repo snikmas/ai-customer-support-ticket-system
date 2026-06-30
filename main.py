@@ -3,10 +3,13 @@ from src.models.models import Ticket, TicketCreate
 from fastapi import HTTPException
 from datetime import datetime, timedelta
 from src.constants import helpers
-import src.db.db as db
 from src.routers import users, tickets
+from src.db.utils import create_db
+from src.core import setup_logging
 
-db.create_tables()
+# later convert to startup/lifespan
+create_db()
+setup_logging()
 
 
 #i guess.. we should put all configuration to the oncfig file later

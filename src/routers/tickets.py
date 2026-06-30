@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from src import models, db, constants
-from datetime import datetime, timedelta
 from src.services import users as s_users, tickets as s_tickets
 
 router = APIRouter(

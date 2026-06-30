@@ -1,4 +1,6 @@
 from .permissions import check_for_access
+from .tickets import *
+from .users import *
 
 #   - Can this user create a ticket?
 #   - What default status should a new ticket have?

@@ -1,5 +1,4 @@
 from datetime import datetime
-from fastapi import FastAPI
 from pydantic import BaseModel
 from src.constants.enums import Status, Category, Tag, Priority, Role
 

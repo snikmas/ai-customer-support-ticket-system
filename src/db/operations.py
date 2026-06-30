@@ -1,11 +1,9 @@
 from sqlalchemy.orm import Session
 from .engine import engine
 from .models import Ticket, User
-from typing import Tuple
 from sqlalchemy import Row, select, delete
 from datetime import datetime
 
-# from db.utils import reset_database
 
 # ==============================================================
 # ======================= USER =================================

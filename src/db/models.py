@@ -1,9 +1,11 @@
 from typing import List, Optional
 from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime, timedelta
 from src.constants import Role, Category, Priority, Status, Tag 
 from sqlalchemy.dialects.postgresql import ARRAY
+
+# orm models
 
 class Base(DeclarativeBase):
     pass
