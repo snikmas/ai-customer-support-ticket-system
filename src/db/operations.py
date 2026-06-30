@@ -32,12 +32,12 @@ def get_user(id: str) -> (User | None):
         result = session.get(User, id)
         return result
 
-def get_users() -> {list[User] | None}:
+def get_users() -> (list[User] | None):
     with Session(engine) as session:
         query = select(User)
         return session.scalars(query).all()
 
-def update_user(id: str, new_info: dict) -> None:
+def update_user(id: str, new_info: dict) -> User | None:
     with Session(engine) as session:
         user = session.get(User, id)
 
@@ -49,7 +49,8 @@ def update_user(id: str, new_info: dict) -> None:
             
         user.updated_at = datetime.now()
         session.commit()
-        return
+        session.refresh(user)
+        return user
 
 
 def delete_user(id: str) -> None:
@@ -97,7 +98,7 @@ def get_ticket(id: str) -> (Ticket | None):
         result = session.get(Ticket, id)
         return result
     
-def get_tickets() -> {list(User) | None}:
+def get_tickets() -> (list[User] | None):
     with Session(engine) as session:
         query = select(Ticket)
         return session.scalars(query).all()

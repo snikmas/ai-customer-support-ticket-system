@@ -1,7 +1,7 @@
 from datetime import datetime
 from fastapi import FastAPI
 from pydantic import BaseModel
-from src.constants.enums import Status, Category, Tag, Priority
+from src.constants.enums import Status, Category, Tag, Priority, Role
 
 
 class TicketCreate(BaseModel): #ticket that creates a user
@@ -58,7 +58,7 @@ class User(BaseModel):
 
     phone: str
     email: str
-    role: str # later put what kind of
+    role: Role
     updated_at: datetime
     created_at: datetime
 
@@ -71,28 +71,4 @@ class UserUpdate(BaseModel):
     role: str | None = None
     phone: str | None = None
     email: str | None = None
-
-class Agent(BaseModel):
-    id: str
-    nickname: str
-    avatar_url: str | None = None
-    first_name: str
-    last_name: str
-    created_at: str
-    role: str # later put what kind of
-    phone: str
-    email: str
-    created_at: str
-
-
-class Client(BaseModel):
-    id: str
-    nickname: str
-    avatar_url: str | None = None
-    first_name: str
-    last_name: str
-
-    phone: str | None = None
-    email: str
-    created_at: str
 

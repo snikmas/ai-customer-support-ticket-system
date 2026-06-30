@@ -23,7 +23,7 @@ class Ticket(Base):
     creator_user_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey('users.id', ondelete='NOTHING')
-        ), 
+        )
     status: Mapped[Status] = mapped_column(Enum(Status))
     priority: Mapped[Priority] = mapped_column(Enum(Priority))
 

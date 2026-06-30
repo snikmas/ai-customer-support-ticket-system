@@ -15,6 +15,19 @@ SLA_HOURS = {
     Status.REOPENED: 4
 }
 
+ROLE_LEVELS = {
+    Role.GUEST: 0,          # almost no access
+    Role.USER: 1,           # normal client
+    Role.AGENT_READONLY: 2, # support viewer/trainee
+    Role.AGENT: 3,          # suppoer worker
+    Role.MANAGER: 4,        # manages support team
+    Role.ADMIN: 5,          # manages support/users/settings
+    Role.SUPER_ADMIN: 6,    # highest human/admin role
+
+    Role.BOT: 5,            # trusted automation role, similair to admin depending on endpoint
+    Role.API: 5,            # trusted integration role, similair to admin depending on endpoint
+}
+
 def is_valid_status_transition(old_status: Status, new_status: Status) -> bool:
     match(old_status):
         case Status.NEW:

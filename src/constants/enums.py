@@ -72,6 +72,7 @@ class Role(Enum):
     BOT = "bot"                    # Automated system user (for webhooks/automation)
     API = "api"                    # API integration user
 
+
 #   NEW -> due_at = now + 2 hours
 #   OPEN -> due_at = now + 6 hours
 #   IN_PROGRESS -> due_at = now + 12 hours

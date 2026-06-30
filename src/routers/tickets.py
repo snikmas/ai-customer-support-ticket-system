@@ -51,7 +51,7 @@ async def create_ticket(cur_ticket: models.TicketCreate, user_id: str):
     ticket.assigned_agent_id = ''
 
 
-    db.insert_ticket(ticket.__dict__)
+    db.insert_ticket(ticket)
     return {"res": ticket}
 
 @router.patch("/{ticket_id}", status_code=201)
