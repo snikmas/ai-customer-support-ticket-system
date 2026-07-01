@@ -20,11 +20,11 @@ class Ticket(Base):
     tags: Mapped[str] = mapped_column(String(200), nullable=True)
     assigned_agent_id: Mapped[Optional[str]] = mapped_column(
         String(36), 
-        ForeignKey('users.id', ondelete='NOTHING'),
+        ForeignKey('users.id', ondelete='SET NULL'),
         nullable=True)
     creator_user_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey('users.id', ondelete='NOTHING')
+        ForeignKey('users.id', ondelete='SET NULL')
         )
     status: Mapped[Status] = mapped_column(Enum(Status))
     priority: Mapped[Priority] = mapped_column(Enum(Priority))
@@ -59,6 +59,7 @@ class User(Base):
     phone: Mapped[str] = mapped_column(String(24), unique=True)
     email: Mapped[str] = mapped_column(String(254), unique=True)
     role: Mapped[Role] = mapped_column(Enum(Role))
+    password: Mapped[str] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
    

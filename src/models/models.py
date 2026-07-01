@@ -13,7 +13,8 @@ class Ticket(BaseModel):
     creator_user_id: str
     status: Status = Status.NEW
     priority: Priority = Priority.NORMAL
-
+    password: str
+    
     updated_at: datetime
     created_at: datetime
     due_at: datetime

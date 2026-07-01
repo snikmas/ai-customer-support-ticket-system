@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 from src import models, db, constants
 from src.services import users as s_users, tickets as s_tickets
+from src.dependencies import *
 
 router = APIRouter(
     prefix='/users',
@@ -9,7 +10,7 @@ router = APIRouter(
 )
 
 @router.get("/{id}", status_code=200)
-async def get_user(id: str, requester: models.User):
+async def get_user(id: str, requester = Depends(get_current_user)):
     try:
         data = s_users.get_user(id, requester)
     except ValueError:
@@ -24,7 +25,7 @@ async def get_user(id: str, requester: models.User):
 
 # later rewrite/add: Depends(get current_user)
 @router.get("/", status_code=200)
-async def get_users(requester: models.User):
+async def get_users(requester = Depends(get_current_user)):
 
     try:
         data = s_users.get_all_users(requester)
@@ -37,10 +38,10 @@ async def get_users(requester: models.User):
         return {"data": data}
 
 @router.post("/", status_code=201)
-async def create_user(cur_user: models.UserCreate, requester: models.User):
+async def create_user(cur_user: models.UserCreate):
 
     try:
-        user = s_users.create_user(cur_user, requester)
+        user = s_users.create_user(cur_user)
     except ValueError:
         raise HTTPException(404, detail="Value Error")
     except PermissionError:
@@ -52,7 +53,7 @@ async def create_user(cur_user: models.UserCreate, requester: models.User):
     return {"data": user}
 
 @router.patch("/{updated_user_id}", status_code=200)
-async def update_user(updated_user_id: str, updated_info: models.UserUpdate, requester: models.User):
+async def update_user(updated_user_id: str, updated_info: models.UserUpdate, requester = Depends(get_current_user)):
 
     try:
         data = s_users.update_user(updated_user_id, updated_info, requester)
@@ -69,7 +70,7 @@ async def update_user(updated_user_id: str, updated_info: models.UserUpdate, req
 
 
 @router.delete("/{id}", status_code=204)
-async def delete_user(id: str, requester: models.User):
+async def delete_user(id: str, requester = Depends(get_current_user)):
     try:
         data = s_users.delete_user(id, requester)
     except ValueError:
@@ -82,7 +83,7 @@ async def delete_user(id: str, requester: models.User):
 
 
 @router.delete("/", status_code=200)
-async def delete_all_users(requester: models.User):
+async def delete_all_users(requester = Depends(get_current_user)):
     try:
         data = s_users.delete_all_users(requester)
     except ValueError:

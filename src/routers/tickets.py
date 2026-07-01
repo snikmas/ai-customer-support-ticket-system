@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from src import models, db, constants
 from src.services import users as s_users, tickets as s_tickets
+from src.dependencies import *
 
 router = APIRouter(
     prefix="/tickets",
@@ -8,7 +9,7 @@ router = APIRouter(
 )
 
 @router.get("/", status_code=200)
-async def get_tickets(requester: models.User):
+async def get_tickets(requester = Depends(get_current_user)):
     try:
         data = s_tickets.get_all_tickets(requester)
     except PermissionError:
@@ -20,7 +21,7 @@ async def get_tickets(requester: models.User):
 
 
 @router.get("/{id}", status_code=200)
-async def get_ticket(id: str, requester: models.User):
+async def get_ticket(id: str, requester = Depends(get_current_user)):
     try:    
         data = s_tickets.get_ticket(id, requester)
     except PermissionError:
@@ -32,7 +33,7 @@ async def get_ticket(id: str, requester: models.User):
 
 
 @router.post("/", status_code=201)
-async def create_ticket(cur_ticket: models.TicketCreate, requester: models.User):
+async def create_ticket(cur_ticket: models.TicketCreate, requester = Depends(get_current_user)):
     
     ticket = s_tickets.create_ticket(cur_ticket, requester)
     
@@ -40,7 +41,7 @@ async def create_ticket(cur_ticket: models.TicketCreate, requester: models.User)
 
 
 @router.patch("/{ticket_id}", status_code=200)
-async def update_ticket(ticket_id: str, new_info: models.TicketUpdate, requester: models.User):
+async def update_ticket(ticket_id: str, new_info: models.TicketUpdate, requester = Depends(get_current_user)):
     
     try:
         data = s_tickets.update_ticket(ticket_id, new_info, requester)
@@ -53,7 +54,7 @@ async def update_ticket(ticket_id: str, new_info: models.TicketUpdate, requester
 
     
 @router.delete("/{id}", status_code=200)
-async def delete_ticket(id: str, requester: models.User):
+async def delete_ticket(id: str, requester = Depends(get_current_user)):
 
     try:
         data = s_tickets.delete_ticket(id, requester)
@@ -66,7 +67,7 @@ async def delete_ticket(id: str, requester: models.User):
 
 
 @router.delete("/", status_code=200)
-async def delete_all_tickets(requester: models.User):
+async def delete_all_tickets(requester = Depends(get_current_user)):
 
     try:
         data = s_tickets.delete_all_tickets(requester)

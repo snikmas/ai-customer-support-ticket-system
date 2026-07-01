@@ -8,7 +8,7 @@ from src.db import operations
 def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.User) -> db_models.Ticket:
     now = datetime.now()
 
-    if (check_for_access(requester, constants.Role.USER)) is False:
+    if (check_for_access(requester.role, constants.Role.USER)) is False:
         raise PermissionError
 
     ticket = db_models.Ticket(
@@ -29,7 +29,7 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
     return ticket
 
 def get_ticket(id: str, requester: api_models.User) -> db_models.Ticket: #im not sure is it a db ticket or api model
-    if check_for_access(requester, constants.Role.USER) is False:
+    if check_for_access(requester.role, constants.Role.USER) is False:
         raise PermissionError
     
     ticket = operations.get_ticket(id)
@@ -39,7 +39,7 @@ def get_ticket(id: str, requester: api_models.User) -> db_models.Ticket: #im not
     return ticket
 
 def get_all_tickets(requester: api_models.User) -> list[db_models.Ticket]:
-    if check_for_access(requester, constants.Role.MANAGER) is False:
+    if check_for_access(requester.role, constants.Role.MANAGER) is False:
         raise PermissionError
 
     return operations.get_tickets()
@@ -72,7 +72,7 @@ def delete_ticket(id: str, requester: api_models.User) -> None:
         raise ValueError("ticket_not_found")
 
     if ticket.creator_user_id != requester.id:
-        if check_for_access(requester, constants.Role.ADMIN) is False: 
+        if check_for_access(requester.role, constants.Role.ADMIN) is False: 
             raise PermissionError
     
     if operations.delete_ticket(id) is False:
@@ -83,7 +83,7 @@ def delete_all_tickets(requester: api_models.User) -> int:
     if user is None:
         raise ValueError("user_not_found")
     
-    if check_for_access(user, constants.Role.SUPER_ADMIN) is False:
+    if check_for_access(user.role, constants.Role.SUPER_ADMIN) is False:
         raise PermissionError
     
     deleted_tickets = operations.delete_all_tickets()
