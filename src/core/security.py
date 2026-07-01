@@ -1,7 +1,9 @@
 #password hashing jwt helpetrs ;ater
+import bcrypt
+
 
 def hash_password(password: str) -> str:
-    return password
+    return bcrypt.hashpw(password, bcrypt.gensalt())
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return plain_password == hashed_password
+    return bcrypt.checkpw(plain_password, hashed_password)

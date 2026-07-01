@@ -14,7 +14,7 @@ class Ticket(BaseModel):
     status: Status = Status.NEW
     priority: Priority = Priority.NORMAL
     password: str
-    
+
     updated_at: datetime
     created_at: datetime
     due_at: datetime
@@ -46,6 +46,7 @@ class User(BaseModel):
     phone: str
     email: str
     role: Role
+    password: str
     updated_at: datetime
     created_at: datetime
 
@@ -54,6 +55,7 @@ class UserCreate(BaseModel):
     avatar_url: str | None = None
     first_name: str
     last_name: str
+    password: str
 
     phone: str
     email: str
@@ -63,6 +65,7 @@ class UserUpdate(BaseModel):
     avatar_url: str | None = None
     first_name: str | None = None
     last_name: str | None = None
+    password: str | None = None
 
     role: str | None = None
     phone: str | None = None

@@ -10,7 +10,6 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
 
     #check if the system is empty. if its - create an admin
         
-
     user = db_models.User(
         id=constants.generate_id(),
         nickname=user_data.nickname,
