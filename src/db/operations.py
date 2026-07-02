@@ -26,6 +26,10 @@ def get_refresh_session_by_id(refresh_session_id: str) -> RefreshSession | None:
     with Session(engine) as session:
         return session.query(RefreshSession).filter_by(id=refresh_session_id).first()
 
+def get_refresh_session_by_hash_refresh_token(hash_token: str) -> RefreshSession | None:
+    with Session(engine) as session:
+        return session.query(RefreshSession).filter_by(refresh_token_hash=hash_token).first()
+    
 def revoke_refresh_session(session_id: str) -> bool:
     with Session(engine) as session:
         refresh_session = get_refresh_session_by_id(session_id)
@@ -34,6 +38,20 @@ def revoke_refresh_session(session_id: str) -> bool:
         session.delete(refresh_session)
         session.commit()
         return True
+
+def update_refresh_session(session_id, revoked_at, expires_at, hash_ref_token) -> RefreshSession | None:
+    with Session(engine) as session:
+        ref_session = session.get(RefreshSession, session_id)
+        if ref_session is None: return None
+        
+        ref_session.refresh_token_hash = hash_ref_token
+        ref_session.expires_at = expires_at
+        ref_session.revoked_at = revoked_at
+
+        session.commit()
+        return session.get(RefreshSession, session_id)
+        
+        
 
 
 # ==============================================================

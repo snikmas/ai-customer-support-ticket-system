@@ -71,9 +71,7 @@ class User(Base):
     
 
 
-
-
-# ============== APP ==============================
+# ========================== APP ==============================
 class RefreshSession(Base):
     __tablename__ = 'refresh_sessions'
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

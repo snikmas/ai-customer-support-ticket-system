@@ -12,7 +12,7 @@ router = APIRouter(
 
 
 @router.post("/login")
-def login(login_request: models.LoginRequest) -> models.LoginResponse:
+def login(login_request: models.LoginRequest) -> models.TokenResponse:
     user = None
     if login_request.nickname is not None:
         user = login_user(login_request.nickname, login_request.password)
@@ -23,19 +23,38 @@ def login(login_request: models.LoginRequest) -> models.LoginResponse:
     
     if user is None:
         raise HTTPException(401, detail="Ivalid credentials")
-    
-    # put only user.id cuz its not encrupted
-    access_token = create_access_token(user)
-    if access_token is None:
-        raise HTTPException(400, status_code="Something went wrong")
 
-    return models.LoginResponse(
-        access_token=access_token,
+
+    raw_access_token = security.create_access_token(user)
+    created_refresh_section = create_refresh_session_for_user(user.id)
+
+    if created_refresh_section is None or raw_access_token is None:
+        raise HTTPException(400, detail="Something went wrong")
+
+    return models.TokenResponse(
+        access_token=raw_access_token,
+        refresh_token=created_refresh_section.refresh_token
     )
 
 
 @router.post("/refresh")
-def refresh():
+def refresh(refresh_request: models.RefreshTokenRequest) -> models.TokenResponse:
+    if refresh_request.refresh_token is None:
+        raise HTTPException(400, "No data")
+
+    # verify the token
+    try: 
+        refresh_session = verify_refresh_session(refresh_request.refresh_token)
+        if refresh_session is None:
+            raise HTTPException(401, detail="Invalid credentials")
+        
+        new_session = update_refresh_session(refresh_session)
+        if new_session is None:
+            raise HTTPException(401, detail="Invalid credentials")
+        return models.LoginResponse(access_token=)
+
+    except RuntimeError:
+        raise HTTPException(400, detail="Some runtime error. Try later")
     pass
 
 @router.post("/logout")

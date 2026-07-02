@@ -1,4 +1,4 @@
-from src.models import LoginRequest, LoginResponse, User, RefreshSession, CreatedRefreshSession
+from src.models import LoginRequest, TokenResponse, User, RefreshSession, CreatedRefreshSession
 from src import constants
 from src.core.security import verify_password, create_access_token, generate_refresh_token, hash_token
 from .permissions import check_for_access
@@ -42,5 +42,33 @@ def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | Non
     return None
 
 
-def verify_refresh_session(session_id: str, raw_refresh_token: str) -> RefreshSession | None:
+def verify_refresh_session(raw_refresh_token: str) -> RefreshSession | None:
     # get a session -
+    try:
+        refresh_hash_token = hash_token(raw_refresh_token)
+        
+        session = operations.get_refresh_session_by_hash_refresh_token(refresh_hash_token)
+        return session #even if its none, its ok
+
+    except RuntimeError:
+        # what to do here in this case?
+        return None
+    
+def update_refresh_session(cur_session: RefreshSession) -> RefreshSession | None:
+    new_raw_refresh_token = generate_refresh_token()
+    now = datetime.now()
+
+    # for a new refresh token, we also have to update access token!
+    
+
+    updated_session = operations.update_refresh_session(
+        cur_session.id,
+        revoked_at=now,
+        expires_at=now + timedelta(weeks=1),
+        hash_ref_token=hash_token(new_raw_refresh_token))
+    
+    if updated_session: 
+        return CreatedRefreshSession(refresh_session_id=cur_session.id, refresh_token=new_raw_refresh_token)
+    return None
+
+

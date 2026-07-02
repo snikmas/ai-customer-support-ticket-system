@@ -10,8 +10,9 @@ class LoginRequest(BaseModel):
     email: str | None = None
     password: str
 
-class LoginResponse(BaseModel):
+class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
 
 class RefreshSession(BaseModel):
@@ -24,6 +25,9 @@ class RefreshSession(BaseModel):
 
 class CreatedRefreshSession(BaseModel):
     refresh_session_id: str
+    refresh_token: str
+
+class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
