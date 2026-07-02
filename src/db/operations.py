@@ -1,8 +1,39 @@
 from sqlalchemy.orm import Session
 from .engine import engine
-from .models import Ticket, User
+from .models import Ticket, User, RefreshSession
 from sqlalchemy import Row, select, delete
 from datetime import datetime
+
+
+# ==============================================================
+# ======================= SYSTEM ===============================
+def create_refresh_session(refresh_session: RefreshSession) -> RefreshSession | None:
+    refresh_session = None
+    with Session(engine) as session:
+        refresh_session = RefreshSession(
+            id=refresh_session.id,
+            user_id=refresh_session.user_id,
+            refresh_token_hash=refresh_session.refresh_token_hash,
+            expires_at=refresh_session.expires_at,
+            revoked_at=refresh_session.revoked_at,
+            created_at=refresh_session.created_at
+        )
+        session.add(refresh_session)
+        session.commit()
+    return refresh_session
+
+def get_refresh_session_by_id(refresh_session_id: str) -> RefreshSession | None:
+    with Session(engine) as session:
+        return session.query(RefreshSession).filter_by(id=refresh_session_id).first()
+
+def revoke_refresh_session(session_id: str) -> bool:
+    with Session(engine) as session:
+        refresh_session = get_refresh_session_by_id(session_id)
+        if refresh_session is None: 
+            return False
+        session.delete(refresh_session)
+        session.commit()
+        return True
 
 
 # ==============================================================
@@ -18,6 +49,7 @@ def create_user(user_data: User) -> User:
             phone=user_data.phone,
             email=user_data.email,
             role=user_data.role,
+            password=user_data.password,
             updated_at=user_data.updated_at,
             created_at=user_data.created_at
         )
@@ -30,6 +62,15 @@ def get_user(id: str) -> User | None:
     with Session(engine) as session:
         result = session.get(User, id)
         return result
+
+def get_user_by_email(inputted_email: str) -> User | None:
+    with Session(engine) as session:
+        return session.query(User).filter_by(email=inputted_email).first()
+
+def get_user_by_nickname(inputted_nickname: str) -> User | None:
+    with Session(engine) as session:
+        return session.query(User).filter_by(nickname=inputted_nickname).first()
+        
 
 def get_users() -> list[User]:
     with Session(engine) as session:

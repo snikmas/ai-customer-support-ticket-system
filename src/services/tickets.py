@@ -53,7 +53,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     if not updated_info:
         raise ValueError("empty_update")
 
-    if check_for_access(requester, constants.Role.MANAGER) is False: #im not sure admin/manager? agent is not suitable
+    if check_for_access(requester.role, constants.Role.MANAGER) is False: #im not sure admin/manager? agent is not suitable
         raise PermissionError
     
     if 'status' in updated_info and constants.is_valid_status_transition(ticket.status, updated_info['status']) is False:

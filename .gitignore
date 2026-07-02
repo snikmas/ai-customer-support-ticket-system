@@ -8,3 +8,5 @@ QUIZ.md
 __pycache__/
 myvenv/
 .pytest_cache
+keys
+.env

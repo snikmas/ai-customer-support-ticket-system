@@ -4,6 +4,7 @@ from src import constants
 from src.models import models as api_models
 from src.db import models as db_models
 from src.db import operations
+from src.core import hash_password
 
 def create_user(user_data: api_models.UserCreate) -> db_models.User:
     now = datetime.now()
@@ -18,7 +19,7 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         last_name=user_data.last_name,
         phone=user_data.phone,
         email=user_data.email,
-        password = user_data.password,
+        password = hash_password(user_data.password),
         role=constants.Role.USER, #? the system after can update the role for agents/etc? how does it work in a big tech companies
         updated_at=now,
         created_at=now
@@ -55,7 +56,7 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
         raise ValueError("empty_update")
 
     if 'role' in updated_info.keys():
-        updated_info['role'] = constants.Role[updated_info['role'].lower()]
+        updated_info['role'] = constants.Role[updated_info['role'].upper()]
         if user.id != updated_info_id:
             if check_for_access(user.role, constants.Role.ADMIN) is False:
                 raise PermissionError

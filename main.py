@@ -3,9 +3,13 @@ from src.models.models import Ticket, TicketCreate
 from fastapi import HTTPException
 from datetime import datetime, timedelta
 from src.constants import helpers
-from src.routers import users, tickets
+from src.routers import users, tickets, auth
 from src.db.utils import create_db
 from src.core import setup_logging
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 # later convert to startup/lifespan
 create_db()
@@ -18,6 +22,7 @@ app = FastAPI()
 
 app.include_router(users.router)
 app.include_router(tickets.router)
+app.include_router(auth.router)
 
 @app.get("/")
 async def root():

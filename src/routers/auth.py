@@ -8,6 +8,9 @@ router = APIRouter(
     tags=["auth"]
 )
 
+
+
+
 @router.post("/login")
 def login(login_request: models.LoginRequest) -> models.LoginResponse:
     user = None
@@ -29,3 +32,12 @@ def login(login_request: models.LoginRequest) -> models.LoginResponse:
     return models.LoginResponse(
         access_token=access_token,
     )
+
+
+@router.post("/refresh")
+def refresh():
+    pass
+
+@router.post("/logout")
+def logout():
+    pass

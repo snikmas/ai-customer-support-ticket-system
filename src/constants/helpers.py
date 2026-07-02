@@ -5,7 +5,7 @@ from .enums import *
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def generate_id():
+def generate_id() -> str:
     return str(uuid4()) #do we really need this function?
 
 SLA_HOURS = {

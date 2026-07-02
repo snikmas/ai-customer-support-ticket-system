@@ -1,13 +1,14 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 from src import models, db, constants
-from src.services import users as s_users, tickets as s_tickets
+from src.services import users as s_users
 from src.dependencies import *
 
 router = APIRouter(
     prefix='/users',
     tags=["users"]
 )
+
 
 @router.get("/{id}", status_code=200)
 async def get_user(id: str, requester = Depends(get_current_user)):

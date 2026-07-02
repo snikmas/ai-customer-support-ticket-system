@@ -28,7 +28,6 @@ class Ticket(Base):
         )
     status: Mapped[Status] = mapped_column(Enum(Status))
     priority: Mapped[Priority] = mapped_column(Enum(Priority))
-
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # due_at: Mapped[Optonal[timedelta]] = mapped_column(Interval)
@@ -69,3 +68,21 @@ class User(Base):
                 f"last_name={self.last_name!r}, phone={self.phone!r}, "
                 f"email={self.email!r}, role={self.role!r}, "
                 f"updated_at={self.updated_at!r}, created_at={self.created_at!r})")
+    
+
+
+
+
+# ============== APP ==============================
+class RefreshSession(Base):
+    __tablename__ = 'refresh_sessions'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+                                        String(36), 
+                                        ForeignKey('users.id', ondelete='CASCADE')
+                                        )
+    refresh_token_hash: Mapped[str] = mapped_column(String(255)) 
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
