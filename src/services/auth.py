@@ -54,21 +54,28 @@ def verify_refresh_session(raw_refresh_token: str) -> RefreshSession | None:
         # what to do here in this case?
         return None
     
-def update_refresh_session(cur_session: RefreshSession) -> RefreshSession | None:
+def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     new_raw_refresh_token = generate_refresh_token()
     now = datetime.now()
 
-    # for a new refresh token, we also have to update access token!
     
+        # have to: update the refresh session
+        # update the access token
+        # so 1. create a new access token using user id (find user id)
+        # 2. create a new access token
+        # update the refresh seesssion
 
-    updated_session = operations.update_refresh_session(
+    user = operations.get_user(cur_session.user_id)
+    new_access_token = create_access_token(user)
+    
+    updated_session = operations.rotate_refresh_session(
         cur_session.id,
         revoked_at=now,
         expires_at=now + timedelta(weeks=1),
         hash_ref_token=hash_token(new_raw_refresh_token))
     
     if updated_session: 
-        return CreatedRefreshSession(refresh_session_id=cur_session.id, refresh_token=new_raw_refresh_token)
+        return TokenResponse(access_token=new_access_token, refresh_token=new_raw_refresh_token)
     return None
 
 

@@ -7,16 +7,16 @@ from datetime import datetime
 
 # ==============================================================
 # ======================= SYSTEM ===============================
-def create_refresh_session(refresh_session: RefreshSession) -> RefreshSession | None:
+def create_refresh_session(old_refresh_session: RefreshSession) -> RefreshSession | None:
     refresh_session = None
     with Session(engine) as session:
         refresh_session = RefreshSession(
-            id=refresh_session.id,
-            user_id=refresh_session.user_id,
-            refresh_token_hash=refresh_session.refresh_token_hash,
-            expires_at=refresh_session.expires_at,
-            revoked_at=refresh_session.revoked_at,
-            created_at=refresh_session.created_at
+            id=old_refresh_session.id,
+            user_id=old_refresh_session.user_id,
+            refresh_token_hash=old_refresh_session.refresh_token_hash,
+            expires_at=old_refresh_session.expires_at,
+            revoked_at=old_refresh_session.revoked_at,
+            created_at=old_refresh_session.created_at
         )
         session.add(refresh_session)
         session.commit()
@@ -39,7 +39,7 @@ def revoke_refresh_session(session_id: str) -> bool:
         session.commit()
         return True
 
-def update_refresh_session(session_id, revoked_at, expires_at, hash_ref_token) -> RefreshSession | None:
+def rotate_refresh_session(session_id, revoked_at, expires_at, hash_ref_token) -> RefreshSession | None:
     with Session(engine) as session:
         ref_session = session.get(RefreshSession, session_id)
         if ref_session is None: return None

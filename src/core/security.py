@@ -8,7 +8,7 @@ import hmac
 import hashlib
 import secrets
 
-# is it used?
+
 def generate_refresh_token() -> str:
     raw_refresh_token = secrets.token_urlsafe(32)
     return raw_refresh_token

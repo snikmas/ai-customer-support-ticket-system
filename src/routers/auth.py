@@ -9,8 +9,6 @@ router = APIRouter(
 )
 
 
-
-
 @router.post("/login")
 def login(login_request: models.LoginRequest) -> models.TokenResponse:
     user = None
@@ -42,20 +40,18 @@ def refresh(refresh_request: models.RefreshTokenRequest) -> models.TokenResponse
     if refresh_request.refresh_token is None:
         raise HTTPException(400, "No data")
 
-    # verify the token
     try: 
         refresh_session = verify_refresh_session(refresh_request.refresh_token)
         if refresh_session is None:
             raise HTTPException(401, detail="Invalid credentials")
         
-        new_session = update_refresh_session(refresh_session)
-        if new_session is None:
-            raise HTTPException(401, detail="Invalid credentials")
-        return models.LoginResponse(access_token=)
+        token_response = rotate_refresh_session(refresh_session)
+
 
     except RuntimeError:
         raise HTTPException(400, detail="Some runtime error. Try later")
-    pass
+    
+    return token_response
 
 @router.post("/logout")
 def logout():
