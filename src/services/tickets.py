@@ -35,7 +35,7 @@ def get_ticket(id: str, requester: api_models.User) -> db_models.Ticket: #im not
         raise PermissionError
     
     ticket = operations.get_ticket(id)
-    if ticket is None or (ticket.deleted_at is not None and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN, constants.Role.MANAGER]):
+    if ticket is None or (ticket.deleted_at is not None and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN]):
         raise ValueError("ticket_not_found")
     
     return ticket

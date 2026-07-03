@@ -105,7 +105,7 @@ def update_user(id: str, new_info: dict) -> User | None:
         if user is None:
             return None
         
-        for field, value in new_info.items(timezone.utc):
+        for field, value in new_info.items():
             setattr(user, field, value)
             
         user.updated_at = datetime.now()

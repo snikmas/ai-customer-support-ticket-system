@@ -16,6 +16,9 @@ def login_user(identifier: str, password: str) -> User | None:
     if user is None:
         return  None
     
+    if user.role != constants.UserStatus.ACTIVE:
+        return None #no banned/deleted. later add another endpoint for them
+
     # check apssword
     validate_user = verify_password(password, user.password)
 
@@ -23,7 +26,6 @@ def login_user(identifier: str, password: str) -> User | None:
         return user
     return None
 
-# idea: one refresh session = one devcei/browser #returns refresh session id, raw
 def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | None:
     now = datetime.now()
     raw_refresh_token = generate_refresh_token()
@@ -64,7 +66,7 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
 
     user = operations.get_user(cur_session.user_id)
     if user is None: return None
-    if user.user_status == constants.UserStatus.DELETED:
+    if user.user_status != constants.UserStatus.ACTIVE:
         return None 
     
     new_access_token = create_access_token(user)

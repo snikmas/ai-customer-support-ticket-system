@@ -36,6 +36,9 @@ def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sur
     if user is None:
         raise ValueError("user_not_found")
     
+    if user.user_status != constants.UserStatus.ACTIVE and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN]:
+        return None
+    
     return user
 
 def get_all_users(requester: api_models.User) -> list[db_models.User]:
