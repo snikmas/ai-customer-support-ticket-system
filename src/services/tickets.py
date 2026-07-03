@@ -40,11 +40,20 @@ def get_ticket(id: str, requester: api_models.User) -> db_models.Ticket: #im not
     
     return ticket
 
+    #ALSO CHANGE ALL LOGIC IN[ROLES] FOR CHECK FOR ACCESS
 def get_all_tickets(requester: api_models.User) -> list[db_models.Ticket]:
-    if check_for_access(requester.role, constants.Role.ADMIN) is False:
-        raise PermissionError
+    # if check_for_access(requester.role, constants.Role.ADMIN) is False:
+        # raise PermissionError
+    
+    #wrong actually. the user 1) should be able to see all tickets for him; 2) not deleted 3) shold be groupped for admin/superadmin
 
-    return operations.get_tickets()
+    tickets = operations.get_tickets()
+    if check_for_access(requester.role, constants.Role.ADMIN):
+        return tickets
+
+    tickets = [ticket for ticket in tickets if ticket.deleted_at is None and ticket.creator_user_id == requester.id]
+
+    return tickets
 
 def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> db_models.Ticket:
     ticket = operations.get_ticket(updated_info_id)
