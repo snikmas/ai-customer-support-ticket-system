@@ -46,7 +46,8 @@ def refresh(refresh_request: models.RefreshTokenRequest) -> models.TokenResponse
             raise HTTPException(401, detail="Invalid credentials")
         
         token_response = rotate_refresh_session(refresh_session)
-
+        if token_response is None:
+            raise HTTPException(400, detail="The token not found")
 
     except RuntimeError:
         raise HTTPException(400, detail="Some runtime error. Try later")

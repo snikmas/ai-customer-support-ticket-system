@@ -18,6 +18,7 @@ def login_user(identifier: str, password: str) -> User | None:
     
     # check apssword
     validate_user = verify_password(password, user.password)
+
     if validate_user:
         return user
     return None
@@ -46,33 +47,35 @@ def verify_refresh_session(raw_refresh_token: str) -> RefreshSession | None:
     # get a session -
     try:
         refresh_hash_token = hash_token(raw_refresh_token)
+        if refresh_hash_token is None: return None
         
         session = operations.get_refresh_session_by_hash_refresh_token(refresh_hash_token)
-        return session #even if its none, its ok
+        # check if user exist?
+        if session and session.revoked_at is None and session.expires_at > datetime.now():
+            return session #even if its none, its ok
+        return None
 
     except RuntimeError:
-        # what to do here in this case?
         return None
     
 def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     new_raw_refresh_token = generate_refresh_token()
     now = datetime.now()
 
-    
-        # have to: update the refresh session
-        # update the access token
-        # so 1. create a new access token using user id (find user id)
-        # 2. create a new access token
-        # update the refresh seesssion
-
     user = operations.get_user(cur_session.user_id)
+    if user is None: return None
+    if user.user_status == constants.UserStatus.DELETED:
+        return None 
+    
     new_access_token = create_access_token(user)
     
     updated_session = operations.rotate_refresh_session(
         cur_session.id,
-        revoked_at=now,
+        revoked_at=None,
         expires_at=now + timedelta(weeks=1),
-        hash_ref_token=hash_token(new_raw_refresh_token))
+        hash_ref_token=hash_token(new_raw_refresh_token),
+        created_at=now
+        )
     
     if updated_session: 
         return TokenResponse(access_token=new_access_token, refresh_token=new_raw_refresh_token)

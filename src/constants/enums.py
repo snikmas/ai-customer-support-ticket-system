@@ -10,6 +10,12 @@ class Status(Enum):
     CLOSED = 'Closed'
     REOPENED = 'Reopened'
 
+class UserStatus(Enum):
+    ACTIVE = 'Active'
+    DELETED = 'Deleted'
+    BANNED = 'Banned'
+
+
 class Category(Enum):
     API_ERROR       = "API_Error"
     AUTHENTICATION  = "Authentication"

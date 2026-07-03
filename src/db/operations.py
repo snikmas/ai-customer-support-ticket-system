@@ -1,8 +1,8 @@
 from sqlalchemy.orm import Session
 from .engine import engine
-from .models import Ticket, User, RefreshSession
-from sqlalchemy import Row, select, delete
-from datetime import datetime
+from .models import Ticket, User, RefreshSession, UserStatus
+from sqlalchemy import Row, select, delete, update
+from datetime import datetime, timezone
 
 
 # ==============================================================
@@ -39,13 +39,14 @@ def revoke_refresh_session(session_id: str) -> bool:
         session.commit()
         return True
 
-def rotate_refresh_session(session_id, revoked_at, expires_at, hash_ref_token) -> RefreshSession | None:
+def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, revoked_at) -> RefreshSession | None:
     with Session(engine) as session:
         ref_session = session.get(RefreshSession, session_id)
         if ref_session is None: return None
         
         ref_session.refresh_token_hash = hash_ref_token
         ref_session.expires_at = expires_at
+        ref_session.created_at = created_at
         ref_session.revoked_at = revoked_at
 
         session.commit()
@@ -69,7 +70,9 @@ def create_user(user_data: User) -> User:
             role=user_data.role,
             password=user_data.password,
             updated_at=user_data.updated_at,
-            created_at=user_data.created_at
+            created_at=user_data.created_at,
+            deleted_at=None,
+            user_status=UserStatus.ACTIVE # by default
         )
 
         session.add(user)
@@ -102,7 +105,7 @@ def update_user(id: str, new_info: dict) -> User | None:
         if user is None:
             return None
         
-        for field, value in new_info.items():
+        for field, value in new_info.items(timezone.utc):
             setattr(user, field, value)
             
         user.updated_at = datetime.now()
@@ -118,13 +121,22 @@ def delete_user(id: str) -> bool:
         if user is None:
             return False
         
-        session.delete(user)
+        user.deleted_at = datetime.now(timezone.utc)
+        user.user_status = UserStatus.DELETED
         session.commit()
         return True 
         
 def delete_all_users() -> int:
     with Session(engine) as session:
-        result = session.execute(delete(User))
+
+        result = session.execute(
+            update(User)
+            .where(User.deleted_at.is_(None))
+            .values(
+                deleted_at=datetime.now(timezone.utc),
+                user_status=UserStatus.DELETED
+            )
+        )
         session.commit()
         return result.rowcount
 
@@ -171,7 +183,7 @@ def update_ticket(id: str, new_info: dict) -> Ticket | None:
 
         for field, value in new_info.items():
             setattr(ticket, field, value)
-        ticket.updated_at = datetime.now()
+        ticket.updated_at = datetime.now(timezone.utc)
 
         session.commit()
         session.refresh(ticket)
@@ -184,12 +196,18 @@ def delete_ticket(id: str) -> bool:
         if ticket is None:
             return False
         
-        session.delete(ticket)
+        ticket.deleted_at = datetime.now(timezone.utc)
         session.commit()
         return True
 
 def delete_all_tickets() -> int:
     with Session(engine) as session:
-        result = session.execute(delete(Ticket))
+        result = session.execute(
+            update(Ticket)
+            .where(Ticket.deleted_at.is_(None))
+            .values(
+                deleted_at=datetime.now(timezone.utc),
+            ))
+
         session.commit()
         return result.rowcount

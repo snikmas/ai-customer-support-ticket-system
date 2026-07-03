@@ -22,31 +22,33 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         status=ticket_data.status,
         priority=ticket_data.priority,
         updated_at=now,
-        created_at=now
+        created_at=now,
+        deleted_at=None
     )
     
     operations.create_ticket(ticket)
     return ticket
 
+# nlater add constrains: what if a ticket was dleeted, who can check it
 def get_ticket(id: str, requester: api_models.User) -> db_models.Ticket: #im not sure is it a db ticket or api model
     if check_for_access(requester.role, constants.Role.USER) is False:
         raise PermissionError
     
     ticket = operations.get_ticket(id)
-    if ticket is None:
+    if ticket is None or (ticket.deleted_at is not None and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN, constants.Role.MANAGER]):
         raise ValueError("ticket_not_found")
     
     return ticket
 
 def get_all_tickets(requester: api_models.User) -> list[db_models.Ticket]:
-    if check_for_access(requester.role, constants.Role.MANAGER) is False:
+    if check_for_access(requester.role, constants.Role.ADMIN) is False:
         raise PermissionError
 
     return operations.get_tickets()
 
 def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> db_models.Ticket:
     ticket = operations.get_ticket(updated_info_id)
-    if ticket is None:
+    if ticket is None or (ticket.deleted_at is not None and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN, constants.Role.MANAGER]):
         raise ValueError("ticket_not_found")
 
     updated_info = updated_info.model_dump(exclude_unset=True)

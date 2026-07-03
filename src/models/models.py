@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel
-from src.constants.enums import Status, Category, Tag, Priority, Role
+from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus
 
 
 # =====================================================
@@ -51,6 +51,8 @@ class Ticket(BaseModel):
     created_at: datetime
     due_at: datetime
 
+    deleted_at: datetime | None = None
+
 class TicketCreate(BaseModel): #ticket that creates a user
     title: str
     description: str
@@ -65,6 +67,7 @@ class TicketUpdate(BaseModel):
     assigned_agent_id: str | None = None 
     status: Status | None = None
     priority: Priority | None = None
+    deleted_at: datetime | None = None
 
 # =====================================================
 # ==================== USER ===========================
@@ -82,6 +85,9 @@ class User(BaseModel):
     updated_at: datetime
     created_at: datetime
 
+    deleted_at: datetime | None = None
+    user_status: UserStatus | None = UserStatus.ACTIVE
+
 class UserCreate(BaseModel):
     nickname: str
     avatar_url: str | None = None
@@ -91,6 +97,7 @@ class UserCreate(BaseModel):
 
     phone: str
     email: str
+    user_status: UserStatus = UserStatus.ACTIVE
 
 class UserUpdate(BaseModel):
     nickname: str | None = None
@@ -102,4 +109,4 @@ class UserUpdate(BaseModel):
     role: str | None = None
     phone: str | None = None
     email: str | None = None
-
+    user_status: UserStatus | None = None

@@ -2,7 +2,7 @@ from typing import List, Optional
 from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime, timedelta
-from src.constants import Role, Category, Priority, Status, Tag 
+from src.constants import Role, Category, Priority, Status, Tag, UserStatus
 from sqlalchemy.dialects.postgresql import ARRAY
 
 # orm models
@@ -30,6 +30,9 @@ class Ticket(Base):
     priority: Mapped[Priority] = mapped_column(Enum(Priority))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # due_at: Mapped[Optonal[timedelta]] = mapped_column(Interval)
 
     def __repr__(self):
@@ -61,6 +64,9 @@ class User(Base):
     password: Mapped[str] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_status: Mapped[UserStatus] = mapped_column(Enum(UserStatus))
    
     def __repr__(self):
         return (f"User(id={self.id!r}, nickname={self.nickname!r}, "
