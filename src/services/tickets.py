@@ -1,22 +1,24 @@
 from datetime import datetime
 from .permissions import check_for_access
 from src import constants
+
 from src.models import models as api_models
 from src.db import models as db_models
 from src.db import operations
 
-def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.User) -> db_models.Ticket:
+def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.User) -> api_models.Ticket:
     now = datetime.now()
 
     if (check_for_access(requester.role, constants.Role.USER)) is False:
         raise PermissionError
+    
 
     ticket = db_models.Ticket(
         id=constants.generate_id(),
         title=ticket_data.title,
         description=ticket_data.description,
         category=ticket_data.category,
-        tags=ticket_data.tags,
+        tags=constants.serialize_tags(ticket_data.tags),
         assigned_agent_id=None,
         creator_user_id=requester.id,
         status=ticket_data.status,
@@ -26,36 +28,42 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         deleted_at=None
     )
     
-    operations.create_ticket(ticket)
+    ticket = api_models.Ticket(operations.create_ticket(ticket))
     return ticket
 
 # nlater add constrains: what if a ticket was dleeted, who can check it
-def get_ticket(id: str, requester: api_models.User) -> db_models.Ticket: #im not sure is it a db ticket or api model
+def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im not sure is it a db ticket or api model
     if check_for_access(requester.role, constants.Role.USER) is False:
         raise PermissionError
     
     ticket = operations.get_ticket(id)
     if ticket is None or (ticket.deleted_at is not None and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN]):
         raise ValueError("ticket_not_found")
-    
-    return ticket
 
-    #ALSO CHANGE ALL LOGIC IN[ROLES] FOR CHECK FOR ACCESS
-def get_all_tickets(requester: api_models.User) -> list[db_models.Ticket]:
-    # if check_for_access(requester.role, constants.Role.ADMIN) is False:
-        # raise PermissionError
+    if ticket.tags:
+        ticket.tags = constants.deserialize_tags(ticket.tags)
     
-    #wrong actually. the user 1) should be able to see all tickets for him; 2) not deleted 3) shold be groupped for admin/superadmin
+    ticket.tags = constants.deserialize_tags(ticket.tags)
 
+    return api_models.Ticket(ticket)
+
+
+def get_all_tickets(requester: api_models.User) -> list[api_models.Ticket]:
+    
     tickets = operations.get_tickets()
+
+    
+    for ticket in tickets:
+        if ticket.tags: ticket.tags = constants.deserialize_tags(ticket.tags)
+    
     if check_for_access(requester.role, constants.Role.ADMIN):
         return tickets
-
-    tickets = [ticket for ticket in tickets if ticket.deleted_at is None and ticket.creator_user_id == requester.id]
+    
+    tickets = [api_models.Ticket(ticket) for ticket in tickets if ticket.deleted_at is None and ticket.creator_user_id == requester.id]
 
     return tickets
 
-def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> db_models.Ticket:
+def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> api_models.Ticket:
     ticket = operations.get_ticket(updated_info_id)
     if ticket is None or (ticket.deleted_at is not None and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN, constants.Role.MANAGER]):
         raise ValueError("ticket_not_found")
@@ -64,6 +72,10 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     if not updated_info:
         raise ValueError("empty_update")
 
+    if 'tags' in updated_info and updated_info['tags'] is not None:
+        updated_info['tags'] = constants.serialize_tags(updated_info['tags'])
+        
+
     if check_for_access(requester.role, constants.Role.MANAGER) is False: #im not sure admin/manager? agent is not suitable
         raise PermissionError
     
@@ -71,10 +83,11 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         raise ValueError("Invalid Status Transition")
 
 
-    res = operations.update_ticket(updated_info_id, updated_info)
-    if res is None:
+    ticket = operations.update_ticket(updated_info_id, updated_info)
+    ticket['tags'] = constants.deserialize_tags(ticket['tags'])
+    if ticket is None:
         raise ValueError("Some error during updating, the operation canceled")
-    return res
+    return api_models.Ticket(ticket)
 
 def delete_ticket(id: str, requester: api_models.User) -> None:
     ticket = operations.get_ticket(id)

@@ -1,6 +1,7 @@
 import logging
 from uuid import uuid4
 from .enums import *
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,3 +52,12 @@ def is_valid_status_transition(old_status: Status, new_status: Status) -> bool:
             return False
     return False
 
+
+def serialize_tags(tags: list[Tag]) -> str:
+    return json.dumps([tag.value for tag in tags])
+
+def deserialize_tags(raw: str) -> list[Tag]:
+    return [Tag(value) for value in json.loads(raw or "[]")]
+    
+
+    

@@ -109,3 +109,18 @@ class UserUpdate(BaseModel):
     phone: str | None = None
     email: str | None = None
     user_status: UserStatus | None = None
+
+class UserResponse(BaseModel):
+    id: str
+    nickname: str
+    avatar_url: str | None = None
+    first_name: str
+    last_name: str
+
+    phone: str
+    email: str
+    role: Role
+    updated_at: datetime
+    created_at: datetime
+    deleted_at: datetime | None = None
+    user_status: UserStatus | None = UserStatus.ACTIVE

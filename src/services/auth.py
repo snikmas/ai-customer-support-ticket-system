@@ -16,7 +16,7 @@ def login_user(identifier: str, password: str) -> User | None:
     if user is None:
         return  None
     
-    if user.role != constants.UserStatus.ACTIVE:
+    if user.user_status != constants.UserStatus.ACTIVE:
         return None #no banned/deleted. later add another endpoint for them
 
     # check apssword
