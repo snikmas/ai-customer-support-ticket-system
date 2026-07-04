@@ -33,10 +33,8 @@ def is_valid_status_transition(old_status: Status, new_status: Status) -> bool:
     match(old_status):
         case Status.NEW:
             if new_status == Status.OPEN: return True
-            return False
         case Status.OPEN:
             if new_status == Status.IN_PROGRESS: return True
-            return False
         case Status.IN_PROGRESS:
             if new_status in [Status.PENDING, Status.ON_HOLD, Status.RESOLVED]: return True
             return False
@@ -45,11 +43,11 @@ def is_valid_status_transition(old_status: Status, new_status: Status) -> bool:
         case Status.ON_HOLD:
             if new_status == Status.IN_PROGRESS: return True
         case Status.RESOLVED:
-            if new_status in [Status.CLOSED, Status.REOPENED]: return True
-            return False
+            if new_status in [Status.CLOSED, Status.IN_PROGRESS]: return True
+        case Status.CLOSED:
+            if new_status == Status.REOPENED: return True
         case Status.REOPENED:
             if new_status == Status.IN_PROGRESS: return True
-            return False
     return False
 
 

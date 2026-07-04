@@ -85,9 +85,6 @@ async def delete_user(id: str, requester = Depends(get_current_user)):
         raise HTTPException(400, detail="Permission Error")
 
 
-
-
-
 @router.delete("/", status_code=200)
 async def delete_all_users(requester = Depends(get_current_user)):
     try:
@@ -98,3 +95,4 @@ async def delete_all_users(requester = Depends(get_current_user)):
         raise HTTPException(400, detail="Permission Error")
     return {"data": f"Deleted: {data}"}
     
+

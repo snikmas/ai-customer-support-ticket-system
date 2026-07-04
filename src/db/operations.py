@@ -3,7 +3,7 @@ from .engine import engine
 from .models import Ticket, User, RefreshSession, UserStatus
 from sqlalchemy import Row, select, delete, update
 from datetime import datetime, timezone
-
+from src.constants import Status
 
 # ==============================================================
 # ======================= SYSTEM ===============================
@@ -51,7 +51,6 @@ def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, r
 
         session.commit()
         return session.get(RefreshSession, session_id)
-        
         
 
 
@@ -197,6 +196,7 @@ def delete_ticket(id: str) -> bool:
             return False
         
         ticket.deleted_at = datetime.now(timezone.utc)
+        ticket.updated_at = datetime.now(timezone.utc)
         session.commit()
         return True
 
@@ -207,7 +207,21 @@ def delete_all_tickets() -> int:
             .where(Ticket.deleted_at.is_(None))
             .values(
                 deleted_at=datetime.now(timezone.utc),
+                updated_at = datetime.now(timezone.utc)
             ))
 
         session.commit()
         return result.rowcount
+
+def claim_ticket(ticket_id: str, assigned_id: str) -> Ticket | None:
+    with Session(engine) as session:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is None:
+            return None
+
+        ticket.assigned_agent_id = assigned_id
+        ticket.status = Status.IN_PROGRESS
+        ticket.updated_at = datetime.now(timezone.utc)
+        session.commit()
+        session.refresh(ticket)
+        return ticket

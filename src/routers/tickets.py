@@ -75,3 +75,14 @@ async def delete_all_tickets(requester = Depends(get_current_user)):
         raise HTTPException(400, detail="Permission Error")
     
     return {'data': data}
+
+@router.post("/{ticket_id}/claim", status_code=200)
+async def claim_ticket(ticket_id: str, requester = Depends(get_current_user)):
+    try:
+        data = s_tickets.claim_ticket(ticket_id, requester)
+    except PermissionError:
+        raise HTTPException(403, detail="Permission Error")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+    
+    return {'data': data}
