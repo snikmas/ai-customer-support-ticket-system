@@ -15,14 +15,17 @@ Implemented or started:
 - User and ticket CRUD logic
 - Service layer and database operation layer
 - Role-based permission checks
-- Password hashing
-- JWT access token helpers
-- Refresh session model and refresh-token flow
+- Password hashing on user creation and password updates
+- First registered user bootstrap as `SUPER_ADMIN`
+- JWT access-token login and Bearer-token authentication dependency
+- Refresh session model and refresh-token rotation flow
+- Soft delete behavior for users and tickets
+- User update rules for protected fields such as role, status, and password
 - Basic tests for users, tickets, and auth
 
 Planned next:
 
-- Complete auth flow: login, refresh, logout, current-user endpoint
+- Complete auth flow: logout and current-user endpoint
 - Ticket comments
 - Ticket history/events
 - Stronger workflow validation
@@ -110,6 +113,26 @@ http://127.0.0.1:8000/docs
 ```
 
 The interactive docs can be used to test the API endpoints.
+
+## API Progress
+
+Current backend endpoints are organized around:
+
+- `/users` for registration, user lookup, user updates, soft deletion, and admin-level user listing/deletion
+- `/tickets` for ticket creation, lookup, updates, assignment-related fields, workflow state, and soft deletion
+- `/auth/login` for password login with nickname or email
+- `/auth/refresh` for rotating a refresh token and returning a new access token pair
+
+Protected routes use the standard `Authorization: Bearer <access_token>` header. The auth dependency decodes the JWT, loads the current user from the database, and blocks deleted or banned users.
+
+User-management behavior currently includes:
+
+- new users get hashed passwords before they are stored
+- the first registered user becomes `SUPER_ADMIN`
+- normal profile fields can be updated through the user update service
+- password updates are re-hashed before saving
+- role, status, and deletion-related updates are treated as protected admin-level changes
+- `created_at` and `updated_at` are system-managed fields, not client-managed fields
 
 ## Repository Structure
 

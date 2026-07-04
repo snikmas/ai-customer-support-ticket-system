@@ -13,7 +13,7 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         id=constants.generate_id(),
         nickname=user_data.nickname,
         avatar_url=user_data.avatar_url,
-        first_name=user_data.first_name,
+        first_name=user_data.first_name, 
         last_name=user_data.last_name,
         phone=user_data.phone,
         email=user_data.email,
@@ -56,11 +56,15 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
     if not updated_info:
         raise ValueError("empty_update")
 
-    if 'role' in updated_info.keys():
+    if any(key in updated_info for key in ['updated_at', 'created_at']): return None #no one can change it
+    if any(key in updated_info for key in ['role', 'user_status', 'deleted_at']):
         updated_info['role'] = constants.Role[updated_info['role'].upper()]
         if user.id != updated_info_id:
             if check_for_access(user.role, constants.Role.ADMIN) is False:
                 raise PermissionError
+    
+    if 'password' in updated_info:
+        updated_info['password'] = hash_password(updated_info['password'])
 
     res = operations.update_user(updated_info_id, updated_info)
     if res is None:
