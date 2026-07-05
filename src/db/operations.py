@@ -239,15 +239,29 @@ def update_ticket(id: str, new_info: dict, event: Event) -> Ticket | None:
         return ticket
 
 
-def delete_ticket(id: str) -> bool:
+def delete_ticket(id: str, event: Event) -> bool:
     with Session(engine) as session:
-        ticket = session.get(Ticket, id)
-        if ticket is None:
-            return False
-        
-        ticket.deleted_at = datetime.now(timezone.utc)
-        ticket.updated_at = datetime.now(timezone.utc)
-        session.commit()
+        with session.begin():
+            ticket = session.get(Ticket, id)
+            if ticket is None:
+                return False
+
+            ticket.deleted_at = datetime.now(timezone.utc)
+            ticket.updated_at = datetime.now(timezone.utc)
+            
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value, #maybe wrong
+                new_value=event.new_value, 
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+            session.add(event)
+
         return True
 
 def delete_all_tickets() -> int:

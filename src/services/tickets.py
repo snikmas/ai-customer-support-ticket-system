@@ -47,7 +47,6 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
 
     ticket = operations.create_ticket(ticket, event)
 
-
     return _to_api_ticket(ticket)
 
 
@@ -173,8 +172,22 @@ def delete_ticket(id: str, requester: api_models.User) -> None:
         if check_for_access(requester.role, constants.Role.ADMIN) is False: 
             raise PermissionError
     
-    if operations.delete_ticket(id) is False:
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.TICKET,
+        entity_id=ticket.id,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.TICKET_DELETED,
+        old_value=json.dumps({"deleted_at": None}),
+        new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+        metadata=None,
+        created_at=ticket.created_at
+    )
+
+
+    if operations.delete_ticket(id, event) is False:
         raise ValueError("Some error during deleting, the operation cancelled")
+    
 
 def delete_all_tickets(requester: api_models.User) -> int:
     user = operations.get_user(requester.id)

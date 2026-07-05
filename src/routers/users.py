@@ -45,7 +45,7 @@ async def create_user(cur_user: models.UserCreate):
     try:
         data = s_users.create_user(cur_user)
         if data:
-            user = models.UserResponse.model_validate(data)
+            user = models.UserResponse.model_validate(data, from_attributes=True)
     except ValueError:
         raise HTTPException(404, detail="Value Error")
     except PermissionError:
@@ -95,4 +95,3 @@ async def delete_all_users(requester = Depends(get_current_user)):
         raise HTTPException(400, detail="Permission Error")
     return {"data": f"Deleted: {data}"}
     
-
