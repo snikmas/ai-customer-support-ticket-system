@@ -2,36 +2,34 @@ from typing import List, Optional
 from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime, timedelta
-from src.constants import Role, Category, Priority, Status, Tag, UserStatus
+from src.constants import Role, Category, Priority, Status, Tag, UserStatus, EventType, EntityType
 from sqlalchemy.dialects.postgresql import ARRAY
 
-# orm models
 
 class Base(DeclarativeBase):
     pass
 
 class Ticket(Base):
     __tablename__ = 'tickets'
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    title: Mapped[str] = mapped_column(String(255))
-    description: Mapped[str] = mapped_column(String(32000))
-    category: Mapped[Category] = mapped_column(Enum(Category))
-    # tags: Mapped[List[str]] = mapped_column(ARRAY(String(50)), nullable=True)
-    tags: Mapped[str] = mapped_column(String(200), nullable=True)
-    assigned_agent_id: Mapped[Optional[str]] = mapped_column(
-        String(36), 
-        ForeignKey('users.id', ondelete='SET NULL'),
-        nullable=True)
-    creator_user_id: Mapped[str] = mapped_column(
+    id:                 Mapped[str] = mapped_column(String(36), primary_key=True)
+    title:              Mapped[str] = mapped_column(String(255))
+    description:        Mapped[str] = mapped_column(String(32000))
+    category:           Mapped[Category] = mapped_column(Enum(Category))
+    tags:               Mapped[str] = mapped_column(String(200), nullable=True)
+    assigned_agent_id:  Mapped[Optional[str]] = mapped_column(
+                String(36), 
+                ForeignKey('users.id', ondelete='SET NULL'),
+                nullable=True)
+    creator_user_id:    Mapped[str] = mapped_column(
         String(36),
         ForeignKey('users.id', ondelete='SET NULL')
         )
-    status: Mapped[Status] = mapped_column(Enum(Status))
-    priority: Mapped[Priority] = mapped_column(Enum(Priority))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status:             Mapped[Status] = mapped_column(Enum(Status))
+    priority:           Mapped[Priority] = mapped_column(Enum(Priority))
+    updated_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # due_at: Mapped[Optonal[timedelta]] = mapped_column(Interval)
 
@@ -76,6 +74,22 @@ class User(Base):
                 f"updated_at={self.updated_at!r}, created_at={self.created_at!r})")
     
 
+class Event(Base):
+    __tablename__ = 'events'
+    id:             Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    entity_type:    Mapped[EntityType] = mapped_column(Enum(EntityType), nullable=False)
+    entity_id:      Mapped[str] = mapped_column(String(36), nullable=True) #whcih exact object changed
+    actor_user_id:  Mapped[str] = mapped_column(
+                        String(36),
+	                        ForeignKey('users.id', ondelete='SET NULL'),
+                        nullable=False)
+    event_type:     Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
+    old_value:      Mapped[str] = mapped_column(String(255), nullable=True)
+    new_value:      Mapped[str] = mapped_column(String(255), nullable=False)
+    metadata_:      Mapped[str] = mapped_column("metadata", String(200), nullable=True) #additional info
+    created_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
 
 # ========================== APP ==============================
 class RefreshSession(Base):
@@ -89,4 +103,3 @@ class RefreshSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-

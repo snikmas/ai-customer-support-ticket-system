@@ -1,7 +1,7 @@
 from datetime import datetime
 from .permissions import check_for_access
 from src import constants
-from src.models import models as api_models
+from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
 from src.core import hash_password

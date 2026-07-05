@@ -1,13 +1,19 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from .permissions import check_for_access
 from src import constants
 
-from src.models import models as api_models
+from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
+import json
+
+def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
+    if ticket.tags is None or isinstance(ticket.tags, str):
+        ticket.tags = constants.deserialize_tags(ticket.tags)
+    return api_models.Ticket.model_validate(ticket, from_attributes=True)
 
 def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.User) -> api_models.Ticket:
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     if (check_for_access(requester.role, constants.Role.USER)) is False:
         raise PermissionError
@@ -27,8 +33,22 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         deleted_at=None
     )
     
-    ticket = api_models.Ticket(operations.create_ticket(ticket))
-    return ticket
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.TICKET,
+        entity_id=ticket.id,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.TICKET_CREATED,
+        old_value=None,
+        new_value=json.dumps({"ticket_id": ticket.id}), #?
+        metadata=None,
+        created_at=now
+    )
+
+    ticket = operations.create_ticket(ticket, event)
+
+
+    return _to_api_ticket(ticket)
 
 
 def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im not sure is it a db ticket or api model
@@ -39,12 +59,7 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im no
     if ticket is None or (ticket.deleted_at is not None and check_for_access(requester.role, constants.Role.ADMIN)):
         raise ValueError("ticket_not_found")
 
-    if ticket.tags:
-        ticket.tags = constants.deserialize_tags(ticket.tags)
-    
-    ticket.tags = constants.deserialize_tags(ticket.tags)
-
-    return api_models.Ticket(ticket)
+    return _to_api_ticket(ticket)
 
 
 def get_all_tickets(requester: api_models.User) -> list[api_models.Ticket]:
@@ -52,23 +67,22 @@ def get_all_tickets(requester: api_models.User) -> list[api_models.Ticket]:
     tickets = operations.get_tickets()
 
     
-    for ticket in tickets:
-        if ticket.tags: ticket.tags = constants.deserialize_tags(ticket.tags)
-    
     if check_for_access(requester.role, constants.Role.ADMIN):
-        return tickets
+        return [_to_api_ticket(ticket) for ticket in tickets]
     
-    tickets = [api_models.Ticket(ticket) for ticket in tickets if ticket.deleted_at is None and ticket.creator_user_id == requester.id]
+    tickets = [_to_api_ticket(ticket) for ticket in tickets if ticket.deleted_at is None and ticket.creator_user_id == requester.id]
 
     return tickets
 
 def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> api_models.Ticket:
     ticket = operations.get_ticket(updated_info_id)
-    if ticket is None or (ticket.deleted_at is not None and check_for_access(requester.role, constants.Role.MANAGER)):
+    if ticket is None or ticket.deleted_at is not None:
         raise ValueError("ticket_not_found")
 
     # ================= STANDARTIZATION PROCESS ========================
+    audit_new_info = updated_info.model_dump(exclude_unset=True, mode="json")
     updated_info = updated_info.model_dump(exclude_unset=True)
+    
 
     if not updated_info:
         raise ValueError("empty_update")
@@ -86,7 +100,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             return None
             
     elif requester.role == constants.Role.AGENT:
-        allowed_fields = {"status", "category"}
+        allowed_fields = {"status"}
 
         if requested_fields - allowed_fields:
             return None
@@ -100,7 +114,6 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             "status",
             "assigned_agent_id",
             "priority",
-            "category",
             }
         if requested_fields - allowed_fields: return None
     else:
@@ -110,17 +123,45 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         agent = operations.get_user(updated_info['assigned_agent_id'])
         if agent is None:
             return None
+        if agent.role not in [constants.Role.AGENT, constants.Role.MANAGER]:
+            return None
 
 
     if "status" in requested_fields:
         if constants.is_valid_status_transition(ticket.status, updated_info['status']) is False:
             return None
+        
+    
+    old_info = {}
+    for field in updated_info:
+        old_value = getattr(ticket, field)
 
-    ticket = operations.update_ticket(updated_info_id, updated_info)
-    ticket['tags'] = constants.deserialize_tags(ticket['tags'])
+        if field == 'tags':
+            old_info[field] = [tag.value for tag in constants.deserialize_tags(old_value)]
+        elif hasattr(old_value, 'value'):
+            old_info[field] = old_value.value
+        else:
+            old_info[field] = old_value
+
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.TICKET,
+        entity_id=ticket.id,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.TICKET_UPDATED,
+        old_value=json.dumps(old_info),
+        new_value=json.dumps(audit_new_info),
+        metadata=None,
+        created_at=datetime.now(timezone.utc)
+    )
+
+
+    ticket = operations.update_ticket(updated_info_id, updated_info, event)
+
     if ticket is None:
         raise ValueError("Some error during updating, the operation canceled")
-    return api_models.Ticket(ticket)
+    
+    return _to_api_ticket(ticket)
 
 def delete_ticket(id: str, requester: api_models.User) -> None:
     ticket = operations.get_ticket(id)
@@ -166,12 +207,24 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     if ticket.status != constants.Status.NEW:
         raise ValueError("ticket_not_new")
     
+
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.TICKET,
+        entity_id=ticket.id,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.TICKET_CLAIMED,
+        old_value=json.dumps({"ticket_status": constants.Status.NEW.value}),
+        new_value=json.dumps({"ticket_status": constants.Status.IN_PROGRESS.value}),
+        metadata=None,
+        created_at=datetime.now(timezone.utc)
+    )
     
-    res = operations.claim_ticket(ticket_id, requester.id)
+    res = operations.claim_ticket(ticket_id, requester.id, event)
     if res is None:
         raise ValueError("ticket_not_found")
     
-    return res
+    return _to_api_ticket(res)
 
 
 def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> api_models.Ticket | None:
@@ -190,6 +243,18 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
 
     if requester.role == agent.role: return None
 
-    res = operations.assign_ticket(ticket.id, agent.id)
-    
-    return res
+    event = api_models.Event(
+       id=constants.generate_id(),
+       entity_type=constants.EntityType.TICKET,
+       entity_id=ticket.id,
+       actor_user_id=requester.id,
+       event_type=constants.EventType.TICKET_ASSIGNED,
+       old_value=json.dumps({"ticket.status": constants.Status.NEW.value, "assigned_agent_id": None}),
+       new_value=json.dumps({"ticket.status": constants.Status.IN_PROGRESS.value, "assigned_agent_id": agent_id}),
+       metadata=None,
+       created_at=datetime.now(timezone.utc)
+    )   
+
+    res = operations.assign_ticket(ticket.id, agent.id, event)
+
+    return _to_api_ticket(res)

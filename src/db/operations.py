@@ -1,9 +1,29 @@
 from sqlalchemy.orm import Session
 from .engine import engine
-from .models import Ticket, User, RefreshSession, UserStatus
+from .models import Ticket, User, RefreshSession, UserStatus, Event
 from sqlalchemy import Row, select, delete, update
 from datetime import datetime, timezone
 from src.constants import Status
+
+#   def do_business_action(...):
+#       with Session(engine) as session:
+#           with session.begin():
+
+
+#               # 2. change first table
+#               obj.some_field = "new value"
+
+#               # 3. insert second table row
+#               event = SomeHistoryModel(
+#                   # fields here
+#               )
+#               session.add(event)
+
+#           # session.begin() commits automatically if no exception
+#           # session.begin() rolls back automatically if exception happens
+
+#           session.refresh(obj)
+#           return obj
 
 # ==============================================================
 # ======================= SYSTEM ===============================
@@ -99,16 +119,18 @@ def get_users() -> list[User]:
 
 def update_user(id: str, new_info: dict) -> User | None:
     with Session(engine) as session:
-        user = session.get(User, id)
+        with session.begin():
+            user = session.get(User, id)
 
-        if user is None:
-            return None
-        
-        for field, value in new_info.items():
-            setattr(user, field, value)
-            
-        user.updated_at = datetime.now()
-        session.commit()
+            if user is None:
+                return None
+
+            for field, value in new_info.items():
+                setattr(user, field, value)
+            user.updated_at = datetime.now()
+
+
+        session.begin()
         session.refresh(user)
         return user
 
@@ -143,24 +165,38 @@ def delete_all_users() -> int:
 # ==============================================================
 # ======================= TICKETS ==============================
 
-def create_ticket(ticket_data: Ticket) -> Ticket:
+def create_ticket(ticket_data: Ticket, event: Event) -> Ticket:
     with Session(engine) as session:
-        ticket = Ticket(
-            id=ticket_data.id,
-            title=ticket_data.title,
-            description=ticket_data.description,
-            category=ticket_data.category,
-            tags=ticket_data.tags,
-            assigned_agent_id=ticket_data.assigned_agent_id,
-            creator_user_id=ticket_data.creator_user_id,
-            status=ticket_data.status,
-            priority=ticket_data.priority,
-            updated_at=ticket_data.updated_at,
-            created_at=ticket_data.created_at
-        )
+        with session.begin():
+            ticket = Ticket(
+                id=ticket_data.id,
+                title=ticket_data.title,
+                description=ticket_data.description,
+                category=ticket_data.category,
+                tags=ticket_data.tags,
+                assigned_agent_id=ticket_data.assigned_agent_id,
+                creator_user_id=ticket_data.creator_user_id,
+                status=ticket_data.status,
+                priority=ticket_data.priority,
+                updated_at=ticket_data.updated_at,
+                created_at=ticket_data.created_at
+            )
 
-        session.add(ticket)
-        session.commit()
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value,
+                new_value=event.new_value,
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+
+            session.add(ticket)
+            session.add(event)
+        session.refresh(ticket)
         return ticket
 
 def get_ticket(id: str) -> Ticket | None:
@@ -173,18 +209,32 @@ def get_tickets() -> list[Ticket]:
         query = select(Ticket)
         return session.scalars(query).all()
 
-def update_ticket(id: str, new_info: dict) -> Ticket | None:
+def update_ticket(id: str, new_info: dict, event: Event) -> Ticket | None:
     with Session(engine) as session:
-        ticket = session.get(Ticket, id)
+        with session.begin():
+            ticket = session.get(Ticket, id)
 
-        if ticket is None:
-            return None
+            if ticket is None:
+                return None
 
-        for field, value in new_info.items():
-            setattr(ticket, field, value)
-        ticket.updated_at = datetime.now(timezone.utc)
+            for field, value in new_info.items():
+                setattr(ticket, field, value)
+            ticket.updated_at = datetime.now(timezone.utc)
 
-        session.commit()
+            
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value, #maybe wrong
+                new_value=event.new_value, 
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+            session.add(event)
+
         session.refresh(ticket)
         return ticket
 
@@ -213,33 +263,61 @@ def delete_all_tickets() -> int:
         session.commit()
         return result.rowcount
 
-def claim_ticket(ticket_id: str, assigned_id: str) -> Ticket | None:
+def claim_ticket(ticket_id: str, assigned_id: str, event: Event) -> Ticket | None:
     with Session(engine) as session:
-        ticket = session.get(Ticket, ticket_id)
-        if ticket is None: return None
-        
-        agent = session.get(User, assigned_id)
-        if agent is None: return None
+        with session.begin():
+            ticket = session.get(Ticket, ticket_id)
+            if ticket is None: return None
 
-        ticket.assigned_agent_id = assigned_id
-        ticket.status = Status.IN_PROGRESS
-        ticket.updated_at = datetime.now(timezone.utc)
-        session.commit()
+            agent = session.get(User, assigned_id)
+            if agent is None: return None
+
+            ticket.assigned_agent_id = assigned_id
+            ticket.status = Status.IN_PROGRESS
+            ticket.updated_at = datetime.now(timezone.utc)
+
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value, #maybe wrong
+                new_value=event.new_value, 
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+
+            session.add(event)
         session.refresh(ticket)
         return ticket
 
-def assign_ticket(ticket_id: str, assigned_agent_id:str) -> Ticket | None:
+def assign_ticket(ticket_id: str, assigned_agent_id:str, event: Event) -> Ticket | None:
     with Session(engine) as session:
-        ticket = session.get(Ticket, ticket_id)
-        if ticket is None:
-            return None
-        
-        user = session.get(User, assigned_agent_id)
-        if user is None: return None
+        with session.begin():
+            ticket = session.get(Ticket, ticket_id)
+            if ticket is None:
+                return None
 
-        ticket.assigned_agent_id = user.id
-        ticket.status = Status.IN_PROGRESS
-        ticket.updated_at = datetime.now(timezone.utc)
-        session.commit()
+            user = session.get(User, assigned_agent_id)
+            if user is None: return None
+
+            ticket.assigned_agent_id = user.id
+            ticket.status = Status.IN_PROGRESS
+            ticket.updated_at = datetime.now(timezone.utc)
+            
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value, #maybe wrong
+                new_value=event.new_value, 
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+            session.add(event)
+
         session.refresh(ticket)
         return ticket
