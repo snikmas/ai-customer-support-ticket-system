@@ -30,6 +30,8 @@ class CreatedRefreshSession(BaseModel):
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
+class AssignTicketRequest(BaseModel):
+    agent_id: str
 
 # =====================================================
 # =================== TICKET ==========================

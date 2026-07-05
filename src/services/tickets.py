@@ -148,7 +148,7 @@ def delete_all_tickets(requester: api_models.User) -> int:
     return deleted_tickets
 
 
-def claim_ticket(ticket_id: str, requester: api_models.User) -> db_models.Ticket:
+def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticket | None:
     ticket = operations.get_ticket(ticket_id)
     
     if ticket is None:
@@ -166,8 +166,30 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> db_models.Ticket
     if ticket.status != constants.Status.NEW:
         raise ValueError("ticket_not_new")
     
+    
     res = operations.claim_ticket(ticket_id, requester.id)
     if res is None:
         raise ValueError("ticket_not_found")
+    
+    return res
+
+
+def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> api_models.Ticket | None:
+    ticket = operations.get_ticket(ticket_id)
+
+    if ticket is None:
+        raise ValueError("ticket_not_found")
+    
+    agent = operations.get_user(agent_id)
+    if agent is None:
+        raise ValueError("ticket_not_found")
+    
+    if check_for_access(requester.role, constants.Role.MANAGER) is False: return None
+
+    if agent.role not in [constants.Role.AGENT, constants.Role.MANAGER]: return None
+
+    if requester.role == agent.role: return None
+
+    res = operations.assign_ticket(ticket.id, agent.id)
     
     return res

@@ -77,9 +77,21 @@ async def delete_all_tickets(requester = Depends(get_current_user)):
     return {'data': data}
 
 @router.post("/{ticket_id}/claim", status_code=200)
-async def claim_ticket(ticket_id: str, requester = Depends(get_current_user)):
+async def claim_ticket(ticket_id: str, requester: models.User = Depends(get_current_user)):
     try:
         data = s_tickets.claim_ticket(ticket_id, requester)
+    except PermissionError:
+        raise HTTPException(403, detail="Permission Error")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+    
+    return {'data': data}
+
+#   POST /tickets/{ticket_id}/assign
+@router.post("/{ticket_id}/assign", status_code=200)
+async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRequest, requester: models.User = Depends(get_current_user)):
+    try:
+        data = s_tickets.assign_ticket(ticket_id, assign_ticket_req.agent_id, requester)
     except PermissionError:
         raise HTTPException(403, detail="Permission Error")
     except ValueError as exc:

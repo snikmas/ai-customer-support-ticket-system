@@ -216,10 +216,28 @@ def delete_all_tickets() -> int:
 def claim_ticket(ticket_id: str, assigned_id: str) -> Ticket | None:
     with Session(engine) as session:
         ticket = session.get(Ticket, ticket_id)
-        if ticket is None:
-            return None
+        if ticket is None: return None
+        
+        agent = session.get(User, assigned_id)
+        if agent is None: return None
 
         ticket.assigned_agent_id = assigned_id
+        ticket.status = Status.IN_PROGRESS
+        ticket.updated_at = datetime.now(timezone.utc)
+        session.commit()
+        session.refresh(ticket)
+        return ticket
+
+def assign_ticket(ticket_id: str, assigned_agent_id:str) -> Ticket | None:
+    with Session(engine) as session:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is None:
+            return None
+        
+        user = session.get(User, assigned_agent_id)
+        if user is None: return None
+
+        ticket.assigned_agent_id = user.id
         ticket.status = Status.IN_PROGRESS
         ticket.updated_at = datetime.now(timezone.utc)
         session.commit()
