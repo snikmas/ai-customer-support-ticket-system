@@ -1,13 +1,24 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from .permissions import check_for_access
 from src import constants
 from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
 from src.core import hash_password
+import json
+
+def _audit_value(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "value"):
+        return value.value
+    return value
+
+def _audit_json(data: dict) -> str:
+    return json.dumps({key: _audit_value(value) for key, value in data.items()})
 
 def create_user(user_data: api_models.UserCreate) -> db_models.User:
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     user = db_models.User(
         id=constants.generate_id(),
@@ -25,7 +36,25 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
     if len(operations.get_users()) == 0:
         user.role = constants.Role.SUPER_ADMIN
 
-    operations.create_user(user)
+    
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.USER,
+        entity_id=user.id,
+        actor_user_id=user.id,
+        event_type=constants.EventType.USER_CREATED,
+        old_value=None,
+        new_value=_audit_json({
+            "id": user.id,
+            "nickname": user.nickname,
+            "role": user.role,
+            "user_status": constants.UserStatus.ACTIVE,
+        }),
+        metadata=None,
+        created_at=now
+    )
+
+    operations.create_user(user, event)
     return user
 
 def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sure is it a db user or api model
@@ -48,40 +77,89 @@ def get_all_users(requester: api_models.User) -> list[db_models.User]:
     return operations.get_users()
 
 def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, requester: api_models.User) -> db_models.User:
-    user = operations.get_user(requester.id)
+    requester = operations.get_user(requester.id)
+    if requester is None:
+        raise ValueError("user_not_found")
+    
+    user = operations.get_user(updated_info_id)
     if user is None:
         raise ValueError("user_not_found")
 
+    audit_new_info = updated_info.model_dump(exclude_unset=True, mode="json")
     updated_info = updated_info.model_dump(exclude_unset=True)
     if not updated_info:
         raise ValueError("empty_update")
 
     if any(key in updated_info for key in ['updated_at', 'created_at']): return None #no one can change it
+    if requester.id != updated_info_id:
+        if check_for_access(requester.role, constants.Role.ADMIN) is False:
+            raise PermissionError
+
     if any(key in updated_info for key in ['role', 'user_status', 'deleted_at']):
-        updated_info['role'] = constants.Role[updated_info['role'].upper()]
-        if user.id != updated_info_id:
-            if check_for_access(user.role, constants.Role.ADMIN) is False:
-                raise PermissionError
+        if check_for_access(requester.role, constants.Role.ADMIN) is False:
+            raise PermissionError
+        if 'role' in updated_info and updated_info['role'] is not None:
+            updated_info['role'] = constants.Role[updated_info['role'].upper()]
     
     if 'password' in updated_info:
         updated_info['password'] = hash_password(updated_info['password'])
+        audit_new_info['password'] = "<changed>"
 
-    res = operations.update_user(updated_info_id, updated_info)
+    old_info = {}
+    for field in updated_info:
+        if field == 'password':
+            old_info[field] = "<changed>"
+        else:
+            old_info[field] = _audit_value(getattr(user, field))
+    updated_info['updated_at'] = datetime.now(timezone.utc)
+
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.USER,
+        entity_id=user.id,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.USER_UPDATED,
+        old_value=_audit_json(old_info),
+        new_value=json.dumps(audit_new_info),
+        metadata=None,
+        created_at=datetime.now(timezone.utc)
+    )
+
+    res = operations.update_user(updated_info_id, updated_info, event)
     if res is None:
         raise ValueError("Some error during updating, the operation canceled")
     return res
 
 def delete_user(id: str, reqiester_user: api_models.User) -> None:
-    user = operations.get_user(reqiester_user.id) # if its exist?
+    requester = operations.get_user(reqiester_user.id) # if its exist?
 
+    if requester is None:
+        raise ValueError("user_not_found")
+    
+    user = operations.get_user(id)
     if user is None:
         raise ValueError("user_not_found")
 
-    if user.id != id:
-        if check_for_access(user.role, constants.Role.ADMIN) is False: 
+    if requester.id != id:
+        if check_for_access(requester.role, constants.Role.ADMIN) is False: 
             raise PermissionError
     
-    if operations.delete_user(id) is not True:
+    now = datetime.now(timezone.utc)
+    old_data = {'deleted_at': user.deleted_at, 'updated_at': user.updated_at, 'user_status': user.user_status}
+    new_data = {'deleted_at': now, "updated_at": now, 'user_status': constants.UserStatus.DELETED}
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.USER,
+        entity_id=user.id,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.USER_DELETED,
+        old_value=_audit_json(old_data),
+        new_value=_audit_json(new_data),
+        metadata=None,
+        created_at=now
+    )
+
+    if operations.delete_user(id, event) is not True:
         raise ValueError("Some error during deleting, the operation cancelled")
 
 

@@ -76,26 +76,39 @@ def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, r
 
 # ==============================================================
 # ======================= USER =================================
-def create_user(user_data: User) -> User:
+def create_user(user_data: User, event: Event) -> User:
     with Session(engine) as session:
-        user = User(  
-            id=user_data.id,
-            nickname=user_data.nickname,
-            avatar_url=user_data.avatar_url,
-            first_name=user_data.first_name,
-            last_name=user_data.last_name,
-            phone=user_data.phone,
-            email=user_data.email,
-            role=user_data.role,
-            password=user_data.password,
-            updated_at=user_data.updated_at,
-            created_at=user_data.created_at,
-            deleted_at=None,
-            user_status=UserStatus.ACTIVE # by default
-        )
+        with session.begin():
+            user = User(  
+                id=user_data.id,
+                nickname=user_data.nickname,
+                avatar_url=user_data.avatar_url,
+                first_name=user_data.first_name,
+                last_name=user_data.last_name,
+                phone=user_data.phone,
+                email=user_data.email,
+                role=user_data.role,
+                password=user_data.password,
+                updated_at=user_data.updated_at,
+                created_at=user_data.created_at,
+                deleted_at=None,
+                user_status=UserStatus.ACTIVE # by default
+            )
 
-        session.add(user)
-        session.commit()
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value,
+                new_value=event.new_value,
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+
+            session.add(event)
+            session.add(user)
     return user # it error -> it throws exception
 
 def get_user(id: str) -> User | None:
@@ -117,7 +130,7 @@ def get_users() -> list[User]:
         query = select(User)
         return session.scalars(query).all()
 
-def update_user(id: str, new_info: dict) -> User | None:
+def update_user(id: str, new_info: dict, event: Event) -> User | None:
     with Session(engine) as session:
         with session.begin():
             user = session.get(User, id)
@@ -127,24 +140,53 @@ def update_user(id: str, new_info: dict) -> User | None:
 
             for field, value in new_info.items():
                 setattr(user, field, value)
-            user.updated_at = datetime.now()
+            user.updated_at = datetime.now(timezone.utc)
 
 
-        session.begin()
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value,
+                new_value=event.new_value,
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+
+            session.add(event)
+        
         session.refresh(user)
+
         return user
 
 
-def delete_user(id: str) -> bool:
+def delete_user(id: str, event: Event) -> bool:
     with Session(engine) as session:
-        # more layer safety:
-        user = session.get(User, id)
-        if user is None:
-            return False
-        
-        user.deleted_at = datetime.now(timezone.utc)
-        user.user_status = UserStatus.DELETED
-        session.commit()
+        with session.begin():
+            user = session.get(User, id)
+            if user is None:
+                return False
+
+            now = datetime.now(timezone.utc)
+            user.deleted_at = now
+            user.updated_at = now
+            user.user_status = UserStatus.DELETED
+            
+            event = Event(
+                id=event.id,
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                actor_user_id=event.actor_user_id,
+                event_type=event.event_type,
+                old_value=event.old_value,
+                new_value=event.new_value,
+                metadata_=event.metadata,
+                created_at=event.created_at
+            )
+
+            session.add(event)
         return True 
         
 def delete_all_users() -> int:
