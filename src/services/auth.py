@@ -26,16 +26,32 @@ def login_user(identifier: str, password: str) -> User | None:
         return user
     return None
 
-def logout_user(identifier: str) -> User | None:
+def logout_user(refresh_token_raw: str) -> bool:
 
-    if '@' in identifier: #its an email
-        user = operations.get_user_by_email(identifier)
-    else:
-        user = operations.get_user_by_nickname(identifier)
-    if user is None:
-        return  None
+    # 1. get session
+    hashed_token = hash_token(refresh_token_raw)
+    session = operations.get_refresh_session_by_hash_refresh_token(hashed_token)
+    if session is None: return None
+
+    res = operations.revoke_refresh_session(session.id)
     
-    operations.revoke_refresh_session()
+
+    event = Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.TICKET,
+        entity_id=session.id,
+        actor_user_id=session.user_id,
+        event_type=constants.EventType.REFRESH_SESSION_REVOKED,
+        old_value=constants._audit_json({"revoked_at": session.revoked_at}),
+        new_value=constants._audit_json({"revoked_at": datetime.now()}),
+        metadata=None,
+        created_at=datetime.now()
+    )
+    
+    res_event = operations.create_event(event)
+    if res_event is False or res is False:
+        return False
+    return True
 
 
 def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | None:
@@ -125,5 +141,4 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     if updated_session: 
         return TokenResponse(access_token=new_access_token, refresh_token=new_raw_refresh_token)
     return None
-
 

@@ -33,11 +33,10 @@ def get_refresh_session_by_hash_refresh_token(hash_token: str) -> RefreshSession
 def revoke_refresh_session(session_id: str) -> bool:
     with Session(engine) as session:
         refresh_session = get_refresh_session_by_id(session_id)
-        if refresh_session is None: 
-            return False
-        session.delete(refresh_session)
-        session.commit()
-        return True
+        refresh_session.revoked_at = datetime.now(timezone.utc)
+    
+    
+    return True
 
 def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, revoked_at) -> RefreshSession | None:
     with Session(engine) as session:

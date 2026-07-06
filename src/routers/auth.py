@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from src import models, db, constants
 from src.services import *
 from src.dependencies import *
-
+from datetime import datetime, timezone
 router = APIRouter(
     prefix="/auth",
     tags=["auth"]
@@ -55,5 +55,14 @@ def refresh(refresh_request: models.RefreshTokenRequest) -> models.TokenResponse
     return token_response
 
 @router.post("/logout")
-def logout():
+def logout(logout_req: models.LogoutRequest):
+    if logout_req.refresh_token is None:
+        raise HTTPException(400, "No Data")
+
+    res = logout_user(logout_req.refresh_token)
+
+    if res is None:
+        raise HTTPException(400, detail="Sometihng went wrong")
+
     
+    return {"Data": "Bye!"}

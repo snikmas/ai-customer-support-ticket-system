@@ -25,6 +25,9 @@ class CreatedRefreshSession(BaseModel):
     refresh_session_id: str
     refresh_token: str
 
+class LogoutRequest(BaseModel):
+    refresh_token: str
+    
 
 class Event(BaseModel):
     id: str
@@ -37,4 +40,5 @@ class Event(BaseModel):
     batch_id: str | None = None
     metadata: str | None = None
     created_at: datetime
+
 
