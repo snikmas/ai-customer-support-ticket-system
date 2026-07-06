@@ -42,3 +42,5 @@ class RefreshTokenRequest(BaseModel):
 
 class AssignTicketRequest(BaseModel):
     agent_id: str
+
+

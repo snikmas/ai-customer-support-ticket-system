@@ -20,7 +20,6 @@ class Comment(BaseModel):
     source: Source
 
 class CommentCreate(BaseModel):
-    ticket_id: str
     body: str
     visibility: Visibility
 
@@ -31,3 +30,4 @@ class CommentCreate(BaseModel):
 class CommentUpdate(BaseModel):
     body: str | None = None
     visibility: Visibility | None = None
+

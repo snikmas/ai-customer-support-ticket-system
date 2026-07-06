@@ -145,7 +145,7 @@ def delete_user(id: str, reqiester_user: api_models.User) -> None:
     
     now = datetime.now(timezone.utc)
     old_data = {'deleted_at': user.deleted_at, 'updated_at': user.updated_at, 'user_status': user.user_status}
-    new_data = {'deleted_at': now, "updated_at": now, 'user_status': constants.UserStatus.DELETED}
+    delete_info = {'deleted_at': now, "updated_at": now, 'user_status': constants.UserStatus.DELETED}
     event = api_models.Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.USER,
@@ -153,12 +153,12 @@ def delete_user(id: str, reqiester_user: api_models.User) -> None:
         actor_user_id=requester.id,
         event_type=constants.EventType.USER_DELETED,
         old_value=constants._audit_json(old_data),
-        new_value=constants._audit_json(new_data),
+        new_value=constants._audit_json(delete_info),
         metadata=None,
         created_at=now
     )
 
-    if operations.delete_user(id) is not True:
+    if operations.delete_user(id, delete_info) is not True:
         raise ValueError("Some error during deleting, the operation cancelled")
     
     res = operations.create_event(event)

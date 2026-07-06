@@ -87,7 +87,6 @@ async def claim_ticket(ticket_id: str, requester: models.User = Depends(get_curr
     
     return {'data': data}
 
-#   POST /tickets/{ticket_id}/assign
 @router.post("/{ticket_id}/assign", status_code=200)
 async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRequest, requester: models.User = Depends(get_current_user)):
     try:
@@ -98,3 +97,12 @@ async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRe
         raise HTTPException(400, detail=str(exc))
     
     return {'data': data}
+
+
+@router.get("/{ticket_id}/comments", status_code=200)
+async def get_ticket_comments(ticket_id: str, requester: models.User = Depends(get_current_user)):
+    pass
+
+@router.patch("/{ticked_id}/comment", status_code=200)
+async def create_ticket_comment(ticked_id: str, comment: models.CommentCreate, requester: models.User = Depends(get_current_user)):
+    pass

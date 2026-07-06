@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from .engine import engine
-from .models import Ticket, User, RefreshSession, UserStatus, Event
+from .models import Ticket, User, RefreshSession, UserStatus, Event, Comment
 from sqlalchemy import Row, select, delete, update
 from datetime import datetime, timezone
 from src.constants import Status
@@ -117,17 +117,15 @@ def update_user(id: str, new_info: dict) -> User | None:
         return user
 
 
-def delete_user(id: str) -> bool:
+def delete_user(id: str, delete_info: dict) -> bool:
     with Session(engine) as session:
         with session.begin():
             user = session.get(User, id)
             if user is None:
                 return False
 
-            now = datetime.now(timezone.utc)
-            user.deleted_at = now
-            user.updated_at = now
-            user.user_status = UserStatus.DELETED
+            for field, value in delete_info.items():
+                setattr(user, field, value)
 
         return True 
         
@@ -198,16 +196,15 @@ def update_ticket(id: str, new_info: dict) -> Ticket | None:
         return ticket
 
 
-def delete_ticket(id: str) -> bool:
+def delete_ticket(id: str, delete_info: dict) -> bool:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, id)
             if ticket is None:
                 return False
 
-            ticket.deleted_at = datetime.now(timezone.utc)
-            ticket.updated_at = datetime.now(timezone.utc)
-            
+            for field, value in delete_info.items():
+                setattr(ticket, field, value)
 
         return True
 
@@ -258,6 +255,60 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str) -> Ticket | None:
         session.refresh(ticket)
         return ticket
 
+
+# ==============================================================
+# ===================== COMMENTS ===============================
+def create_comment(comment_data: Comment) -> Comment | None:
+    with Session(engine) as session:
+        with session.begin():
+            # 1. 
+            comment = Comment(
+                id = comment_data.id,
+                ticket_id = comment_data.ticket_id,
+                author_user_id = comment_data.author_user_id,
+                body = comment_data.body,
+                visibility = comment_data.visibility,
+                created_at = comment_data.created_at,
+                updated_at = comment_data.updated_at,
+                parent_comment_id = comment_data.parent_comment_id,
+                attachments_count = comment_data.attachments_count,
+                source = comment_data.source
+            )
+
+            session.add(comment)
+
+        session.refresh(comment)
+        return comment
+
+def get_comment(comment_id: str) -> Comment | None:
+    with Session(engine) as session:
+        with session.begin():
+            comment = session.get(Comment, comment_id)
+            return comment
+
+
+def get_comments() -> list[Comment] | None:
+    with Session(engine) as session:
+        with session.begin():
+            query = select(Comment)
+            return session.scalars(query).all()
+
+
+def update_comment(comment_id: str, new_info: str) -> Comment | None:
+    with Session(engine) as session:
+        with session.begin():
+            pass
+
+def delete_comment(comment_id: str) -> bool:
+    with Session(engine) as session:
+        with session.begin():
+            comment = session.get(Comment, comment_id)
+            if comment is None:
+                return False
+            now = datetime.now(timezone.utc)
+            comment.deleted_at = now
+            comment.updated_at = now
+            use
 
 
 # ==============================================================

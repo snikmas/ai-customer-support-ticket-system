@@ -82,11 +82,12 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         raise ValueError("ticket_not_found")
 
     # ================= STANDARTIZATION PROCESS ========================
+    #for audit logs, json friendly
     audit_new_info = updated_info.model_dump(exclude_unset=True, mode="json")
+    # keeos python objects, for db
     updated_info = updated_info.model_dump(exclude_unset=True)
-    
 
-    if not updated_info:
+    if not updated_info or not audit_new_info:
         raise ValueError("empty_update")
 
     if 'tags' in updated_info and updated_info['tags'] is not None:
@@ -180,6 +181,12 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
     if ticket.creator_user_id != requester.id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False: 
             raise PermissionError
+
+    now = datetime.now(timezone.utc)
+    delete_info = {
+        "deleted_at": now,
+        "updated_at": now,
+    }
     
     event = api_models.Event(
         id=constants.generate_id(),
@@ -187,16 +194,16 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
         entity_id=ticket.id,
         actor_user_id=requester.id,
         event_type=constants.EventType.TICKET_DELETED,
-        old_value=json.dumps({"deleted_at": None}),
-        new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+        old_value=constants._audit_json({"deleted_at": ticket.deleted_at, "updated_at": ticket.updated_at}),
+        new_value=constants._audit_json(delete_info),
         metadata=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=now,
         batch_id=batch_info
     )
 
 
 
-    if operations.delete_ticket(id) is False:
+    if operations.delete_ticket(id, delete_info) is False:
         raise ValueError("Some error during deleting, the operation cancelled")
     
     event_res = operations.create_event(event)
