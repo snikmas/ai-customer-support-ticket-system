@@ -4,7 +4,7 @@ from src.core.security import verify_password, create_access_token, generate_ref
 from .permissions import check_for_access
 from src.db import operations
 from src.constants.helpers import generate_id
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def _refresh_session_audit_data(refresh_session) -> dict:
@@ -45,6 +45,9 @@ def logout_user(refresh_token_raw: str) -> bool:
 
     if session.revoked_at is not None:
         return False
+    if session.expires_at < datetime.now(timezone.utc):
+        return False
+    
     res = operations.revoke_refresh_session(session.id)
     if res is False: return False
 
@@ -55,9 +58,9 @@ def logout_user(refresh_token_raw: str) -> bool:
         actor_user_id=session.user_id,
         event_type=constants.EventType.REFRESH_SESSION_REVOKED,
         old_value=constants._audit_json({"revoked_at": session.revoked_at}),
-        new_value=constants._audit_json({"revoked_at": datetime.now()}),
+        new_value=constants._audit_json({"revoked_at": datetime.now(timezone.utc)}),
         metadata=None,
-        created_at=datetime.now()
+        created_at=datetime.now(timezone.utc)
     )
     
     res_event = operations.create_event(event)
@@ -67,7 +70,7 @@ def logout_user(refresh_token_raw: str) -> bool:
 
 
 def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | None:
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     raw_refresh_token = generate_refresh_token()
 
     refresh_session = RefreshSession(
@@ -108,7 +111,7 @@ def verify_refresh_session(raw_refresh_token: str) -> RefreshSession | None:
         
         session = operations.get_refresh_session_by_hash_refresh_token(refresh_hash_token)
         # check if user exist?
-        if session and session.revoked_at is None and session.expires_at > datetime.now():
+        if session and session.revoked_at is None and session.expires_at > datetime.now(timezone.utc):
             return session #even if its none, its ok
         return None
 
@@ -117,7 +120,7 @@ def verify_refresh_session(raw_refresh_token: str) -> RefreshSession | None:
     
 def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     new_raw_refresh_token = generate_refresh_token()
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     user = operations.get_user(cur_session.user_id)
     if user is None: return None
