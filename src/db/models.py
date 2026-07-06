@@ -1,8 +1,8 @@
 from typing import List, Optional
-from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime
+from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime, timedelta
-from src.constants import Role, Category, Priority, Status, Tag, UserStatus, EventType, EntityType
+from src.constants import Role, Category, Priority, Status, Tag, UserStatus, EventType, EntityType, Visibility, Source
 from sqlalchemy.dialects.postgresql import ARRAY
 
 
@@ -82,7 +82,7 @@ class Event(Base):
     entity_id:      Mapped[str] = mapped_column(String(36), nullable=True) #whcih exact object changed
     actor_user_id:  Mapped[str] = mapped_column(
                         String(36),
-	                        ForeignKey('users.id', ondelete='SET NULL'),
+                        ForeignKey('users.id', ondelete='SET NULL'),
                         nullable=False)
     event_type:     Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
     old_value:      Mapped[str] = mapped_column(String(255), nullable=True)
@@ -90,6 +90,35 @@ class Event(Base):
     new_value:      Mapped[str] = mapped_column(String(255), nullable=False)
     metadata_:      Mapped[str] = mapped_column("metadata", String(200), nullable=True) #additional info
     created_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Comment(Base):
+    __tablename__ = 'comments'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(
+                String(36),
+                ForeignKey('tickets.id', ondelete="RESTRICT"),
+                nullable=False)
+    author_user_id: Mapped[str] = mapped_column(
+                String(36),
+                ForeignKey('users.id', ondelete='SET NULL'))
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    visibility: Mapped[Visibility] = mapped_column(Enum(Visibility), nullable=False)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by_user_id: Mapped[str | None] = mapped_column(
+                String(36),
+                ForeignKey('users.id', ondelete='SET NULL'),
+                nullable=True)
+    parent_comment_id: Mapped[str | None] = mapped_column(
+                String(36),
+                ForeignKey('comments.id', ondelete='SET NULL', 
+                nullable=True)
+    )
+    attachments_count: Mapped[int] = mapped_column(default=0)
+    source: Mapped[Source] = mapped_column(Enum(Source), nullable=False)
 
 
 # ========================== APP ==============================
