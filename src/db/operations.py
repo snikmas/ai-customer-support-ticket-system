@@ -32,9 +32,12 @@ def get_refresh_session_by_hash_refresh_token(hash_token: str) -> RefreshSession
     
 def revoke_refresh_session(session_id: str) -> bool:
     with Session(engine) as session:
-        refresh_session = get_refresh_session_by_id(session_id)
-        refresh_session.revoked_at = datetime.now(timezone.utc)
-    
+        with session.begin():
+            refresh_session = session.get(RefreshSession, session_id)
+            if refresh_session is None:
+                return False
+            refresh_session.revoked_at = datetime.now(timezone.utc)
+
     
     return True
 
@@ -278,4 +281,3 @@ def create_event(event: Event) -> bool:
             )
             session.add(event)
     return True
-

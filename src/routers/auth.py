@@ -61,7 +61,7 @@ def logout(logout_req: models.LogoutRequest):
 
     res = logout_user(logout_req.refresh_token)
 
-    if res is None:
+    if res is not True:
         raise HTTPException(400, detail="Sometihng went wrong")
 
     

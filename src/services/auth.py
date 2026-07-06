@@ -7,6 +7,16 @@ from src.constants.helpers import generate_id
 from datetime import datetime, timedelta
 
 
+def _refresh_session_audit_data(refresh_session) -> dict:
+    return {
+        "id": refresh_session.id,
+        "user_id": refresh_session.user_id,
+        "expires_at": refresh_session.expires_at,
+        "revoked_at": refresh_session.revoked_at,
+        "created_at": refresh_session.created_at,
+    }
+
+
 def login_user(identifier: str, password: str) -> User | None:
 
     if '@' in identifier: #its an email
@@ -31,14 +41,14 @@ def logout_user(refresh_token_raw: str) -> bool:
     # 1. get session
     hashed_token = hash_token(refresh_token_raw)
     session = operations.get_refresh_session_by_hash_refresh_token(hashed_token)
-    if session is None: return None
+    if session is None: return False
 
     res = operations.revoke_refresh_session(session.id)
-    
+    if res is False: return False
 
     event = Event(
         id=constants.generate_id(),
-        entity_type=constants.EntityType.TICKET,
+        entity_type=constants.EntityType.REFRESH_SESSION,
         entity_id=session.id,
         actor_user_id=session.user_id,
         event_type=constants.EventType.REFRESH_SESSION_REVOKED,
@@ -49,7 +59,7 @@ def logout_user(refresh_token_raw: str) -> bool:
     )
     
     res_event = operations.create_event(event)
-    if res_event is False or res is False:
+    if res_event is False:
         return False
     return True
 
@@ -72,12 +82,12 @@ def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | Non
 
         event = Event(
             id=constants.generate_id(),
-            entity_type=constants.EntityType.TICKET,
+            entity_type=constants.EntityType.REFRESH_SESSION,
             entity_id=refresh_session.id,
-            actor_user_id=user_id.id,
+            actor_user_id=user_id,
             event_type=constants.EventType.REFRESH_SESSION_CREATED,
             old_value=None,
-            new_value=constants._audit_json(refresh_session),
+            new_value=constants._audit_json(_refresh_session_audit_data(refresh_session)),
             metadata=None,
             created_at=now
         )
@@ -121,24 +131,21 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
         hash_ref_token=hash_token(new_raw_refresh_token),
         created_at=now
         )
+    if updated_session is None:
+        return None
 
     event = Event(
         id=constants.generate_id(),
-        entity_type=constants.EntityType.TICKET,
+        entity_type=constants.EntityType.REFRESH_SESSION,
         entity_id=cur_session.id,
         actor_user_id=user.id,
         event_type=constants.EventType.REFRESH_SESSION_ROTATED,
         old_value=None,
-        new_value=constants._audit_json(updated_session),
+        new_value=constants._audit_json(_refresh_session_audit_data(updated_session)),
         metadata=None,
         created_at=now
     )
     res = operations.create_event(event)
     if res is False: return None
         
-    
-    
-    if updated_session: 
-        return TokenResponse(access_token=new_access_token, refresh_token=new_raw_refresh_token)
-    return None
-
+    return TokenResponse(access_token=new_access_token, refresh_token=new_raw_refresh_token)
