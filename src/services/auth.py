@@ -1,4 +1,4 @@
-from src.models import LoginRequest, TokenResponse, User, RefreshSession, CreatedRefreshSession
+from src.models import LoginRequest, TokenResponse, User, RefreshSession, CreatedRefreshSession, Event
 from src import constants
 from src.core.security import verify_password, create_access_token, generate_refresh_token, hash_token
 from .permissions import check_for_access
@@ -26,6 +26,18 @@ def login_user(identifier: str, password: str) -> User | None:
         return user
     return None
 
+def logout_user(identifier: str) -> User | None:
+
+    if '@' in identifier: #its an email
+        user = operations.get_user_by_email(identifier)
+    else:
+        user = operations.get_user_by_nickname(identifier)
+    if user is None:
+        return  None
+    
+    operations.revoke_refresh_session()
+
+
 def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | None:
     now = datetime.now()
     raw_refresh_token = generate_refresh_token()
@@ -41,6 +53,21 @@ def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | Non
     
     if operations.create_refresh_session(refresh_session): # is true
         created_session = CreatedRefreshSession(refresh_session_id=refresh_session.id, refresh_token=raw_refresh_token)
+
+        event = Event(
+            id=constants.generate_id(),
+            entity_type=constants.EntityType.TICKET,
+            entity_id=refresh_session.id,
+            actor_user_id=user_id.id,
+            event_type=constants.EventType.REFRESH_SESSION_CREATED,
+            old_value=None,
+            new_value=constants._audit_json(refresh_session),
+            metadata=None,
+            created_at=now
+        )
+        res = operations.create_event(event)
+        if res is False: return None
+        
         return created_session #return to client a raw thing
     return None
 
@@ -78,6 +105,22 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
         hash_ref_token=hash_token(new_raw_refresh_token),
         created_at=now
         )
+
+    event = Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.TICKET,
+        entity_id=cur_session.id,
+        actor_user_id=user.id,
+        event_type=constants.EventType.REFRESH_SESSION_ROTATED,
+        old_value=None,
+        new_value=constants._audit_json(updated_session),
+        metadata=None,
+        created_at=now
+    )
+    res = operations.create_event(event)
+    if res is False: return None
+        
+    
     
     if updated_session: 
         return TokenResponse(access_token=new_access_token, refresh_token=new_raw_refresh_token)

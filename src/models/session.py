@@ -34,5 +34,7 @@ class Event(BaseModel):
     event_type: EventType
     old_value: str | None = None
     new_value: str
+    batch_id: str | None = None
     metadata: str | None = None
     created_at: datetime
+

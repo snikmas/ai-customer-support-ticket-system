@@ -45,7 +45,10 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         created_at=now
     )
 
-    ticket = operations.create_ticket(ticket, event)
+    ticket = operations.create_ticket(ticket)
+    event_res = operations.create_event(event)
+    if event_res is False:
+        return None
 
     return _to_api_ticket(ticket)
 
@@ -154,15 +157,21 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         created_at=datetime.now(timezone.utc)
     )
 
+    # if status in updates (even with a few fields) -> still status changed
+    if 'status' in updated_info.keys():
+        event.event_type = constants.EventType.TICKET_STATUS_CHANGED
 
-    ticket = operations.update_ticket(updated_info_id, updated_info, event)
+    ticket = operations.update_ticket(updated_info_id, updated_info)
+    event_res = operations.create_event(event)
+    if event_res is False:
+        return None
 
     if ticket is None:
         raise ValueError("Some error during updating, the operation canceled")
     
     return _to_api_ticket(ticket)
 
-def delete_ticket(id: str, requester: api_models.User) -> None:
+def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = None) -> None:
     ticket = operations.get_ticket(id)
 
     if ticket is None:
@@ -181,12 +190,18 @@ def delete_ticket(id: str, requester: api_models.User) -> None:
         old_value=json.dumps({"deleted_at": None}),
         new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
         metadata=None,
-        created_at=ticket.created_at
+        created_at=datetime.now(timezone.utc),
+        batch_id=batch_info
     )
 
 
-    if operations.delete_ticket(id, event) is False:
+
+    if operations.delete_ticket(id) is False:
         raise ValueError("Some error during deleting, the operation cancelled")
+    
+    event_res = operations.create_event(event)
+    if event_res is False:
+        return None
     
 
 def delete_all_tickets(requester: api_models.User) -> int:
@@ -197,7 +212,43 @@ def delete_all_tickets(requester: api_models.User) -> int:
     if check_for_access(user.role, constants.Role.SUPER_ADMIN) is False:
         raise PermissionError
     
+    all_tickets = operations.get_tickets()
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.TICKET,
+        entity_id=None,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.TICKETS_BULK_DELETED,
+        old_value=json.dumps({"deleted_at": None}),
+        new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+        metadata=None,
+        created_at=datetime.now(timezone.utc),
+        batch_id=constants.generate_id()
+    )
+
+    # batch_id=constants.generate_id()
     deleted_tickets = operations.delete_all_tickets()
+    res = operations.create_event(event)
+    if res is False: return None
+
+    if all_tickets:
+        for ticket in all_tickets:
+            if ticket.deleted_at is None:
+                event_ticket = api_models.Event(
+                    id=constants.generate_id(),
+                    entity_type=constants.EntityType.TICKET,
+                    entity_id=ticket.id,
+                    actor_user_id=requester.id,
+                    event_type=constants.EventType.TICKET_DELETED,
+                    old_value=json.dumps({"deleted_at": None}),
+                    new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+                    metadata=None,
+                    created_at=datetime.now(timezone.utc),
+                    batch_id=event.batch_id
+                )
+                res = operations.create_event(event_ticket)
+                if res is False: return None
+            
     
     return deleted_tickets
 
@@ -243,8 +294,12 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
 def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> api_models.Ticket | None:
     ticket = operations.get_ticket(ticket_id)
 
+
     if ticket is None:
         raise ValueError("ticket_not_found")
+    is_reassign = False
+    if ticket.assigned_agent_id is not None:
+        is_reassign = True
     
     agent = operations.get_user(agent_id)
     if agent is None:
@@ -267,6 +322,9 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
        metadata=None,
        created_at=datetime.now(timezone.utc)
     )   
+
+    if is_reassign:
+        event.event_type = constants.EventType.TICKET_REASSIGNED
 
     res = operations.assign_ticket(ticket.id, agent.id, event)
 

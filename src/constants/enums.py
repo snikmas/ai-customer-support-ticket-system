@@ -80,13 +80,16 @@ class EventType(Enum):
     TICKET_ASSIGNED = 'Ticket Assigned'
     TICKET_REASSIGNED = 'Ticket Reassigned'
     TICKET_DELETED = 'Ticket Deleted'
+    TICKETS_BULK_DELETED = 'Tickets Bulk Deleted'
     TICKET_STATUS_CHANGED = 'Ticket Status Changed'
     TICKET_UPDATED = 'Ticket Updated'
     USER_CREATED = 'User Created'
+    USER_BULK_DELETED = 'Tickets Bulk Deleted'
     USER_UPDATED = 'User Updated'
     USER_DELETED = 'User Deleted'
     REFRESH_SESSION_CREATED = 'Refresh Session Created'
     REFRESH_SESSION_REVOKED = 'Refresh Session Revoked'
+    REFRESH_SESSION_ROTATED = 'Refresh Session Rotated'
 
 class EntityType(Enum):
     TICKET = 'Ticket'

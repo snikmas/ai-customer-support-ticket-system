@@ -2,6 +2,7 @@ import logging
 from uuid import uuid4
 from .enums import *
 import json
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,6 +57,14 @@ def serialize_tags(tags: list[Tag]) -> str:
 
 def deserialize_tags(raw: str) -> list[Tag]:
     return [Tag(value) for value in json.loads(raw or "[]")]
-    
 
     
+def _audit_value(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "value"):
+        return value.value
+    return value
+
+def _audit_json(data: dict) -> str:
+    return json.dumps({key: _audit_value(value) for key, value in data.items()})

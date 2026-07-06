@@ -56,4 +56,4 @@ def refresh(refresh_request: models.RefreshTokenRequest) -> models.TokenResponse
 
 @router.post("/logout")
 def logout():
-    pass
+    

@@ -7,15 +7,7 @@ from src.db import operations
 from src.core import hash_password
 import json
 
-def _audit_value(value):
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "value"):
-        return value.value
-    return value
 
-def _audit_json(data: dict) -> str:
-    return json.dumps({key: _audit_value(value) for key, value in data.items()})
 
 def create_user(user_data: api_models.UserCreate) -> db_models.User:
     now = datetime.now(timezone.utc)
@@ -44,7 +36,7 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         actor_user_id=user.id,
         event_type=constants.EventType.USER_CREATED,
         old_value=None,
-        new_value=_audit_json({
+        new_value=constants._audit_json({
             "id": user.id,
             "nickname": user.nickname,
             "role": user.role,
@@ -54,7 +46,10 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         created_at=now
     )
 
-    operations.create_user(user, event)
+    operations.create_user(user)
+    res = operations.create_event(event)
+    if res is False: return None
+
     return user
 
 def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sure is it a db user or api model
@@ -110,7 +105,7 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
         if field == 'password':
             old_info[field] = "<changed>"
         else:
-            old_info[field] = _audit_value(getattr(user, field))
+            old_info[field] = constants._audit_value(getattr(user, field))
     updated_info['updated_at'] = datetime.now(timezone.utc)
 
     event = api_models.Event(
@@ -119,15 +114,19 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
         entity_id=user.id,
         actor_user_id=requester.id,
         event_type=constants.EventType.USER_UPDATED,
-        old_value=_audit_json(old_info),
+        old_value=constants._audit_json(old_info),
         new_value=json.dumps(audit_new_info),
         metadata=None,
         created_at=datetime.now(timezone.utc)
     )
 
-    res = operations.update_user(updated_info_id, updated_info, event)
+    res = operations.update_user(updated_info_id, updated_info)
     if res is None:
         raise ValueError("Some error during updating, the operation canceled")
+    
+    res = operations.create_event(event)
+    if res is False: return None
+
     return res
 
 def delete_user(id: str, reqiester_user: api_models.User) -> None:
@@ -153,14 +152,17 @@ def delete_user(id: str, reqiester_user: api_models.User) -> None:
         entity_id=user.id,
         actor_user_id=requester.id,
         event_type=constants.EventType.USER_DELETED,
-        old_value=_audit_json(old_data),
-        new_value=_audit_json(new_data),
+        old_value=constants._audit_json(old_data),
+        new_value=constants._audit_json(new_data),
         metadata=None,
         created_at=now
     )
 
-    if operations.delete_user(id, event) is not True:
+    if operations.delete_user(id) is not True:
         raise ValueError("Some error during deleting, the operation cancelled")
+    
+    res = operations.create_event(event)
+    if res is False: return None
 
 
 def delete_all_users(requester: api_models.User) -> int:
@@ -170,6 +172,45 @@ def delete_all_users(requester: api_models.User) -> int:
     
     if check_for_access(requester.role, constants.Role.SUPER_ADMIN) is False:
         raise PermissionError
-    
+
+
+    users = operations.get_users()
+
     deleted_users = operations.delete_all_users()
+
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.USER,
+        entity_id=None,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.USER_BULK_DELETED,
+        old_value=json.dumps({"deleted_at": None}),
+        new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+        metadata=None,
+        created_at=datetime.now(timezone.utc),
+        batch_id=constants.generate_id()
+    )
+    
+    res = operations.create_event(event)
+    if res is False: return None
+
+
+    if users:
+        for user in users:
+            if user.user_status is not constants.UserStatus.DELETED:
+                event_user = api_models.Event(
+                    id=constants.generate_id(),
+                    entity_type=constants.EntityType.USER,
+                    entity_id=user.id,
+                    actor_user_id=requester.id,
+                    event_type=constants.EventType.USER_DELETED,
+                    old_value=json.dumps({"deleted_at": None}),
+                    new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+                    metadata=None,
+                    created_at=datetime.now(timezone.utc),
+                    batch_id=event.batch_id
+                )
+                res = operations.create_event(event_user)
+                if res is False: return None
+
     return deleted_users

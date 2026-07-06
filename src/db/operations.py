@@ -5,26 +5,6 @@ from sqlalchemy import Row, select, delete, update
 from datetime import datetime, timezone
 from src.constants import Status
 
-#   def do_business_action(...):
-#       with Session(engine) as session:
-#           with session.begin():
-
-
-#               # 2. change first table
-#               obj.some_field = "new value"
-
-#               # 3. insert second table row
-#               event = SomeHistoryModel(
-#                   # fields here
-#               )
-#               session.add(event)
-
-#           # session.begin() commits automatically if no exception
-#           # session.begin() rolls back automatically if exception happens
-
-#           session.refresh(obj)
-#           return obj
-
 # ==============================================================
 # ======================= SYSTEM ===============================
 def create_refresh_session(old_refresh_session: RefreshSession) -> RefreshSession | None:
@@ -76,7 +56,7 @@ def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, r
 
 # ==============================================================
 # ======================= USER =================================
-def create_user(user_data: User, event: Event) -> User:
+def create_user(user_data: User) -> User:
     with Session(engine) as session:
         with session.begin():
             user = User(  
@@ -95,19 +75,6 @@ def create_user(user_data: User, event: Event) -> User:
                 user_status=UserStatus.ACTIVE # by default
             )
 
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value,
-                new_value=event.new_value,
-                metadata_=event.metadata,
-                created_at=event.created_at
-            )
-
-            session.add(event)
             session.add(user)
     return user # it error -> it throws exception
 
@@ -130,7 +97,7 @@ def get_users() -> list[User]:
         query = select(User)
         return session.scalars(query).all()
 
-def update_user(id: str, new_info: dict, event: Event) -> User | None:
+def update_user(id: str, new_info: dict) -> User | None:
     with Session(engine) as session:
         with session.begin():
             user = session.get(User, id)
@@ -142,27 +109,13 @@ def update_user(id: str, new_info: dict, event: Event) -> User | None:
                 setattr(user, field, value)
             user.updated_at = datetime.now(timezone.utc)
 
-
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value,
-                new_value=event.new_value,
-                metadata_=event.metadata,
-                created_at=event.created_at
-            )
-
-            session.add(event)
         
         session.refresh(user)
 
         return user
 
 
-def delete_user(id: str, event: Event) -> bool:
+def delete_user(id: str) -> bool:
     with Session(engine) as session:
         with session.begin():
             user = session.get(User, id)
@@ -173,41 +126,29 @@ def delete_user(id: str, event: Event) -> bool:
             user.deleted_at = now
             user.updated_at = now
             user.user_status = UserStatus.DELETED
-            
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value,
-                new_value=event.new_value,
-                metadata_=event.metadata,
-                created_at=event.created_at
-            )
 
-            session.add(event)
         return True 
         
 def delete_all_users() -> int:
     with Session(engine) as session:
-
-        result = session.execute(
-            update(User)
-            .where(User.deleted_at.is_(None))
-            .values(
-                deleted_at=datetime.now(timezone.utc),
-                user_status=UserStatus.DELETED
+        with session.begin():
+            result = session.execute(
+                update(User)
+                .where(User.deleted_at.is_(None))
+                .values(
+                    deleted_at=datetime.now(timezone.utc),
+                    user_status=UserStatus.DELETED
+                )
             )
-        )
-        session.commit()
+
+
         return result.rowcount
 
 
 # ==============================================================
 # ======================= TICKETS ==============================
 
-def create_ticket(ticket_data: Ticket, event: Event) -> Ticket:
+def create_ticket(ticket_data: Ticket) -> Ticket:
     with Session(engine) as session:
         with session.begin():
             ticket = Ticket(
@@ -224,20 +165,8 @@ def create_ticket(ticket_data: Ticket, event: Event) -> Ticket:
                 created_at=ticket_data.created_at
             )
 
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value,
-                new_value=event.new_value,
-                metadata_=event.metadata,
-                created_at=event.created_at
-            )
-
             session.add(ticket)
-            session.add(event)
+
         session.refresh(ticket)
         return ticket
 
@@ -251,7 +180,7 @@ def get_tickets() -> list[Ticket]:
         query = select(Ticket)
         return session.scalars(query).all()
 
-def update_ticket(id: str, new_info: dict, event: Event) -> Ticket | None:
+def update_ticket(id: str, new_info: dict) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, id)
@@ -263,25 +192,11 @@ def update_ticket(id: str, new_info: dict, event: Event) -> Ticket | None:
                 setattr(ticket, field, value)
             ticket.updated_at = datetime.now(timezone.utc)
 
-            
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value, #maybe wrong
-                new_value=event.new_value, 
-                metadata_=event.metadata,
-                created_at=event.created_at
-            )
-            session.add(event)
-
         session.refresh(ticket)
         return ticket
 
 
-def delete_ticket(id: str, event: Event) -> bool:
+def delete_ticket(id: str) -> bool:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, id)
@@ -291,35 +206,24 @@ def delete_ticket(id: str, event: Event) -> bool:
             ticket.deleted_at = datetime.now(timezone.utc)
             ticket.updated_at = datetime.now(timezone.utc)
             
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value, #maybe wrong
-                new_value=event.new_value, 
-                metadata_=event.metadata,
-                created_at=event.created_at
-            )
-            session.add(event)
 
         return True
 
 def delete_all_tickets() -> int:
     with Session(engine) as session:
-        result = session.execute(
-            update(Ticket)
-            .where(Ticket.deleted_at.is_(None))
-            .values(
-                deleted_at=datetime.now(timezone.utc),
-                updated_at = datetime.now(timezone.utc)
-            ))
-
-        session.commit()
+        with session.begin():
+            result = session.execute(
+                update(Ticket)
+                .where(Ticket.deleted_at.is_(None))
+                .values(
+                    deleted_at=datetime.now(timezone.utc),
+                    updated_at = datetime.now(timezone.utc)
+                ))
+            
+        
         return result.rowcount
 
-def claim_ticket(ticket_id: str, assigned_id: str, event: Event) -> Ticket | None:
+def claim_ticket(ticket_id: str, assigned_id: str) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, ticket_id)
@@ -332,23 +236,10 @@ def claim_ticket(ticket_id: str, assigned_id: str, event: Event) -> Ticket | Non
             ticket.status = Status.IN_PROGRESS
             ticket.updated_at = datetime.now(timezone.utc)
 
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value, #maybe wrong
-                new_value=event.new_value, 
-                metadata_=event.metadata,
-                created_at=event.created_at
-            )
-
-            session.add(event)
         session.refresh(ticket)
         return ticket
 
-def assign_ticket(ticket_id: str, assigned_agent_id:str, event: Event) -> Ticket | None:
+def assign_ticket(ticket_id: str, assigned_agent_id:str) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, ticket_id)
@@ -361,7 +252,19 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event: Event) -> Ticket
             ticket.assigned_agent_id = user.id
             ticket.status = Status.IN_PROGRESS
             ticket.updated_at = datetime.now(timezone.utc)
-            
+
+        session.refresh(ticket)
+        return ticket
+
+
+
+# ==============================================================
+# ======================= EVENTS ===============================
+
+def create_event(event: Event) -> bool:
+    with Session(engine) as session:
+        with session.begin():
+            if event is None: return False
             event = Event(
                 id=event.id,
                 entity_type=event.entity_type,
@@ -371,9 +274,9 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event: Event) -> Ticket
                 old_value=event.old_value, #maybe wrong
                 new_value=event.new_value, 
                 metadata_=event.metadata,
-                created_at=event.created_at
+                created_at=event.created_at,
+                batch_id=event.batch_id
             )
             session.add(event)
+    return True
 
-        session.refresh(ticket)
-        return ticket

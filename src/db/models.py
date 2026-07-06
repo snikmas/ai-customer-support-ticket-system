@@ -86,6 +86,7 @@ class Event(Base):
                         nullable=False)
     event_type:     Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
     old_value:      Mapped[str] = mapped_column(String(255), nullable=True)
+    batch_id:       Mapped[str] = mapped_column(String(36), nullable=True, default=None)
     new_value:      Mapped[str] = mapped_column(String(255), nullable=False)
     metadata_:      Mapped[str] = mapped_column("metadata", String(200), nullable=True) #additional info
     created_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True))
