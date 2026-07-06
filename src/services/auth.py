@@ -43,6 +43,8 @@ def logout_user(refresh_token_raw: str) -> bool:
     session = operations.get_refresh_session_by_hash_refresh_token(hashed_token)
     if session is None: return False
 
+    if session.revoked_at is not None:
+        return False
     res = operations.revoke_refresh_session(session.id)
     if res is False: return False
 
