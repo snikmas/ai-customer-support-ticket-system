@@ -2,7 +2,6 @@ from datetime import datetime
 from pydantic import BaseModel
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType
 
-
 class Ticket(BaseModel):
     id: str
     title: str

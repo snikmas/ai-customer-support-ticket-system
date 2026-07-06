@@ -90,12 +90,27 @@ class EventType(Enum):
     REFRESH_SESSION_CREATED = 'Refresh Session Created'
     REFRESH_SESSION_REVOKED = 'Refresh Session Revoked'
     REFRESH_SESSION_ROTATED = 'Refresh Session Rotated'
+    COMMENT_CREATED = 'Comment Created'
+    COMMENT_UPDATED = 'Comment Updated'
+    COMMENT_DELETED = 'Comment Deleted'
 
 class EntityType(Enum):
     TICKET = 'Ticket'
     USER = 'User'
     REFRESH_SESSION = 'Refresh Session'
+    COMMENT = 'Comment'
 
+class Visibility(Enum):
+    PUBLIC = 'Public'
+    INTERNAL = 'Internal'
+    PRIVATE_TO_MANAGER = 'Private To Manager'
+
+class Source(Enum):
+    WEB = 'Web'
+    API = 'API'
+    EMAIL = 'Email'
+    BOT = 'Bot'
+    SYSTEM = 'System'
 
 #   NEW -> due_at = now + 2 hours
 #   OPEN -> due_at = now + 6 hours
