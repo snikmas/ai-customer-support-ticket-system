@@ -114,8 +114,8 @@ class Comment(Base):
                 nullable=True)
     parent_comment_id: Mapped[str | None] = mapped_column(
                 String(36),
-                ForeignKey('comments.id', ondelete='SET NULL', 
-                nullable=True)
+                ForeignKey('comments.id', ondelete='SET NULL'),
+                nullable=True
     )
     attachments_count: Mapped[int] = mapped_column(default=0)
     source: Mapped[Source] = mapped_column(Enum(Source), nullable=False)

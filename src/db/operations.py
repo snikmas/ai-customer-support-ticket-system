@@ -287,28 +287,43 @@ def get_comment(comment_id: str) -> Comment | None:
             return comment
 
 
-def get_comments() -> list[Comment] | None:
+def get_comments(ticket_id: str | None = None) -> list[Comment] | None:
     with Session(engine) as session:
         with session.begin():
             query = select(Comment)
+            if ticket_id is not None:
+                query = query.where(Comment.ticket_id == ticket_id)
             return session.scalars(query).all()
 
 
-def update_comment(comment_id: str, new_info: str) -> Comment | None:
+def update_comment(comment_id: str, new_info: dict) -> Comment | None:
     with Session(engine) as session:
         with session.begin():
-            pass
+            comment = session.get(Comment, comment_id)
+            if comment is None:
+                return None
 
-def delete_comment(comment_id: str) -> bool:
+            for field, value in new_info.items():
+                setattr(comment, field, value)
+            now = datetime.now(timezone.utc)
+            comment.updated_at = now
+            if "body" in new_info:
+                comment.edited_at = now
+
+        session.refresh(comment)
+        return comment
+
+def delete_comment(comment_id: str, delete_info: dict) -> bool:
     with Session(engine) as session:
         with session.begin():
             comment = session.get(Comment, comment_id)
             if comment is None:
                 return False
-            now = datetime.now(timezone.utc)
-            comment.deleted_at = now
-            comment.updated_at = now
-            use
+
+            for field, value in delete_info.items():
+                setattr(comment, field, value)
+
+        return True
 
 
 # ==============================================================

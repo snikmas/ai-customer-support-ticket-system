@@ -25,9 +25,8 @@ class CommentCreate(BaseModel):
 
     parent_comment_id: str | None = None
     attachments_count: int | None = None
-    soruce: Source
+    source: Source
 
 class CommentUpdate(BaseModel):
     body: str | None = None
     visibility: Visibility | None = None
-

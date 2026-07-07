@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from src import models, db, constants
-from src.services import users as s_users, tickets as s_tickets
+from src.services import users as s_users, tickets as s_tickets, comments as s_comments
 from src.dependencies import *
 
 router = APIRouter(
@@ -101,8 +101,26 @@ async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRe
 
 @router.get("/{ticket_id}/comments", status_code=200)
 async def get_ticket_comments(ticket_id: str, requester: models.User = Depends(get_current_user)):
-    pass
+    try:
+        data = s_comments.get_all_comments(ticket_id, requester)
+    except PermissionError:
+        raise HTTPException(403, detail="Permission Error")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
 
-@router.patch("/{ticked_id}/comment", status_code=200)
-async def create_ticket_comment(ticked_id: str, comment: models.CommentCreate, requester: models.User = Depends(get_current_user)):
-    pass
+    if data is None:
+        raise HTTPException(404, detail="ticket_not_found")
+    return {"data": data}
+
+@router.post("/{ticket_id}/comments", status_code=201)
+async def create_ticket_comment(ticket_id: str, comment: models.CommentCreate, requester: models.User = Depends(get_current_user)):
+    try:
+        data = s_comments.create_ticket_comment(ticket_id, comment, requester)
+    except PermissionError:
+        raise HTTPException(403, detail="Permission Error")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+    if data is None:
+        raise HTTPException(404, detail="ticket_not_found")
+    return {"data": data}
