@@ -1,153 +1,214 @@
 # AI Customer Support Ticket System
 
-Demo backend project for an AI-assisted customer support platform.
+Learning backend project for an AI-assisted customer support ticket system.
 
-The project is being built as a learning and interview-preparation project. The goal is to show how a real backend system can handle users, authentication, roles, support tickets, ticket workflow, and later AI-assisted ticket analysis.
+This repository is being built to practice real backend engineering concepts with
+FastAPI: users, authentication, role-based permissions, ticket workflows,
+comments, database models, service-layer logic, tests, and later AI-assisted
+ticket analysis.
+
+The project is intentionally backend-first. It is not a finished production
+system yet.
 
 ## Current Status
 
-This is a work-in-progress demo version.
-
 Implemented or started:
 
-- FastAPI application structure
-- SQLAlchemy database models
-- User and ticket CRUD logic
-- Service layer and database operation layer
-- Role-based permission checks
-- Password hashing on user creation and password updates
+- FastAPI application with router-based structure
+- SQLAlchemy models and local SQLite database setup
+- User registration, lookup, update, listing, and soft deletion
 - First registered user bootstrap as `SUPER_ADMIN`
-- JWT access-token login and Bearer-token authentication dependency
-- Refresh session model and refresh-token rotation flow
-- Soft delete behavior for users and tickets
-- User update rules for protected fields such as role, status, and password
-- Basic tests for users, tickets, and auth
+- Password hashing for user creation and password updates
+- JWT access-token login with `Authorization: Bearer <access_token>`
+- Refresh-token session model and token rotation flow
+- Logout endpoint that revokes a refresh token
+- Role-based permission checks in the service layer
+- Ticket creation, lookup, update, assignment, claiming, listing, and soft deletion
+- Ticket comments with create, read, update, delete, visibility, source, and soft-delete fields
+- Pagination and sorting support on user, ticket, and comment listing routes
+- Basic custom domain exception handling for some comment flows
+- Redis helper modules started for future caching/rate-limiting work
+- Pytest test modules for users, auth, tickets, and comments
 
-Planned next:
+Not finished yet:
 
-- Complete auth flow: logout and current-user endpoint
-- Ticket comments
-- Ticket history/events
-- Stronger workflow validation
-- Redis caching and rate limiting
-- Background worker for AI jobs
-- LLM-assisted ticket summary, priority classification, and reply suggestion
-- Docker Compose setup
-- Small React + JavaScript frontend demo
+- Consistent error response shape across all routers
+- Complete ticket history/event log
+- Stronger ticket workflow validation
+- Full Redis integration for caching and rate limiting
+- Background worker for AI analysis jobs
+- LLM-assisted summary, priority classification, duplicate detection, and reply suggestions
+- Docker / Docker Compose setup
+- Small frontend demo
 
 ## Project Idea
 
-Users can create support tickets for problems such as login issues, billing problems, API errors, or model-output problems. Support agents can view, assign, update, and resolve tickets. Admin users can manage users and oversee the whole system.
+The app models a support system for an AI or developer-platform product.
+Customers can create support tickets for issues such as login problems, billing
+questions, API errors, model-output problems, or retrieval/RAG problems.
 
-The AI part will help support agents by:
+Support agents and admins can:
 
-- summarizing long tickets
+- view and filter tickets
+- claim or assign tickets
+- update status, priority, tags, and assignee fields
+- add comments to the ticket conversation
+- manage users according to role permissions
+
+The planned AI layer will help support agents by:
+
+- summarizing long ticket conversations
 - classifying ticket priority
 - suggesting reply drafts
 - detecting similar or duplicate tickets
 
 ## Tech Stack
 
+Current stack:
+
 - Python
 - FastAPI
-- SQLAlchemy
-- SQLite for the current local demo
 - Pydantic
+- SQLAlchemy
+- SQLite for local development
+- JWT access tokens
+- Refresh-token sessions
 - bcrypt password hashing
-- JWT
 - Pytest
 
-Planned:
+Started or planned:
 
 - Redis
-- Background worker
+- Background workers
 - Docker / Docker Compose
-- React + JavaScript frontend
 - LLM API integration
+- Small web frontend
 
 ## Backend Concepts Practiced
 
-This project is designed to demonstrate:
+This project is designed to practice and explain:
 
 - REST API design
 - HTTP status codes
 - database models and relationships
 - authentication vs authorization
 - password hashing
-- JWT-based auth
+- JWT-based authentication
+- refresh-token session rotation
 - role-based access control
 - service-layer architecture
 - database CRUD operations
+- soft deletion
+- pagination, sorting, and filtering
 - error handling
-- testing
+- testing backend behavior
 - environment-based configuration
 
-## Planned Frontend
+## API Overview
 
-The frontend will be a small React + JavaScript client, not a large production UI.
+The current API is organized around these route groups:
 
-Its purpose is to show how the frontend and backend connect:
+### Users
 
-- register and login forms
-- storing and sending access tokens
-- ticket list page
-- ticket detail page
-- create-ticket form
-- role-based actions for agents/admins
-- later: an AI analysis panel for summaries and reply suggestions
+- `POST /users/` - register a user
+- `GET /users/` - list users with pagination and sorting
+- `GET /users/{id}` - get one user
+- `PATCH /users/{updated_user_id}` - update user fields
+- `DELETE /users/{id}` - soft-delete one user
+- `DELETE /users/` - admin-level bulk delete behavior
 
-## Running Locally
+### Authentication
 
-Create and activate a virtual environment, then install the project dependencies used by the local environment.
+- `POST /auth/login` - login by nickname or email and receive tokens
+- `POST /auth/refresh` - rotate a refresh token and receive a new token pair
+- `POST /auth/logout` - revoke a refresh token
 
-Start the API:
-
-```bash
-myvenv/bin/python -m uvicorn main:app --reload
-```
-
-Open:
+Protected routes use:
 
 ```text
-http://127.0.0.1:8000/docs
+Authorization: Bearer <access_token>
 ```
 
-The interactive docs can be used to test the API endpoints.
+The authentication dependency decodes the JWT, loads the current user from the
+database, and blocks deleted or banned users.
 
-## API Progress
+### Tickets
 
-Current backend endpoints are organized around:
+- `POST /tickets/` - create a ticket
+- `GET /tickets/` - list tickets with pagination, sorting, and filters
+- `GET /tickets/{id}` - get one ticket
+- `PATCH /tickets/{ticket_id}` - update ticket workflow fields
+- `DELETE /tickets/{id}` - soft-delete one ticket
+- `DELETE /tickets/` - admin-level bulk delete behavior
+- `POST /tickets/{ticket_id}/claim` - claim an unassigned ticket
+- `POST /tickets/{ticket_id}/assign` - assign a ticket to an agent
 
-- `/users` for registration, user lookup, user updates, soft deletion, and admin-level user listing/deletion
-- `/tickets` for ticket creation, lookup, updates, assignment-related fields, workflow state, and soft deletion
-- `/auth/login` for password login with nickname or email
-- `/auth/refresh` for rotating a refresh token and returning a new access token pair
+### Ticket Comments
 
-Protected routes use the standard `Authorization: Bearer <access_token>` header. The auth dependency decodes the JWT, loads the current user from the database, and blocks deleted or banned users.
-
-User-management behavior currently includes:
-
-- new users get hashed passwords before they are stored
-- the first registered user becomes `SUPER_ADMIN`
-- normal profile fields can be updated through the user update service
-- password updates are re-hashed before saving
-- role, status, and deletion-related updates are treated as protected admin-level changes
-- `created_at` and `updated_at` are system-managed fields, not client-managed fields
+- `GET /tickets/{ticket_id}/comments` - list comments for a ticket
+- `POST /tickets/{ticket_id}/comments` - create a comment
+- `GET /tickets/{ticket_id}/comments/{comment_id}` - get one comment
+- `PATCH /tickets/{ticket_id}/comments/{comment_id}` - update a comment
+- `DELETE /tickets/{ticket_id}/comments/{comment_id}` - soft-delete a comment
 
 ## Repository Structure
 
 ```text
 main.py                 FastAPI app entrypoint
 src/routers/            API route handlers
-src/services/           Business logic
-src/db/                 SQLAlchemy engine, models, and operations
+src/services/           Business logic and permission-aware workflows
+src/db/                 SQLAlchemy engine, models, and database operations
 src/models/             Pydantic request/response models
-src/core/               Security, config, logging helpers
-src/constants/          Enums and shared helpers
+src/core/               Security, config, and logging helpers
+src/constants/          Enums and shared constants
 src/dependencies/       FastAPI dependencies
-src/tests/              Tests
+src/cache/              Redis/cache helper modules
+src/exceptions/         Domain exception classes
+src/tests/              Pytest test modules
+keys/                   Local JWT key files
 ```
+
+## Running Locally
+
+Use the existing local virtual environment:
+
+```bash
+myvenv/bin/python -m uvicorn main:app --reload
+```
+
+Open the interactive API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+The app loads environment configuration from `.env`. The local database file is
+created automatically by the current startup code.
+
+## Learning Notes
+
+The main learning boundary in this project is:
+
+```text
+router -> dependency/auth -> service/business rules -> database operations
+```
+
+Routers receive HTTP requests and convert errors to HTTP responses.
+Dependencies identify the current user.
+Services decide whether an action is allowed and what business rule should run.
+Database operations read and write SQLAlchemy models.
+
+In larger production systems, the same separation is common, but the project
+would usually add migrations, stronger observability, background queues,
+centralized error responses, stricter security controls, and deployment
+configuration.
 
 ## Interview Summary
 
-This project shows how I am building a backend system with real application logic: users, authentication, roles, database relationships, ticket workflows, and AI-assisted support features. It is intentionally backend-first, with a small frontend planned to demonstrate full request/response flow between a web client and the API.
+This project demonstrates a backend system with real application logic:
+users, authentication, JWTs, refresh sessions, roles, database relationships,
+ticket workflows, comments, service-layer authorization, and planned AI-assisted
+support features.
+
+It is useful for interview discussion because it shows both implemented backend
+behavior and clear next steps toward a more production-like system.
