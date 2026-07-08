@@ -5,6 +5,7 @@ from src import constants
 from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
+from src.exceptions.domain import AuthorizationError, CommentNotFoundError, EmptyUpdateError, TicketNotFoundError
 import json
 
 
@@ -12,16 +13,21 @@ def _to_api_comment(comment: db_models.Comment) -> api_models.Comment:
     return api_models.Comment.model_validate(comment, from_attributes=True)
 
 
-def get_all_comments(ticket_id: str, requester: api_models.User) -> list[api_models.Comment] | None:
+def _check_comment_belongs_to_ticket(comment: db_models.Comment, ticket_id: str) -> None:
+    if comment.ticket_id != ticket_id:
+        raise CommentNotFoundError()
+
+
+def get_all_comments(ticket_id: str, requester: api_models.User) -> list[api_models.Comment]:
     ticket = operations.get_ticket(ticket_id)
     if ticket is None or ticket.deleted_at is not None:
-        return None
+        raise TicketNotFoundError()
 
     comments = operations.get_comments(ticket_id)
 
     if requester.role == constants.Role.USER:
         if ticket.creator_user_id != requester.id:
-            return None
+            raise AuthorizationError()
         comments = [
             comment for comment in comments
             if comment.deleted_at is None and comment.visibility == constants.Visibility.PUBLIC
@@ -34,51 +40,53 @@ def get_all_comments(ticket_id: str, requester: api_models.User) -> list[api_mod
             if comment.deleted_at is None and comment.visibility != constants.Visibility.PRIVATE_TO_MANAGER
         ]
     else:
-        return None
+        raise AuthorizationError()
 
     return [_to_api_comment(comment) for comment in comments]
 
-def get_comment(comment_id: str, requester: api_models.User) -> api_models.Comment | None:
+def get_comment(ticket_id: str, comment_id: str, requester: api_models.User) -> api_models.Comment:
 
     comment = operations.get_comment(comment_id)
     if comment is None:
-        return None
+        raise CommentNotFoundError()
+    _check_comment_belongs_to_ticket(comment, ticket_id)
     
     ticket = operations.get_ticket(comment.ticket_id)
     if ticket is None or ticket.deleted_at is not None:
-        return None
+        raise TicketNotFoundError()
 
     if requester.role == constants.Role.USER:
-        if ticket.creator_user_id != requester.id: return None
-        if comment.deleted_at is not None: return None
-        if comment.visibility != constants.Visibility.PUBLIC: return None
+        if ticket.creator_user_id != requester.id: raise AuthorizationError()
+        if comment.deleted_at is not None: raise CommentNotFoundError()
+        if comment.visibility != constants.Visibility.PUBLIC: raise AuthorizationError()
     elif check_for_access(requester.role, constants.Role.AGENT):
-        if comment.deleted_at is not None: return None
-        if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER: return None
+        if comment.deleted_at is not None: raise CommentNotFoundError()
+        if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER: raise AuthorizationError()
     elif check_for_access(requester.role, constants.Role.MANAGER): 
         pass
     else: 
-        return None
+        raise AuthorizationError()
     return _to_api_comment(comment)
 
-def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreate, requester: api_models.User) -> api_models.Comment | None:
+def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreate, requester: api_models.User) -> api_models.Comment:
     
     ticket = operations.get_ticket(ticket_id)
-    if ticket == None or ticket.deleted_at is not None: return None
+    if ticket == None or ticket.deleted_at is not None: raise TicketNotFoundError()
 
     if check_for_access(requester.role, constants.Role.AGENT) is False and requester.id != ticket.creator_user_id:
-        return None
+        raise AuthorizationError()
     if requester.role == constants.Role.USER and comment_create.visibility != constants.Visibility.PUBLIC:
-        return None
+        raise AuthorizationError()
     if comment_create.visibility == constants.Visibility.PRIVATE_TO_MANAGER and check_for_access(requester.role, constants.Role.MANAGER) is False:
-        return None
+        raise AuthorizationError()
 
     now = datetime.now(timezone.utc)
+    body = constants.validate_required_text(comment_create.body, "comment_body", constants.COMMENT_BODY_MAX_LENGTH)
     comment = db_models.Comment(
         id=constants.generate_id(),
         ticket_id=ticket_id,
         author_user_id=requester.id,
-        body=comment_create.body,
+        body=body,
         visibility=comment_create.visibility,
         edited_at=None,
         created_at=now,
@@ -89,10 +97,6 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
         attachments_count=comment_create.attachments_count or 0,
         source=comment_create.source
     )
-
-    res = operations.create_comment(comment)
-    if res is None:
-        return None
 
     event = api_models.Event(
         id=constants.generate_id(),
@@ -105,43 +109,48 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
         metadata=None,
         created_at=now
     )
-    event_res = operations.create_event(event)
-    if event_res is False: return None
+    res = operations.create_comment_with_event(comment, event)
+    if res is None:
+        raise ValueError("comment_create_failed")
 
     return _to_api_comment(res)
 
 
 
-def update_comment(comment_id: str, new_info: api_models.CommentUpdate, requester: api_models.User) -> api_models.Comment | None:
+def update_comment(ticket_id: str, comment_id: str, new_info: api_models.CommentUpdate, requester: api_models.User) -> api_models.Comment:
     
     comment = operations.get_comment(comment_id)
-    if comment is None: return None
+    if comment is None: raise CommentNotFoundError()
+    _check_comment_belongs_to_ticket(comment, ticket_id)
 
     ticket = operations.get_ticket(comment.ticket_id) #comment.ticked id couldn't be none cuz its non-none value
-    if ticket is None: return None
+    if ticket is None: raise TicketNotFoundError()
 
     if comment.deleted_at is not None or ticket.deleted_at is not None: 
-        return None # but in bot sure with amdint/agents? can they?
+        raise CommentNotFoundError()
     if requester.role == constants.Role.USER and comment.author_user_id != requester.id:
-        return None
+        raise AuthorizationError()
     elif requester.role == constants.Role.AGENT and ticket.assigned_agent_id != requester.id: 
-        return None
+        raise AuthorizationError()
     elif check_for_access(requester.role, constants.Role.MANAGER):
         pass
     elif requester.role not in [constants.Role.USER, constants.Role.AGENT]:
-        return None
+        raise AuthorizationError()
     
     
     audit_new_info = new_info.model_dump(exclude_unset=True, mode="json")
     updated_info = new_info.model_dump(exclude_unset=True)
 
     if not updated_info:
-        raise ValueError('empty_update')
+        raise EmptyUpdateError()
+    if "body" in updated_info and updated_info["body"] is not None:
+        updated_info["body"] = constants.validate_required_text(updated_info["body"], "comment_body", constants.COMMENT_BODY_MAX_LENGTH)
+        audit_new_info["body"] = updated_info["body"]
     if requester.role == constants.Role.USER and "visibility" in updated_info and updated_info["visibility"] != constants.Visibility.PUBLIC:
-        return None
+        raise AuthorizationError()
     if updated_info.get("visibility") == constants.Visibility.PRIVATE_TO_MANAGER:
         if check_for_access(requester.role, constants.Role.MANAGER) is False:
-            return None
+            raise AuthorizationError()
 
     requested_fields = updated_info.keys()
     old_info = {}
@@ -163,24 +172,23 @@ def update_comment(comment_id: str, new_info: api_models.CommentUpdate, requeste
         created_at=datetime.now(timezone.utc)
     )
 
-    updated_comment = operations.update_comment(comment_id, updated_info)
+    updated_comment = operations.update_comment_with_event(comment_id, updated_info, event)
     if updated_comment is None:
         raise ValueError("Some error during updating, the operation canceled")
-        
-    event_res = operations.create_event(event)
-    if event_res is False: return None
+
     return _to_api_comment(updated_comment)
 
 # delete 
-def delete_comment(comment_id: str, requester: api_models.User) -> bool:
+def delete_comment(ticket_id: str, comment_id: str, requester: api_models.User) -> bool:
     
     comment = operations.get_comment(comment_id)
     if comment is None:
-        raise ValueError('ticket_not_found')
+        raise CommentNotFoundError()
+    _check_comment_belongs_to_ticket(comment, ticket_id)
 
     if comment.author_user_id != requester.id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False:
-            raise PermissionError
+            raise AuthorizationError()
         
     now = datetime.now(timezone.utc)
     delete_info = {
@@ -202,10 +210,7 @@ def delete_comment(comment_id: str, requester: api_models.User) -> bool:
         created_at=now
     )
 
-    if operations.delete_comment(comment_id, delete_info) is False:
+    if operations.delete_comment_with_event(comment_id, delete_info, event) is False:
         raise ValueError("Some error during deleting, the operation cancelled")
-        
-    event_res = operations.create_event(event)
-    if event_res is False:
-        return None
+
     return True

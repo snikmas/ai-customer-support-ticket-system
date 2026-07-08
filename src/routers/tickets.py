@@ -2,11 +2,15 @@ from fastapi import APIRouter, HTTPException, Depends
 from src import models, db, constants
 from src.services import users as s_users, tickets as s_tickets, comments as s_comments
 from src.dependencies import *
+from src.exceptions.domain import AppException
 
 router = APIRouter(
     prefix="/tickets",
     tags=["tickets"]
 )
+
+def _raise_http(exc: AppException):
+    raise HTTPException(exc.status_code, detail=exc.code)
 
 @router.get("/", status_code=200)
 async def get_tickets(requester = Depends(get_current_user)):
@@ -103,24 +107,53 @@ async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRe
 async def get_ticket_comments(ticket_id: str, requester: models.User = Depends(get_current_user)):
     try:
         data = s_comments.get_all_comments(ticket_id, requester)
-    except PermissionError:
-        raise HTTPException(403, detail="Permission Error")
+    except AppException as exc:
+        _raise_http(exc)
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc))
 
-    if data is None:
-        raise HTTPException(404, detail="ticket_not_found")
     return {"data": data}
 
 @router.post("/{ticket_id}/comments", status_code=201)
 async def create_ticket_comment(ticket_id: str, comment: models.CommentCreate, requester: models.User = Depends(get_current_user)):
     try:
         data = s_comments.create_ticket_comment(ticket_id, comment, requester)
-    except PermissionError:
-        raise HTTPException(403, detail="Permission Error")
+    except AppException as exc:
+        _raise_http(exc)
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc))
 
-    if data is None:
-        raise HTTPException(404, detail="ticket_not_found")
+    return {"data": data}
+
+@router.get("/{ticket_id}/comments/{comment_id}", status_code=200)
+async def get_ticket_comment(ticket_id: str, comment_id: str, requester: models.User = Depends(get_current_user)):
+    try:
+        data = s_comments.get_comment(ticket_id, comment_id, requester)
+    except AppException as exc:
+        _raise_http(exc)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+    return {"data": data}
+
+@router.patch("/{ticket_id}/comments/{comment_id}", status_code=200)
+async def update_ticket_comment(ticket_id: str, comment_id: str, new_info: models.CommentUpdate, requester: models.User = Depends(get_current_user)):
+    try:
+        data = s_comments.update_comment(ticket_id, comment_id, new_info, requester)
+    except AppException as exc:
+        _raise_http(exc)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+    return {"data": data}
+
+@router.delete("/{ticket_id}/comments/{comment_id}", status_code=200)
+async def delete_ticket_comment(ticket_id: str, comment_id: str, requester: models.User = Depends(get_current_user)):
+    try:
+        data = s_comments.delete_comment(ticket_id, comment_id, requester)
+    except AppException as exc:
+        _raise_http(exc)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
     return {"data": data}

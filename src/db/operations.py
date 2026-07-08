@@ -258,24 +258,65 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str) -> Ticket | None:
 
 # ==============================================================
 # ===================== COMMENTS ===============================
+def _event_from_data(event_data: Event) -> Event:
+    return Event(
+        id=event_data.id,
+        entity_type=event_data.entity_type,
+        entity_id=event_data.entity_id,
+        actor_user_id=event_data.actor_user_id,
+        event_type=event_data.event_type,
+        old_value=event_data.old_value,
+        new_value=event_data.new_value,
+        metadata_=event_data.metadata,
+        created_at=event_data.created_at,
+        batch_id=event_data.batch_id
+    )
+
+
 def create_comment(comment_data: Comment) -> Comment | None:
     with Session(engine) as session:
         with session.begin():
-            # 1. 
             comment = Comment(
                 id = comment_data.id,
                 ticket_id = comment_data.ticket_id,
                 author_user_id = comment_data.author_user_id,
                 body = comment_data.body,
                 visibility = comment_data.visibility,
+                edited_at = comment_data.edited_at,
                 created_at = comment_data.created_at,
                 updated_at = comment_data.updated_at,
+                deleted_at = comment_data.deleted_at,
+                deleted_by_user_id = comment_data.deleted_by_user_id,
                 parent_comment_id = comment_data.parent_comment_id,
                 attachments_count = comment_data.attachments_count,
                 source = comment_data.source
             )
 
             session.add(comment)
+
+        session.refresh(comment)
+        return comment
+
+def create_comment_with_event(comment_data: Comment, event_data: Event) -> Comment | None:
+    with Session(engine) as session:
+        with session.begin():
+            comment = Comment(
+                id = comment_data.id,
+                ticket_id = comment_data.ticket_id,
+                author_user_id = comment_data.author_user_id,
+                body = comment_data.body,
+                visibility = comment_data.visibility,
+                edited_at = comment_data.edited_at,
+                created_at = comment_data.created_at,
+                updated_at = comment_data.updated_at,
+                deleted_at = comment_data.deleted_at,
+                deleted_by_user_id = comment_data.deleted_by_user_id,
+                parent_comment_id = comment_data.parent_comment_id,
+                attachments_count = comment_data.attachments_count,
+                source = comment_data.source
+            )
+            session.add(comment)
+            session.add(_event_from_data(event_data))
 
         session.refresh(comment)
         return comment
@@ -313,6 +354,25 @@ def update_comment(comment_id: str, new_info: dict) -> Comment | None:
         session.refresh(comment)
         return comment
 
+def update_comment_with_event(comment_id: str, new_info: dict, event_data: Event) -> Comment | None:
+    with Session(engine) as session:
+        with session.begin():
+            comment = session.get(Comment, comment_id)
+            if comment is None:
+                return None
+
+            for field, value in new_info.items():
+                setattr(comment, field, value)
+            now = datetime.now(timezone.utc)
+            comment.updated_at = now
+            if "body" in new_info:
+                comment.edited_at = now
+
+            session.add(_event_from_data(event_data))
+
+        session.refresh(comment)
+        return comment
+
 def delete_comment(comment_id: str, delete_info: dict) -> bool:
     with Session(engine) as session:
         with session.begin():
@@ -325,6 +385,20 @@ def delete_comment(comment_id: str, delete_info: dict) -> bool:
 
         return True
 
+def delete_comment_with_event(comment_id: str, delete_info: dict, event_data: Event) -> bool:
+    with Session(engine) as session:
+        with session.begin():
+            comment = session.get(Comment, comment_id)
+            if comment is None:
+                return False
+
+            for field, value in delete_info.items():
+                setattr(comment, field, value)
+
+            session.add(_event_from_data(event_data))
+
+        return True
+
 
 # ==============================================================
 # ======================= EVENTS ===============================
@@ -333,17 +407,5 @@ def create_event(event: Event) -> bool:
     with Session(engine) as session:
         with session.begin():
             if event is None: return False
-            event = Event(
-                id=event.id,
-                entity_type=event.entity_type,
-                entity_id=event.entity_id,
-                actor_user_id=event.actor_user_id,
-                event_type=event.event_type,
-                old_value=event.old_value, #maybe wrong
-                new_value=event.new_value, 
-                metadata_=event.metadata,
-                created_at=event.created_at,
-                batch_id=event.batch_id
-            )
-            session.add(event)
+            session.add(_event_from_data(event))
     return True
