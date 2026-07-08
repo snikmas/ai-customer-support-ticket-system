@@ -10,3 +10,4 @@ myvenv/
 .pytest_cache
 keys
 .env
+node_modules/

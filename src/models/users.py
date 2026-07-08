@@ -29,7 +29,6 @@ class UserCreate(BaseModel):
 
     phone: str
     email: str
-    user_status: UserStatus = UserStatus.ACTIVE
 
 class UserUpdate(BaseModel):
     nickname: str | None = None
