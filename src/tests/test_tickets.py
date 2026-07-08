@@ -19,11 +19,23 @@ def test_get_tickets_returns_current_service_shape(monkeypatch, make_user, make_
     ticket = make_ticket(id="ticket-visible", creator_user_id=requester.id)
 
     app.dependency_overrides[tickets_router.get_current_user] = lambda: requester
-    monkeypatch.setattr(
-        tickets_router.s_tickets,
-        "get_all_tickets",
-        lambda current_user: [ticket] if current_user is requester else [],
-    )
+    captured = {}
+
+    def fake_get_all_tickets(current_user, limit, offset, sort_by, sort_order, priority, status):
+        captured.update(
+            {
+                "current_user": current_user,
+                "limit": limit,
+                "offset": offset,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+                "priority": priority,
+                "status": status,
+            }
+        )
+        return [ticket] if current_user is requester else []
+
+    monkeypatch.setattr(tickets_router.s_tickets, "get_all_tickets", fake_get_all_tickets)
 
     response = client.get("/tickets/")
 
@@ -32,6 +44,15 @@ def test_get_tickets_returns_current_service_shape(monkeypatch, make_user, make_
     assert "data" in body
     assert body["data"][0]["id"] == "ticket-visible"
     assert body["data"][0]["creator_user_id"] == requester.id
+    assert captured == {
+        "current_user": requester,
+        "limit": constants.DEFAULT_PAGE_LIMIT,
+        "offset": 0,
+        "sort_by": constants.DEFAULT_SORT_BY,
+        "sort_order": constants.DEFAULT_SORT_ORDER,
+        "priority": None,
+        "status": None,
+    }
 
 
 def test_create_ticket_uses_authenticated_requester(monkeypatch, make_user, make_ticket):

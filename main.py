@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter
 from fastapi import HTTPException
 from datetime import datetime, timedelta
 from src.constants import helpers
-from src.routers import users, tickets, auth, comments
+from src.routers import users, tickets, auth
 from src.db.utils import create_db
 from src.core import setup_logging
 from dotenv import load_dotenv
@@ -22,7 +22,6 @@ app = FastAPI()
 app.include_router(users.router)
 app.include_router(tickets.router)
 app.include_router(auth.router)
-app.include_router(comments.router)
 
 @app.get("/")
 async def root():

@@ -65,11 +65,15 @@ def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sur
     
     return user
 
-def get_all_users(requester: api_models.User) -> list[db_models.User]:
+def get_all_users(requester: api_models.User,
+                  limit: int,
+                  offset: int,
+                  sort_by: str,
+                  sort_order: str) -> list[db_models.User]:
     if check_for_access(requester.role, constants.Role.MANAGER) is False:
         raise PermissionError
 
-    return operations.get_users()
+    return operations.get_users(limit, offset, sort_by, sort_order)
 
 def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, requester: api_models.User) -> db_models.User:
     requester = operations.get_user(requester.id)

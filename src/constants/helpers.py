@@ -3,6 +3,7 @@ from uuid import uuid4
 from .enums import *
 import json
 from datetime import datetime
+from sqlalchemy import asc, desc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -11,6 +12,10 @@ def generate_id() -> str:
     return str(uuid4()) #do we really need this function?
 
 COMMENT_BODY_MAX_LENGTH = 32000
+DEFAULT_PAGE_LIMIT = 20
+MAX_PAGE_LIMIT = 100
+DEFAULT_SORT_BY="created_at"
+DEFAULT_SORT_ORDER="desc"
 
 SLA_HOURS = {
     Status.NEW: 2,
@@ -78,3 +83,8 @@ def _audit_value(value):
 
 def _audit_json(data: dict) -> str:
     return json.dumps({key: _audit_value(value) for key, value in data.items()})
+
+def apply_sort_order(column, sort_order: str):
+    match sort_order:
+        case 'desc': return column.desc()
+        case 'asc': return column.asc()

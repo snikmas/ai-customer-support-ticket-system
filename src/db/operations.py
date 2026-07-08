@@ -3,7 +3,7 @@ from .engine import engine
 from .models import Ticket, User, RefreshSession, UserStatus, Event, Comment
 from sqlalchemy import Row, select, delete, update
 from datetime import datetime, timezone
-from src.constants import Status
+from src.constants import Status, DEFAULT_SORT_ORDER, DEFAULT_PAGE_LIMIT, DEFAULT_SORT_BY, apply_sort_order, Priority
 
 # ==============================================================
 # ======================= SYSTEM ===============================
@@ -94,9 +94,28 @@ def get_user_by_nickname(inputted_nickname: str) -> User | None:
         return session.query(User).filter_by(nickname=inputted_nickname).first()
         
 
-def get_users() -> list[User]:
+def get_users(
+            limit: int | None = None,
+            offset: int = 0,
+            sort_by: str = DEFAULT_SORT_BY,
+            sort_order: str = DEFAULT_SORT_ORDER) -> list[User]:
+    
+    sort_columns = {
+        "created_at": User.created_at,
+        "user_status": User.user_status,
+        "role": User.role,
+        "first_name": User.first_name,
+        "last_name": User.last_name,
+    }
     with Session(engine) as session:
-        query = select(User)
+        sort_col = sort_columns[sort_by]
+
+        order_exp = apply_sort_order(sort_col, sort_order)
+        
+        query = select(User).order_by(order_exp).offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+            
         return session.scalars(query).all()
 
 def update_user(id: str, new_info: dict) -> User | None:
@@ -174,10 +193,39 @@ def get_ticket(id: str) -> Ticket | None:
     with Session(engine) as session:
         result = session.get(Ticket, id)
         return result
-    
-def get_tickets() -> list[Ticket]:
-    with Session(engine) as session:
+            # limit: int,
+        # offset: int,
+        # sort_by: str,
+        # sort_order: str,
+        # priority: constants.Priority | None
+def get_tickets(
+        limit: int | None = None,
+        offset: int = 0,
+        sort_by: str = DEFAULT_SORT_BY,
+        sort_order: str = DEFAULT_SORT_ORDER,
+        priority: Priority | None = None,
+        status: Status | None = None
+) -> list[Ticket]:
+    with Session(engine) as session: 
+        sort_columns = {
+            'created_at': Ticket.created_at,
+            'updated_at': Ticket.updated_at,
+            'status': Ticket.status,
+            'priority': Ticket.priority,
+        }
+        sort_col = sort_columns[sort_by]
+        order_exp = apply_sort_order(sort_col, sort_order)
+
         query = select(Ticket)
+        if priority:
+            query = query.where(Ticket.priority == priority)
+        if status:
+            query = query.where(Ticket.status == status)
+
+        query = query.order_by(order_exp).offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+
         return session.scalars(query).all()
 
 def update_ticket(id: str, new_info: dict) -> Ticket | None:
@@ -222,7 +270,7 @@ def delete_all_tickets() -> int:
         
         return result.rowcount
 
-def claim_ticket(ticket_id: str, assigned_id: str) -> Ticket | None:
+def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, ticket_id)
@@ -234,11 +282,13 @@ def claim_ticket(ticket_id: str, assigned_id: str) -> Ticket | None:
             ticket.assigned_agent_id = assigned_id
             ticket.status = Status.IN_PROGRESS
             ticket.updated_at = datetime.now(timezone.utc)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
         session.refresh(ticket)
         return ticket
 
-def assign_ticket(ticket_id: str, assigned_agent_id:str) -> Ticket | None:
+def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, ticket_id)
@@ -251,6 +301,8 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str) -> Ticket | None:
             ticket.assigned_agent_id = user.id
             ticket.status = Status.IN_PROGRESS
             ticket.updated_at = datetime.now(timezone.utc)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
         session.refresh(ticket)
         return ticket
@@ -328,10 +380,26 @@ def get_comment(comment_id: str) -> Comment | None:
             return comment
 
 
-def get_comments(ticket_id: str | None = None) -> list[Comment] | None:
+def get_comments(
+                ticket_id: str | None = None,
+                limit: int | None = None,
+                offset: int = 0,
+                sort_by: str = DEFAULT_SORT_BY,
+                sort_order: str = DEFAULT_SORT_ORDER) -> list[Comment]:
     with Session(engine) as session:
         with session.begin():
-            query = select(Comment)
+            sort_columns = {
+                "created_at": Comment.created_at,
+                "updated_at": Comment.updated_at,
+            }
+            sort_col = sort_columns[sort_by]
+
+            order_exp = apply_sort_order(sort_col, sort_order)
+
+            query = select(Comment).order_by(order_exp).offset(offset)
+            if limit:
+                query = query.limit(limit)
+            
             if ticket_id is not None:
                 query = query.where(Comment.ticket_id == ticket_id)
             return session.scalars(query).all()

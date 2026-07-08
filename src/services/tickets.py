@@ -64,9 +64,18 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im no
     return _to_api_ticket(ticket)
 
 
-def get_all_tickets(requester: api_models.User) -> list[api_models.Ticket]:
+def get_all_tickets(
+        requester: api_models.User,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        priority: constants.Priority | None,
+        status: constants.Status | None
+        ) -> list[api_models.Ticket]:
     
-    tickets = operations.get_tickets()
+    
+    tickets = operations.get_tickets(limit, offset, sort_by, sort_order, priority, status)
 
     
     if check_for_access(requester.role, constants.Role.ADMIN):

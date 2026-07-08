@@ -55,10 +55,10 @@ class Tag(Enum):
     
 
 class Priority(Enum):
-  CRITICAL = 'critical'
-  HIGH = 'high'
-  NORMAL = 'normal'
-  LOW = 'low'
+  CRITICAL = 4
+  HIGH = 3
+  NORMAL = 2
+  LOW = 1
 
 class Role(Enum):
     SUPER_ADMIN = "super_admin"    # Full system access, can manage other admins

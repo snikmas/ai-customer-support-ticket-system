@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from src import models, db, constants
 from src.services import users as s_users, tickets as s_tickets, comments as s_comments
 from src.dependencies import *
 from src.exceptions.domain import AppException
+from typing import Literal
 
 router = APIRouter(
     prefix="/tickets",
@@ -13,9 +14,18 @@ def _raise_http(exc: AppException):
     raise HTTPException(exc.status_code, detail=exc.code)
 
 @router.get("/", status_code=200)
-async def get_tickets(requester = Depends(get_current_user)):
+async def get_tickets(requester = Depends(get_current_user), 
+                    limit: int = Query(constants.DEFAULT_PAGE_LIMIT, 
+                                         ge=1,
+                                         le=constants.MAX_PAGE_LIMIT),
+                    offset: int = Query(0, ge=0),
+                    sort_by: Literal['created_at', 'updated_at', 'status', 'priority'] = constants.DEFAULT_SORT_BY,
+                    sort_order: Literal['asc', 'desc'] = constants.DEFAULT_SORT_ORDER,
+                    priority: constants.Priority | None = None,
+                    status: constants.Status | None = None
+                    ):
     try:
-        data = s_tickets.get_all_tickets(requester)
+        data = s_tickets.get_all_tickets(requester, limit, offset, sort_by, sort_order, priority, status)
     except PermissionError:
         raise HTTPException(400, detail="Permission Error")
     except ValueError:
@@ -104,9 +114,18 @@ async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRe
 
 
 @router.get("/{ticket_id}/comments", status_code=200)
-async def get_ticket_comments(ticket_id: str, requester: models.User = Depends(get_current_user)):
+async def get_ticket_comments(
+            ticket_id: str, 
+            requester: models.User = Depends(get_current_user),
+            limit: int = Query(constants.DEFAULT_PAGE_LIMIT, 
+                                         ge=1,
+                                         le=constants.MAX_PAGE_LIMIT),
+            offset: int = Query(0, ge=0),
+            sort_by: Literal['created_at', 'updated_at'] = 'created_at',
+            sort_order: Literal['asc', 'desc'] = constants.DEFAULT_SORT_ORDER,
+            ):
     try:
-        data = s_comments.get_all_comments(ticket_id, requester)
+        data = s_comments.get_all_comments(ticket_id, requester, limit, offset, sort_by, sort_order)
     except AppException as exc:
         _raise_http(exc)
     except ValueError as exc:

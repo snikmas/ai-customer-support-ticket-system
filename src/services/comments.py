@@ -16,14 +16,20 @@ def _to_api_comment(comment: db_models.Comment) -> api_models.Comment:
 def _check_comment_belongs_to_ticket(comment: db_models.Comment, ticket_id: str) -> None:
     if comment.ticket_id != ticket_id:
         raise CommentNotFoundError()
-
-
-def get_all_comments(ticket_id: str, requester: api_models.User) -> list[api_models.Comment]:
+        
+        
+def get_all_comments(
+                    ticket_id: str, 
+                    requester: api_models.User,
+                    limit: int,
+                    offset: int,
+                    sort_by: str,
+                    sort_order: str) -> list[api_models.Comment]:
     ticket = operations.get_ticket(ticket_id)
     if ticket is None or ticket.deleted_at is not None:
         raise TicketNotFoundError()
 
-    comments = operations.get_comments(ticket_id)
+    comments = operations.get_comments(ticket_id, limit, offset, sort_by, sort_order)
 
     if requester.role == constants.Role.USER:
         if ticket.creator_user_id != requester.id:
@@ -59,11 +65,11 @@ def get_comment(ticket_id: str, comment_id: str, requester: api_models.User) -> 
         if ticket.creator_user_id != requester.id: raise AuthorizationError()
         if comment.deleted_at is not None: raise CommentNotFoundError()
         if comment.visibility != constants.Visibility.PUBLIC: raise AuthorizationError()
+    elif check_for_access(requester.role, constants.Role.MANAGER): 
+        pass
     elif check_for_access(requester.role, constants.Role.AGENT):
         if comment.deleted_at is not None: raise CommentNotFoundError()
         if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER: raise AuthorizationError()
-    elif check_for_access(requester.role, constants.Role.MANAGER): 
-        pass
     else: 
         raise AuthorizationError()
     return _to_api_comment(comment)

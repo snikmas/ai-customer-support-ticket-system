@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import datetime
 from src import models, db, constants
 from src.services import users as s_users
 from src.dependencies import *
+from typing import Literal
 
 router = APIRouter(
     prefix='/users',
@@ -26,12 +27,23 @@ async def get_user(id: str, requester = Depends(get_current_user)):
     return {"data": user}
 
 
-# later rewrite/add: Depends(get current_user)
 @router.get("/", status_code=200)
-async def get_users(requester = Depends(get_current_user)):
+async def get_users(requester = Depends(get_current_user),
+                    limit: int = Query(constants.DEFAULT_PAGE_LIMIT,
+                                       ge=1,
+                                       le=constants.MAX_PAGE_LIMIT),
+                    offset: int = Query(0, ge=0),
+                    sort_by: Literal[
+                        'created_at', 
+                        'user_status', 
+                        'role', 
+                        'first_name', 
+                        'last_name'] = constants.DEFAULT_SORT_BY,
+                    sort_order: Literal['asc', 'desc'] = constants.DEFAULT_SORT_ORDER,
+                    ):
 
     try:
-        data = s_users.get_all_users(requester)
+        data = s_users.get_all_users(requester, limit, offset, sort_by, sort_order)
         if data:
             return {"data": [models.UserResponse.model_validate(user, from_attributes=True) for user in data]}
         else:
