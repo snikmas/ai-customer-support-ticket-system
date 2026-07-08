@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -116,7 +116,7 @@ def test_verify_refresh_session_accepts_active_unexpired_session(monkeypatch):
     session = SimpleNamespace(
         refresh_token_hash="hash-1",
         revoked_at=None,
-        expires_at=datetime.now() + timedelta(days=1),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
     )
 
     monkeypatch.setattr(auth_service, "hash_token", lambda raw: "hash-1")
@@ -132,8 +132,8 @@ def test_verify_refresh_session_accepts_active_unexpired_session(monkeypatch):
 def test_verify_refresh_session_rejects_revoked_session(monkeypatch):
     session = SimpleNamespace(
         refresh_token_hash="hash-1",
-        revoked_at=datetime.now(),
-        expires_at=datetime.now(timez) + timedelta(days=1),
+        revoked_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
     )
 
     monkeypatch.setattr(auth_service, "hash_token", lambda raw: "hash-1")

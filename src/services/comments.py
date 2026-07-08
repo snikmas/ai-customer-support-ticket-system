@@ -5,7 +5,7 @@ from src import constants
 from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
-from src.exceptions.domain import AuthorizationError, CommentNotFoundError, EmptyUpdateError, TicketNotFoundError
+from src.exceptions.domain import AuditLogError, AuthorizationError, CommentNotFoundError, EmptyUpdateError, TicketNotFoundError
 import json
 
 
@@ -117,7 +117,7 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
     )
     res = operations.create_comment_with_event(comment, event)
     if res is None:
-        raise ValueError("comment_create_failed")
+        raise AuditLogError("comment_create_failed")
 
     return _to_api_comment(res)
 
@@ -180,7 +180,7 @@ def update_comment(ticket_id: str, comment_id: str, new_info: api_models.Comment
 
     updated_comment = operations.update_comment_with_event(comment_id, updated_info, event)
     if updated_comment is None:
-        raise ValueError("Some error during updating, the operation canceled")
+        raise AuditLogError("comment_update_failed")
 
     return _to_api_comment(updated_comment)
 
@@ -217,6 +217,6 @@ def delete_comment(ticket_id: str, comment_id: str, requester: api_models.User) 
     )
 
     if operations.delete_comment_with_event(comment_id, delete_info, event) is False:
-        raise ValueError("Some error during deleting, the operation cancelled")
+        raise AuditLogError("comment_delete_failed")
 
     return True
