@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import datetime
 from src import models, db, constants
 from src.services import users as s_users
-from src.dependencies import *
+from src.dependencies.auth import get_current_user
 from typing import Literal
 
 router = APIRouter(

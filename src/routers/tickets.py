@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from src import models, db, constants
 from src.services import users as s_users, tickets as s_tickets, comments as s_comments
-from src.dependencies import *
+from src.dependencies.auth import get_current_user
 from src.exceptions.domain import AppException
 from typing import Literal
 
