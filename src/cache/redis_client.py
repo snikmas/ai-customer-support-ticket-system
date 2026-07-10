@@ -8,8 +8,8 @@ def get_redis_client():
     if not REDIS_ENABLED:
         return None
     return redis.Redis.from_url(
-        REDIS_URL,
-        decode_responses=True, #give me 5 instead of b'5'
+        REDIS_URL
+        # decode_responses=True, #give me 5 instead of b'5', not good for rq
     )
 
 def ping_redis() -> bool:

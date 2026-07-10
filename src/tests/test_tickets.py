@@ -2,10 +2,64 @@ from fastapi.testclient import TestClient
 
 from main import app
 from src import constants
+from src.exceptions.domain import AuthorizationError
+from src.db.models import Comment, Event, Ticket
 from src.routers import tickets as tickets_router
+from src.services import tickets as tickets_service
 
 
 client = TestClient(app)
+
+
+def test_ticket_detail_rejects_another_customer(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="customer-a", role=constants.Role.USER)
+    ticket = make_ticket(id="ticket-b", creator_user_id="customer-b")
+
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: ticket)
+
+    try:
+        tickets_service.get_ticket(ticket.id, requester)
+    except AuthorizationError:
+        pass
+    else:
+        raise AssertionError("another customer's ticket must not be readable")
+
+
+def test_ticket_domain_error_has_consistent_http_shape(monkeypatch, make_user):
+    requester = make_user(id="customer-a", role=constants.Role.USER)
+    app.dependency_overrides[tickets_router.get_current_user] = lambda: requester
+
+    def fake_get_ticket(ticket_id, current_user):
+        raise AuthorizationError()
+
+    monkeypatch.setattr(tickets_router.s_tickets, "get_ticket", fake_get_ticket)
+
+    response = client.get("/tickets/ticket-b")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": {
+            "code": "authorization_error",
+            "message": "Permission denied",
+        }
+    }
+
+
+def _ondelete(model, column_name: str) -> str | None:
+    column = model.__table__.columns[column_name]
+    foreign_key = next(iter(column.foreign_keys))
+    return foreign_key.ondelete
+
+
+def test_required_history_references_do_not_use_set_null():
+    assert Ticket.__table__.columns.creator_user_id.nullable is False
+    assert _ondelete(Ticket, "creator_user_id") == "RESTRICT"
+
+    assert Event.__table__.columns.actor_user_id.nullable is False
+    assert _ondelete(Event, "actor_user_id") == "RESTRICT"
+
+    assert Comment.__table__.columns.author_user_id.nullable is False
+    assert _ondelete(Comment, "author_user_id") == "RESTRICT"
 
 
 def test_get_tickets_requires_authentication():

@@ -129,7 +129,12 @@ def test_get_ticket_comment_translates_domain_exception(monkeypatch, make_user):
     response = client.get("/tickets/ticket-1/comments/missing-comment")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "comment_not_found"
+    assert response.json() == {
+        "error": {
+            "code": "comment_not_found",
+            "message": "Comment not found",
+        }
+    }
 
 
 def test_delete_ticket_comment_passes_nested_ids_and_requester(monkeypatch, make_user):

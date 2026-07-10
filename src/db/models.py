@@ -22,7 +22,7 @@ class Ticket(Base):
                 nullable=True)
     creator_user_id:    Mapped[str] = mapped_column(
         String(36),
-        ForeignKey('users.id', ondelete='SET NULL')
+        ForeignKey('users.id', ondelete='RESTRICT')
         )
     status:             Mapped[Status] = mapped_column(Enum(Status))
     priority:           Mapped[Priority] = mapped_column(Enum(Priority))
@@ -82,7 +82,7 @@ class Event(Base):
     entity_id:      Mapped[str] = mapped_column(String(36), nullable=True) #whcih exact object changed
     actor_user_id:  Mapped[str] = mapped_column(
                         String(36),
-                        ForeignKey('users.id', ondelete='SET NULL'),
+                        ForeignKey('users.id', ondelete='RESTRICT'),
                         nullable=False)
     event_type:     Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
     old_value:      Mapped[str] = mapped_column(String(255), nullable=True)
@@ -101,7 +101,7 @@ class Comment(Base):
                 nullable=False)
     author_user_id: Mapped[str] = mapped_column(
                 String(36),
-                ForeignKey('users.id', ondelete='SET NULL'))
+                ForeignKey('users.id', ondelete='RESTRICT'))
     body: Mapped[str] = mapped_column(Text, nullable=False)
     visibility: Mapped[Visibility] = mapped_column(Enum(Visibility), nullable=False)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

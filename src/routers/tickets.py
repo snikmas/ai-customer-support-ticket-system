@@ -11,7 +11,9 @@ router = APIRouter(
 )
 
 def _raise_http(exc: AppException):
-    raise HTTPException(exc.status_code, detail=exc.code)
+    # Re-raise the domain error so the application-level handler keeps one
+    # response shape for every router.
+    raise exc
 
 @router.get("/", status_code=200)
 async def get_tickets(requester = Depends(get_current_user), 

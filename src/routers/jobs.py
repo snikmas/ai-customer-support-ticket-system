@@ -9,7 +9,7 @@ router = APIRouter(
 )
 
 @router.post("/tickets/{ticket_id}/analysis-jobs", status_code=201)
-def create_ticket_analysis_job(ticket_id: int):
+def create_ticket_analysis_job(ticket_id: str):
     job = start_ticket_analysis_job(ticket_id)
     if job:
         return job

@@ -5,6 +5,18 @@ from src import constants
 from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
+from src.exceptions.domain import (
+    AuditLogError,
+    AuthorizationError,
+    EmptyUpdateError,
+    InternalOperationError,
+    InvalidAssigneeError,
+    TicketAlreadyAssignedError,
+    TicketDeletedError,
+    TicketNotFoundError,
+    TicketStatusConflictError,
+    UserNotFoundError,
+)
 import json
 
 def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
@@ -16,7 +28,7 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
     now = datetime.now(timezone.utc)
 
     if (check_for_access(requester.role, constants.Role.USER)) is False:
-        raise PermissionError
+        raise AuthorizationError()
     
     ticket = db_models.Ticket(
         id=constants.generate_id(),
@@ -48,18 +60,26 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
     ticket = operations.create_ticket(ticket)
     event_res = operations.create_event(event)
     if event_res is False:
-        return None
+        raise AuditLogError("ticket_create_audit_failed")
 
     return _to_api_ticket(ticket)
 
 
 def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im not sure is it a db ticket or api model
     if check_for_access(requester.role, constants.Role.USER) is False:
-        raise PermissionError
+        raise AuthorizationError()
     
     ticket = operations.get_ticket(id)
-    if ticket is None or (ticket.deleted_at is not None and check_for_access(requester.role, constants.Role.ADMIN)):
-        raise ValueError("ticket_not_found")
+    if ticket is None:
+        raise TicketNotFoundError()
+
+    if requester.role == constants.Role.USER and ticket.creator_user_id != requester.id:
+        raise AuthorizationError()
+
+    # Admins can inspect deleted tickets because the admin list endpoint also
+    # includes them. Other roles cannot read a deleted ticket directly.
+    if ticket.deleted_at is not None and check_for_access(requester.role, constants.Role.ADMIN) is False:
+        raise TicketDeletedError()
 
     return _to_api_ticket(ticket)
 
@@ -87,8 +107,10 @@ def get_all_tickets(
 
 def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> api_models.Ticket:
     ticket = operations.get_ticket(updated_info_id)
-    if ticket is None or ticket.deleted_at is not None:
-        raise ValueError("ticket_not_found")
+    if ticket is None:
+        raise TicketNotFoundError()
+    if ticket.deleted_at is not None:
+        raise TicketDeletedError()
 
     # ================= STANDARTIZATION PROCESS ========================
     #for audit logs, json friendly
@@ -97,7 +119,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     updated_info = updated_info.model_dump(exclude_unset=True)
 
     if not updated_info or not audit_new_info:
-        raise ValueError("empty_update")
+        raise EmptyUpdateError()
 
     if 'tags' in updated_info and updated_info['tags'] is not None:
         updated_info['tags'] = constants.serialize_tags(updated_info['tags'])
@@ -108,17 +130,19 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     requested_fields = set(updated_info.keys())
 
     if requester.role == constants.Role.USER:
+        if ticket.creator_user_id != requester.id:
+            raise AuthorizationError()
         if 'status' not in requested_fields or len(requested_fields) > 1 or updated_info['status'] not in [constants.Status.OPEN, constants.Status.CLOSED]:
-            return None
+            raise AuthorizationError("ticket_fields_not_allowed")
             
     elif requester.role == constants.Role.AGENT:
         allowed_fields = {"status"}
 
         if requested_fields - allowed_fields:
-            return None
+            raise AuthorizationError("ticket_fields_not_allowed")
 
         if ticket.assigned_agent_id != requester.id:
-            return None
+            raise AuthorizationError("ticket_not_assigned_to_requester")
 
 
     elif check_for_access(requester.role, constants.Role.MANAGER):
@@ -127,21 +151,22 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             "assigned_agent_id",
             "priority",
             }
-        if requested_fields - allowed_fields: return None
+        if requested_fields - allowed_fields:
+            raise AuthorizationError("ticket_fields_not_allowed")
     else:
-        return None
+        raise AuthorizationError()
     
     if 'assigned_agent_id' in updated_info:
         agent = operations.get_user(updated_info['assigned_agent_id'])
         if agent is None:
-            return None
+            raise InvalidAssigneeError("assignee_not_found")
         if agent.role not in [constants.Role.AGENT, constants.Role.MANAGER]:
-            return None
+            raise InvalidAssigneeError()
 
 
     if "status" in requested_fields:
         if constants.is_valid_status_transition(ticket.status, updated_info['status']) is False:
-            return None
+            raise TicketStatusConflictError()
         
     
     old_info = {}
@@ -174,10 +199,10 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     ticket = operations.update_ticket(updated_info_id, updated_info)
     event_res = operations.create_event(event)
     if event_res is False:
-        return None
+        raise AuditLogError("ticket_update_audit_failed")
 
     if ticket is None:
-        raise ValueError("Some error during updating, the operation canceled")
+        raise InternalOperationError("ticket_update_failed")
     
     return _to_api_ticket(ticket)
 
@@ -185,11 +210,11 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
     ticket = operations.get_ticket(id)
 
     if ticket is None:
-        raise ValueError("ticket_not_found")
+        raise TicketNotFoundError()
 
     if ticket.creator_user_id != requester.id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False: 
-            raise PermissionError
+            raise AuthorizationError()
 
     now = datetime.now(timezone.utc)
     delete_info = {
@@ -213,20 +238,20 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
 
 
     if operations.delete_ticket(id, delete_info) is False:
-        raise ValueError("Some error during deleting, the operation cancelled")
+        raise InternalOperationError("ticket_delete_failed")
     
     event_res = operations.create_event(event)
     if event_res is False:
-        return None
+        raise AuditLogError("ticket_delete_audit_failed")
     
 
 def delete_all_tickets(requester: api_models.User) -> int:
     user = operations.get_user(requester.id)
     if user is None:
-        raise ValueError("user_not_found")
+        raise UserNotFoundError()
     
     if check_for_access(user.role, constants.Role.SUPER_ADMIN) is False:
-        raise PermissionError
+        raise AuthorizationError()
     
     all_tickets = operations.get_tickets()
     event = api_models.Event(
@@ -245,7 +270,8 @@ def delete_all_tickets(requester: api_models.User) -> int:
     # batch_id=constants.generate_id()
     deleted_tickets = operations.delete_all_tickets()
     res = operations.create_event(event)
-    if res is False: return None
+    if res is False:
+        raise AuditLogError("ticket_bulk_delete_audit_failed")
 
     if all_tickets:
         for ticket in all_tickets:
@@ -263,7 +289,8 @@ def delete_all_tickets(requester: api_models.User) -> int:
                     batch_id=event.batch_id
                 )
                 res = operations.create_event(event_ticket)
-                if res is False: return None
+                if res is False:
+                    raise AuditLogError("ticket_delete_audit_failed")
             
     
     return deleted_tickets
@@ -273,19 +300,19 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     ticket = operations.get_ticket(ticket_id)
     
     if ticket is None:
-        raise ValueError("ticket_not_found")
+        raise TicketNotFoundError()
     
     if check_for_access(requester.role, constants.Role.AGENT) is False:
-        raise PermissionError("only_agents_can_claim")
+        raise AuthorizationError("only_agents_can_claim")
     
     if ticket.deleted_at is not None:
-        raise ValueError("ticket_deleted")
+        raise TicketDeletedError()
     
     if ticket.assigned_agent_id is not None:
-        raise ValueError("ticket_already_assigned")
+        raise TicketAlreadyAssignedError()
     
     if ticket.status != constants.Status.NEW:
-        raise ValueError("ticket_not_new")
+        raise TicketStatusConflictError("ticket_not_new")
     
 
     event = api_models.Event(
@@ -302,7 +329,7 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     
     res = operations.claim_ticket(ticket_id, requester.id, event)
     if res is None:
-        raise ValueError("ticket_not_found")
+        raise InternalOperationError("ticket_claim_failed")
     
     return _to_api_ticket(res)
 
@@ -312,20 +339,25 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
 
 
     if ticket is None:
-        raise ValueError("ticket_not_found")
+        raise TicketNotFoundError()
+    if ticket.deleted_at is not None:
+        raise TicketDeletedError()
     is_reassign = False
     if ticket.assigned_agent_id is not None:
         is_reassign = True
     
     agent = operations.get_user(agent_id)
     if agent is None:
-        raise ValueError("ticket_not_found")
+        raise InvalidAssigneeError("assignee_not_found")
     
-    if check_for_access(requester.role, constants.Role.MANAGER) is False: return None
+    if check_for_access(requester.role, constants.Role.MANAGER) is False:
+        raise AuthorizationError()
 
-    if agent.role not in [constants.Role.AGENT, constants.Role.MANAGER]: return None
+    if agent.role not in [constants.Role.AGENT, constants.Role.MANAGER]:
+        raise InvalidAssigneeError()
 
-    if requester.role == agent.role: return None
+    if requester.role == agent.role:
+        raise InvalidAssigneeError("cannot_assign_same_role")
 
     event = api_models.Event(
        id=constants.generate_id(),
@@ -343,5 +375,7 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
         event.event_type = constants.EventType.TICKET_REASSIGNED
 
     res = operations.assign_ticket(ticket.id, agent.id, event)
+    if res is None:
+        raise InternalOperationError("ticket_assignment_failed")
 
     return _to_api_ticket(res)

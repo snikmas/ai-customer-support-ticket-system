@@ -1,11 +1,11 @@
-# AI Customer Support Ticket System
+# Customer Support Ticket System
 
-Learning backend project for an AI-assisted customer support ticket system.
+Learning backend project for a customer support ticket system.
 
 This repository is being built to practice real backend engineering concepts with
 FastAPI: users, authentication, role-based permissions, ticket workflows,
-comments, database models, service-layer logic, tests, and later AI-assisted
-ticket analysis.
+comments, database models, service-layer logic, Redis, background jobs, tests,
+and deployment.
 
 The project is intentionally backend-first. It is not a finished production
 system yet.
@@ -28,7 +28,7 @@ Implemented or started:
 - Pagination and sorting support on user, ticket, and comment listing routes
 - Basic custom domain exception handling for some comment flows
 - Redis helper modules started for future caching/rate-limiting work
-- RQ background-job structure started for ticket analysis jobs
+- RQ background-job structure started with a temporary ticket-analysis job name
 - Job API endpoints started for creating an analysis job and checking job status
 - Pytest test modules for users, auth, tickets, and comments
 
@@ -39,9 +39,7 @@ Not finished yet:
 - Stronger ticket workflow validation
 - Full Redis integration for caching and rate limiting
 - Running and verifying an RQ worker process end-to-end
-- Duplicate-job prevention for repeated ticket analysis requests
-- Persisting completed ticket analysis results in the database
-- LLM-assisted summary, priority classification, duplicate detection, and reply suggestions
+- A complete, non-AI background-job workflow
 - Docker / Docker Compose setup
 - Small frontend demo
 
@@ -59,7 +57,10 @@ Support agents and admins can:
 - add comments to the ticket conversation
 - manage users according to role permissions
 
-The planned AI layer will help support agents by:
+## Future Extension: AI Assistance
+
+AI assistance is deliberately out of scope until the core support system is
+finished. A later version may help support agents by:
 
 - summarizing long ticket conversations
 - classifying ticket priority
@@ -82,10 +83,10 @@ Current stack:
 - RQ background jobs
 - Pytest
 
-Started or planned:
+Planned after the core project:
 
 - Docker / Docker Compose
-- LLM API integration
+- LLM API integration and AI-assisted ticket analysis
 - Small web frontend
 
 ## Backend Concepts Practiced
@@ -166,8 +167,9 @@ The current job flow is intentionally minimal:
 API request -> RQ queue in Redis -> worker task -> temporary job status
 ```
 
-The durable ticket-analysis result is still planned and should later be stored
-in the database, not only in Redis.
+The current job uses placeholder output to verify RQ mechanics. It is not AI
+assistance. Any future AI result should be stored in the database, not only in
+Redis.
 
 ## Repository Structure
 
@@ -232,8 +234,9 @@ configuration.
 
 This project demonstrates a backend system with real application logic:
 users, authentication, JWTs, refresh sessions, roles, database relationships,
-ticket workflows, comments, service-layer authorization, and planned AI-assisted
-support features.
+ticket workflows, comments, service-layer authorization, Redis, and background
+job processing. AI assistance is a future extension after this core project is
+complete.
 
 It is useful for interview discussion because it shows both implemented backend
 behavior and clear next steps toward a more production-like system.
