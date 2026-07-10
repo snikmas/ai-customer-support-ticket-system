@@ -28,6 +28,8 @@ Implemented or started:
 - Pagination and sorting support on user, ticket, and comment listing routes
 - Basic custom domain exception handling for some comment flows
 - Redis helper modules started for future caching/rate-limiting work
+- RQ background-job structure started for ticket analysis jobs
+- Job API endpoints started for creating an analysis job and checking job status
 - Pytest test modules for users, auth, tickets, and comments
 
 Not finished yet:
@@ -36,7 +38,9 @@ Not finished yet:
 - Complete ticket history/event log
 - Stronger ticket workflow validation
 - Full Redis integration for caching and rate limiting
-- Background worker for AI analysis jobs
+- Running and verifying an RQ worker process end-to-end
+- Duplicate-job prevention for repeated ticket analysis requests
+- Persisting completed ticket analysis results in the database
 - LLM-assisted summary, priority classification, duplicate detection, and reply suggestions
 - Docker / Docker Compose setup
 - Small frontend demo
@@ -74,12 +78,12 @@ Current stack:
 - JWT access tokens
 - Refresh-token sessions
 - bcrypt password hashing
+- Redis
+- RQ background jobs
 - Pytest
 
 Started or planned:
 
-- Redis
-- Background workers
 - Docker / Docker Compose
 - LLM API integration
 - Small web frontend
@@ -142,6 +146,7 @@ database, and blocks deleted or banned users.
 - `DELETE /tickets/` - admin-level bulk delete behavior
 - `POST /tickets/{ticket_id}/claim` - claim an unassigned ticket
 - `POST /tickets/{ticket_id}/assign` - assign a ticket to an agent
+- `POST /tickets/{ticket_id}/analysis-jobs` - enqueue a background analysis job
 
 ### Ticket Comments
 
@@ -150,6 +155,19 @@ database, and blocks deleted or banned users.
 - `GET /tickets/{ticket_id}/comments/{comment_id}` - get one comment
 - `PATCH /tickets/{ticket_id}/comments/{comment_id}` - update a comment
 - `DELETE /tickets/{ticket_id}/comments/{comment_id}` - soft-delete a comment
+
+### Jobs
+
+- `GET /jobs/{job_id}` - check the status of a background job
+
+The current job flow is intentionally minimal:
+
+```text
+API request -> RQ queue in Redis -> worker task -> temporary job status
+```
+
+The durable ticket-analysis result is still planned and should later be stored
+in the database, not only in Redis.
 
 ## Repository Structure
 
@@ -163,6 +181,7 @@ src/core/               Security, config, and logging helpers
 src/constants/          Enums and shared constants
 src/dependencies/       FastAPI dependencies
 src/cache/              Redis/cache helper modules
+src/jobs/               RQ queue setup, job service logic, and worker tasks
 src/exceptions/         Domain exception classes
 src/tests/              Pytest test modules
 keys/                   Local JWT key files
@@ -191,6 +210,12 @@ The main learning boundary in this project is:
 
 ```text
 router -> dependency/auth -> service/business rules -> database operations
+```
+
+For background jobs, the learning boundary is:
+
+```text
+router -> jobs service -> RQ queue/Redis -> worker task
 ```
 
 Routers receive HTTP requests and convert errors to HTTP responses.

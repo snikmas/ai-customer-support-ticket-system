@@ -15,3 +15,4 @@ from .session import (
     TokenResponse,
 )
 from .comments import Comment, CommentCreate, CommentUpdate
+from .jobs import JobResponse, JobStatusResponse

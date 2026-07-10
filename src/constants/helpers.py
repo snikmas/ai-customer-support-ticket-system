@@ -1,6 +1,6 @@
 import logging
 from uuid import uuid4
-from .enums import Role, Status, Tag
+from .enums import Role, Status, Tag, JobStatus
 import json
 from datetime import datetime
 from sqlalchemy import asc, desc
@@ -88,3 +88,11 @@ def apply_sort_order(column, sort_order: str):
     match sort_order:
         case 'desc': return column.desc()
         case 'asc': return column.asc()
+
+def translate_rq_status(rq_status: str) -> JobStatus:
+    match rq_status:
+        case "queued": return JobStatus.QUEUED
+        case "started": return JobStatus.RUNNING
+        case "finished": return JobStatus.COMPLETED
+        case "failed": return JobStatus.FAILED
+    return JobStatus.FAILED

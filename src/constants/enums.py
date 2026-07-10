@@ -112,6 +112,15 @@ class Source(Enum):
     BOT = 'Bot'
     SYSTEM = 'System'
 
+class JobStatus(str, Enum):
+    QUEUED = 'queued'
+    RUNNING = 'running'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+
+    RETRYING = 'retrying'
+    CANCELLED = 'cancelled'
+
 #   NEW -> due_at = now + 2 hours
 #   OPEN -> due_at = now + 6 hours
 #   IN_PROGRESS -> due_at = now + 12 hours

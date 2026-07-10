@@ -4,7 +4,6 @@
 # return queue object
 # no ticket logic/fastapi here
 # own rq queue configuration
-from redis import Redis
 from rq import Queue
 from src.cache import get_redis_client
 

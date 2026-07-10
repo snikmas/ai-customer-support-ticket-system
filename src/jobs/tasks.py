@@ -1,9 +1,11 @@
 # functions that the worker runs
-import requests
-from . import get_ticket_analysis_queue
-from rq import Queue
+# shouldn't touch the queue
 
-def analyze_ticket(ticket_id: str) -> str: # returns job_id
-    # @ worker tasK: recieve ticket_id -> load ticket later -> fake/small analysis first -> later save result to db
-    queue = get_ticket_analysis_queue()
-    job = queue.get(ticket_id)
+def analyze_ticket(ticket_id: str) -> dict: # returns job_id
+    # LOAD A TICKET from db
+    # run llm analysis
+    # save result to db
+    return {
+        "ticket_id": ticket_id,
+        "analysis": "analysis result"
+    }
