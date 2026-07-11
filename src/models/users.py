@@ -1,6 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus
+from .validation import AvatarUrl, EmailAddress, NewPassword, Nickname, PersonName, PhoneNumber
 
 
 class User(BaseModel):
@@ -21,25 +22,29 @@ class User(BaseModel):
     user_status: UserStatus | None = UserStatus.ACTIVE
 
 class UserCreate(BaseModel):
-    nickname: str
-    avatar_url: str | None = None
-    first_name: str
-    last_name: str
-    password: str
+    model_config = ConfigDict(extra="forbid")
 
-    phone: str
-    email: str
+    nickname: Nickname
+    avatar_url: AvatarUrl | None = None
+    first_name: PersonName
+    last_name: PersonName
+    password: NewPassword
+
+    phone: PhoneNumber
+    email: EmailAddress
 
 class UserUpdate(BaseModel):
-    nickname: str | None = None
-    avatar_url: str | None = None
-    first_name: str | None = None
-    last_name: str | None = None
-    password: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
-    role: str | None = None
-    phone: str | None = None
-    email: str | None = None
+    nickname: Nickname | None = None
+    avatar_url: AvatarUrl | None = None
+    first_name: PersonName | None = None
+    last_name: PersonName | None = None
+    password: NewPassword | None = None
+
+    role: Role | None = None
+    phone: PhoneNumber | None = None
+    email: EmailAddress | None = None
     user_status: UserStatus | None = None
 
 class UserResponse(BaseModel):

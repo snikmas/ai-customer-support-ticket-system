@@ -77,7 +77,6 @@ def test_create_ticket_comment_uses_body_and_requester(monkeypatch, make_user):
         json={
             "body": "New comment",
             "visibility": constants.Visibility.PUBLIC.value,
-            "source": constants.Source.WEB.value,
         },
     )
 

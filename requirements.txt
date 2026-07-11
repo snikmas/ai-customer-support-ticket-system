@@ -7,6 +7,8 @@ python-dotenv==1.2.2
 
 # Authentication and security
 bcrypt==5.0.0
+argon2-cffi==25.1.0
+email-validator==2.3.0
 PyJWT[crypto]==2.13.0
 
 # Redis and background jobs

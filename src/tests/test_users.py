@@ -67,14 +67,14 @@ def test_create_user_requires_password_and_returns_public_user(monkeypatch, make
             "nickname": "new-user",
             "first_name": "New",
             "last_name": "User",
-            "password": "plain-password",
-            "phone": "555-0100",
+            "password": "a secure plain passphrase",
+            "phone": "+15550100",
             "email": "new-user@example.com",
         },
     )
 
     assert response.status_code == 201, response.text
-    assert captured["password"] == "plain-password"
+    assert captured["password"] == "a secure plain passphrase"
     body = response.json()
     assert body["data"]["id"] == "created-user"
     assert "password" not in body["data"]

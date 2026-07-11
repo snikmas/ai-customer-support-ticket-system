@@ -1,6 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType
+from .validation import EntityId, LongBody, RefreshToken, TicketTitle
 
 class Ticket(BaseModel):
     id: str
@@ -21,16 +22,18 @@ class Ticket(BaseModel):
     deleted_at: datetime | None = None
 
 class TicketCreate(BaseModel): #ticket that creates a user
-    title: str
-    description: str
+    model_config = ConfigDict(extra="forbid")
+
+    title: TicketTitle
+    description: LongBody
     category: Category
-    status: Status = Status.NEW
-    tags: list[Tag] = Field(default_factory=list)
-    priority: Priority = Priority.NORMAL
+    tags: list[Tag] = Field(default_factory=list, max_length=10)
 
 #ticket update only for agents
 class TicketUpdate(BaseModel): 
-    tags: list[Tag] | None = None 
+    model_config = ConfigDict(extra="forbid")
+
+    tags: list[Tag] | None = Field(default=None, max_length=10)
     assigned_agent_id: str | None = None 
     status: Status | None = None
     priority: Priority | None = None
@@ -38,8 +41,11 @@ class TicketUpdate(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: RefreshToken
 
 class AssignTicketRequest(BaseModel):
-    agent_id: str
+    model_config = ConfigDict(extra="forbid")
 
+    agent_id: EntityId

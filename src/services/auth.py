@@ -1,6 +1,6 @@
 from src.models import LoginRequest, TokenResponse, User, RefreshSession, CreatedRefreshSession, Event
 from src import constants
-from src.core.security import verify_password, create_access_token, generate_refresh_token, hash_token
+from src.core.security import hash_password, password_needs_rehash, verify_password, create_access_token, generate_refresh_token, hash_token
 from .permissions import check_for_access
 from src.db import operations
 from src.constants.helpers import generate_id
@@ -33,6 +33,16 @@ def login_user(identifier: str, password: str) -> User | None:
     validate_user = verify_password(password, user.password)
 
     if validate_user:
+        if password_needs_rehash(user.password):
+            upgraded_user = operations.update_user(
+                user.id,
+                {
+                    "password": hash_password(password),
+                    "updated_at": datetime.now(timezone.utc),
+                },
+            )
+            if upgraded_user is not None:
+                user = upgraded_user
         return user
     return None
 

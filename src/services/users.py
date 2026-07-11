@@ -95,9 +95,7 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
     if any(key in updated_info for key in ['role', 'user_status', 'deleted_at']):
         if check_for_access(requester.role, constants.Role.ADMIN) is False:
             raise PermissionError
-        if 'role' in updated_info and updated_info['role'] is not None:
-            updated_info['role'] = constants.Role[updated_info['role'].upper()]
-    
+
     if 'password' in updated_info:
         updated_info['password'] = hash_password(updated_info['password'])
         audit_new_info['password'] = "<changed>"

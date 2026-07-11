@@ -1,5 +1,7 @@
 #password hashing jwt helpetrs ;ater
 import bcrypt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from src.models import User
 from datetime import datetime, timezone, timedelta
 import jwt
@@ -9,15 +11,31 @@ import hashlib
 import secrets
 
 
+password_hasher = PasswordHasher()
+
+
 def generate_refresh_token() -> str:
     raw_refresh_token = secrets.token_urlsafe(32)
     return raw_refresh_token
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode("utf-8")
+    return password_hasher.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    if hashed_password.startswith("$2"):
+        try:
+            return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        except ValueError:
+            return False
+
+    try:
+        return password_hasher.verify(hashed_password, plain_password)
+    except (InvalidHashError, VerificationError, VerifyMismatchError):
+        return False
+
+
+def password_needs_rehash(hashed_password: str) -> bool:
+    return hashed_password.startswith("$2") or password_hasher.check_needs_rehash(hashed_password)
 
 # for a refresh token
 def hash_token(raw_token: str) -> str:

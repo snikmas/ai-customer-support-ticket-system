@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import bcrypt
 import pytest
 from fastapi import HTTPException
 
@@ -16,7 +17,7 @@ def test_hash_password_returns_verifiable_text_hash():
     hashed_password = security.hash_password(plain_password)
 
     assert isinstance(hashed_password, str)
-    assert hashed_password.startswith("$2")
+    assert hashed_password.startswith("$argon2id$")
     assert not hashed_password.startswith("b'")
     assert hashed_password != plain_password
     assert security.verify_password(plain_password, hashed_password) is True
@@ -40,6 +41,29 @@ def test_login_user_returns_user_for_valid_nickname_password(monkeypatch, make_u
     result = auth_service.login_user("mary", "correct-password")
 
     assert result is user
+
+
+def test_login_upgrades_legacy_bcrypt_hash_to_argon2(monkeypatch, make_user):
+    password = "legacy-password"
+    user = make_user(id="legacy-user", nickname="mary")
+    user.password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    captured = {}
+
+    monkeypatch.setattr(auth_service.operations, "get_user_by_nickname", lambda _: user)
+
+    def fake_update_user(user_id, updated_info, event_data=None):
+        captured["user_id"] = user_id
+        captured["password"] = updated_info["password"]
+        user.password = updated_info["password"]
+        return user
+
+    monkeypatch.setattr(auth_service.operations, "update_user", fake_update_user)
+
+    result = auth_service.login_user("mary", password)
+
+    assert result is user
+    assert captured["user_id"] == "legacy-user"
+    assert captured["password"].startswith("$argon2id$")
 
 
 def test_login_user_returns_none_for_inactive_user(monkeypatch, make_user):

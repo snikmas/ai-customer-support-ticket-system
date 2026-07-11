@@ -100,8 +100,8 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
         deleted_at=None,
         deleted_by_user_id=None,
         parent_comment_id=comment_create.parent_comment_id,
-        attachments_count=comment_create.attachments_count or 0,
-        source=comment_create.source
+        attachments_count=0,
+        source=constants.Source.API
     )
 
     event = api_models.Event(

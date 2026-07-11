@@ -1,6 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType, Visibility, Source
+from .validation import EntityId, LongBody
 
 class Comment(BaseModel):
     id: str
@@ -20,13 +21,15 @@ class Comment(BaseModel):
     source: Source
 
 class CommentCreate(BaseModel):
-    body: str
+    model_config = ConfigDict(extra="forbid")
+
+    body: LongBody
     visibility: Visibility
 
-    parent_comment_id: str | None = None
-    attachments_count: int | None = None
-    source: Source
+    parent_comment_id: EntityId | None = None
 
 class CommentUpdate(BaseModel):
-    body: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    body: LongBody | None = None
     visibility: Visibility | None = None

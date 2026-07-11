@@ -36,8 +36,8 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         tags=constants.serialize_tags(ticket_data.tags),
         assigned_agent_id=None,
         creator_user_id=requester.id,
-        status=ticket_data.status,
-        priority=ticket_data.priority,
+        status=constants.Status.NEW,
+        priority=constants.Priority.NORMAL,
         updated_at=now,
         created_at=now,
         deleted_at=None

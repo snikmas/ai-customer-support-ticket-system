@@ -1,12 +1,21 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_validator
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EntityType, EventType
+from .validation import EmailAddress, LoginPassword, Nickname, RefreshToken
 
 
 class LoginRequest(BaseModel):
-    nickname: str | None = None
-    email: str | None = None
-    password: str
+    model_config = ConfigDict(extra="forbid")
+
+    nickname: Nickname | None = None
+    email: EmailAddress | None = None
+    password: LoginPassword
+
+    @model_validator(mode="after")
+    def require_one_identifier(self):
+        if (self.nickname is None) == (self.email is None):
+            raise ValueError("provide_exactly_one_login_identifier")
+        return self
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -26,7 +35,9 @@ class CreatedRefreshSession(BaseModel):
     refresh_token: str
 
 class LogoutRequest(BaseModel):
-    refresh_token: str
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: RefreshToken
     
 
 class Event(BaseModel):
@@ -40,5 +51,3 @@ class Event(BaseModel):
     batch_id: str | None = None
     metadata: str | None = None
     created_at: datetime
-
-
