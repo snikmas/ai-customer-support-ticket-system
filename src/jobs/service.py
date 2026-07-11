@@ -29,7 +29,8 @@ def start_ticket_analysis_job(ticket_id: str, requester: User) -> JobResponse | 
     ticket = get_ticket(ticket_id)
     if ticket is None: raise TicketNotFoundError
     if ticket.creator_user_id != requester.id: raise AuthorizationError
-    if check_for_access(requester.role, Role.USER) is False: return AuthenticationError
+    if check_for_access(requester.role, Role.USER) is False:
+        raise AuthenticationError()
 
     queue = get_ticket_analysis_queue()
     job = queue.enqueue(analyze_ticket, ticket_id)
