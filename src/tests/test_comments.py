@@ -1,12 +1,72 @@
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
+from datetime import datetime, timezone
 
 from main import app
 from src import constants
 from src.exceptions.domain import CommentNotFoundError
+from src.services import comments as comments_service
 from src.routers import tickets as tickets_router
 
 
 client = TestClient(app)
+
+
+def test_comment_create_rejects_server_owned_fields(make_user):
+    app.dependency_overrides[tickets_router.get_current_user] = lambda: make_user()
+    response = client.post(
+        "/tickets/ticket-1/comments",
+        json={
+            "body": "Forged system comment",
+            "visibility": constants.Visibility.PUBLIC.value,
+            "source": constants.Source.SYSTEM.value,
+            "attachments_count": 99,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_manager_cannot_read_deleted_comment(monkeypatch, make_user, make_ticket):
+    requester = make_user(role=constants.Role.MANAGER)
+    ticket = make_ticket()
+    now = datetime.now(timezone.utc)
+    comment = SimpleNamespace(
+        id="comment-1", ticket_id=ticket.id, author_user_id="author",
+        body="deleted", visibility=constants.Visibility.PUBLIC,
+        edited_at=None, created_at=now, updated_at=now, deleted_at=now,
+        deleted_by_user_id=requester.id, parent_comment_id=None,
+        attachments_count=0, source=constants.Source.API,
+    )
+    monkeypatch.setattr(comments_service.operations, "get_comment", lambda comment_id: comment)
+    monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
+
+    try:
+        comments_service.get_comment(ticket.id, comment.id, requester)
+    except CommentNotFoundError:
+        pass
+    else:
+        raise AssertionError("deleted comment detail must be hidden from managers too")
+
+
+def test_reply_rejects_parent_from_another_ticket(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="customer")
+    ticket = make_ticket(id="ticket-1", creator_user_id=requester.id)
+    parent = SimpleNamespace(id="parent", ticket_id="ticket-2")
+    monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
+    monkeypatch.setattr(comments_service.operations, "get_comment", lambda comment_id: parent)
+
+    comment_create = comments_service.api_models.CommentCreate(
+        body="Reply",
+        visibility=constants.Visibility.PUBLIC,
+        parent_comment_id=parent.id,
+    )
+    try:
+        comments_service.create_ticket_comment(ticket.id, comment_create, requester)
+    except CommentNotFoundError:
+        pass
+    else:
+        raise AssertionError("a reply parent must belong to the same ticket")
 
 
 def test_get_ticket_comments_requires_authentication():

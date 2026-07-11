@@ -16,6 +16,21 @@ def _to_api_comment(comment: db_models.Comment) -> api_models.Comment:
 def _check_comment_belongs_to_ticket(comment: db_models.Comment, ticket_id: str) -> None:
     if comment.ticket_id != ticket_id:
         raise CommentNotFoundError()
+
+
+def _check_comment_is_visible(comment: db_models.Comment, requester: api_models.User) -> None:
+    if comment.deleted_at is not None:
+        raise CommentNotFoundError()
+    if requester.role == constants.Role.USER and comment.visibility != constants.Visibility.PUBLIC:
+        raise AuthorizationError()
+    if check_for_access(requester.role, constants.Role.MANAGER):
+        return
+    if check_for_access(requester.role, constants.Role.AGENT):
+        if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER:
+            raise AuthorizationError()
+        return
+    if requester.role != constants.Role.USER:
+        raise AuthorizationError()
         
         
 def get_all_comments(
@@ -61,17 +76,10 @@ def get_comment(ticket_id: str, comment_id: str, requester: api_models.User) -> 
     if ticket is None or ticket.deleted_at is not None:
         raise TicketNotFoundError()
 
+    _check_comment_is_visible(comment, requester)
+
     if requester.role == constants.Role.USER:
         if ticket.creator_user_id != requester.id: raise AuthorizationError()
-        if comment.deleted_at is not None: raise CommentNotFoundError()
-        if comment.visibility != constants.Visibility.PUBLIC: raise AuthorizationError()
-    elif check_for_access(requester.role, constants.Role.MANAGER): 
-        pass
-    elif check_for_access(requester.role, constants.Role.AGENT):
-        if comment.deleted_at is not None: raise CommentNotFoundError()
-        if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER: raise AuthorizationError()
-    else: 
-        raise AuthorizationError()
     return _to_api_comment(comment)
 
 def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreate, requester: api_models.User) -> api_models.Comment:
@@ -85,6 +93,13 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
         raise AuthorizationError()
     if comment_create.visibility == constants.Visibility.PRIVATE_TO_MANAGER and check_for_access(requester.role, constants.Role.MANAGER) is False:
         raise AuthorizationError()
+
+    if comment_create.parent_comment_id is not None:
+        parent = operations.get_comment(comment_create.parent_comment_id)
+        if parent is None:
+            raise CommentNotFoundError()
+        _check_comment_belongs_to_ticket(parent, ticket_id)
+        _check_comment_is_visible(parent, requester)
 
     now = datetime.now(timezone.utc)
     body = constants.validate_required_text(comment_create.body, "comment_body", constants.COMMENT_BODY_MAX_LENGTH)

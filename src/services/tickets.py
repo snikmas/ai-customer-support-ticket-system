@@ -22,6 +22,26 @@ def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
         ticket.tags = constants.deserialize_tags(ticket.tags)
     return api_models.Ticket.model_validate(ticket, from_attributes=True)
 
+
+def _can_read_ticket(ticket: db_models.Ticket, requester: api_models.User) -> bool:
+    if requester.role in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN]:
+        return True
+    if ticket.deleted_at is not None:
+        return False
+    if requester.role in [constants.Role.MANAGER, constants.Role.AGENT_READONLY]:
+        return True
+    if requester.role == constants.Role.AGENT:
+        return (
+            ticket.assigned_agent_id == requester.id
+            or (
+                ticket.assigned_agent_id is None
+                and ticket.status == constants.Status.NEW
+            )
+        )
+    if requester.role == constants.Role.USER:
+        return ticket.creator_user_id == requester.id
+    return False
+
 def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.User) -> api_models.Ticket:
     now = datetime.now(timezone.utc)
 
@@ -68,13 +88,8 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im no
     if ticket is None:
         raise TicketNotFoundError()
 
-    if requester.role == constants.Role.USER and ticket.creator_user_id != requester.id:
+    if _can_read_ticket(ticket, requester) is False:
         raise AuthorizationError()
-
-    # Admins can inspect deleted tickets because the admin list endpoint also
-    # includes them. Other roles cannot read a deleted ticket directly.
-    if ticket.deleted_at is not None and check_for_access(requester.role, constants.Role.ADMIN) is False:
-        raise TicketDeletedError()
 
     return _to_api_ticket(ticket)
 
@@ -90,15 +105,12 @@ def get_all_tickets(
         ) -> list[api_models.Ticket]:
     
     
-    tickets = operations.get_tickets(limit, offset, sort_by, sort_order, priority, status)
-
-    
-    if check_for_access(requester.role, constants.Role.ADMIN):
-        return [_to_api_ticket(ticket) for ticket in tickets]
-    
-    tickets = [_to_api_ticket(ticket) for ticket in tickets if ticket.deleted_at is None and ticket.creator_user_id == requester.id]
-
-    return tickets
+    # Permission filtering must happen before pagination. Otherwise a page can
+    # be short or empty simply because unauthorized rows occupied its DB slice.
+    tickets = operations.get_tickets(None, 0, sort_by, sort_order, priority, status)
+    visible_tickets = [ticket for ticket in tickets if _can_read_ticket(ticket, requester)]
+    page = visible_tickets[offset:offset + limit]
+    return [_to_api_ticket(ticket) for ticket in page]
 
 def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> api_models.Ticket:
     ticket = operations.get_ticket(updated_info_id)
@@ -127,11 +139,16 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     if requester.role == constants.Role.USER:
         if ticket.creator_user_id != requester.id:
             raise AuthorizationError()
-        if 'status' not in requested_fields or len(requested_fields) > 1 or updated_info['status'] not in [constants.Status.OPEN, constants.Status.CLOSED]:
+        allowed_fields = {"status", "tags"}
+        if requested_fields - allowed_fields:
             raise AuthorizationError("ticket_fields_not_allowed")
+        if "status" in requested_fields and updated_info["status"] not in [constants.Status.OPEN, constants.Status.CLOSED]:
+            raise AuthorizationError("ticket_status_not_allowed")
+        if "tags" in requested_fields and ticket.status != constants.Status.NEW:
+            raise AuthorizationError("ticket_tags_locked_after_triage")
             
     elif requester.role == constants.Role.AGENT:
-        allowed_fields = {"status"}
+        allowed_fields = {"status", "tags"}
 
         if requested_fields - allowed_fields:
             raise AuthorizationError("ticket_fields_not_allowed")
@@ -145,6 +162,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             "status",
             "assigned_agent_id",
             "priority",
+            "tags",
             }
         if requested_fields - allowed_fields:
             raise AuthorizationError("ticket_fields_not_allowed")

@@ -11,6 +11,97 @@ from src.services import tickets as tickets_service
 client = TestClient(app)
 
 
+def test_ticket_create_rejects_client_status(make_user):
+    app.dependency_overrides[tickets_router.get_current_user] = lambda: make_user()
+    response = client.post(
+        "/tickets/",
+        json={
+            "title": "Need help",
+            "description": "Cannot use the API key",
+            "category": constants.Category.ACCOUNT_ACCESS.value,
+            "status": constants.Status.CLOSED.value,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_ticket_owner_can_update_tags(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="customer")
+    ticket = make_ticket(creator_user_id=requester.id, tags=constants.serialize_tags([constants.Tag.API_KEY]))
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: ticket)
+    monkeypatch.setattr(tickets_service.operations, "update_ticket", lambda ticket_id, info, event: ticket)
+
+    result = tickets_service.update_ticket(
+        ticket.id,
+        tickets_service.api_models.TicketUpdate(tags=[constants.Tag.REDIS]),
+        requester,
+    )
+
+    assert result.id == ticket.id
+
+
+def test_ticket_owner_cannot_update_tags_after_new(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="customer")
+    ticket = make_ticket(
+        creator_user_id=requester.id,
+        status=constants.Status.IN_PROGRESS,
+        tags=constants.serialize_tags([constants.Tag.API_KEY]),
+    )
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: ticket)
+
+    try:
+        tickets_service.update_ticket(
+            ticket.id,
+            tickets_service.api_models.TicketUpdate(tags=[constants.Tag.REDIS]),
+            requester,
+        )
+    except AuthorizationError as error:
+        assert error.message == "ticket_tags_locked_after_triage"
+    else:
+        raise AssertionError("customers must not change tags after triage starts")
+
+
+def test_assigned_agent_can_update_tags_after_triage(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="agent-a", role=constants.Role.AGENT)
+    ticket = make_ticket(
+        assigned_agent_id=requester.id,
+        status=constants.Status.IN_PROGRESS,
+        tags=constants.serialize_tags([constants.Tag.API_KEY]),
+    )
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: ticket)
+    monkeypatch.setattr(tickets_service.operations, "update_ticket", lambda ticket_id, info, event: ticket)
+
+    result = tickets_service.update_ticket(
+        ticket.id,
+        tickets_service.api_models.TicketUpdate(tags=[constants.Tag.REDIS]),
+        requester,
+    )
+
+    assert result.id == ticket.id
+
+
+def test_unassigned_agent_cannot_update_tags(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="agent-a", role=constants.Role.AGENT)
+    ticket = make_ticket(
+        assigned_agent_id=None,
+        status=constants.Status.NEW,
+        tags=constants.serialize_tags([constants.Tag.API_KEY]),
+    )
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: ticket)
+
+    try:
+        tickets_service.update_ticket(
+            ticket.id,
+            tickets_service.api_models.TicketUpdate(tags=[constants.Tag.REDIS]),
+            requester,
+        )
+    except AuthorizationError as error:
+        assert error.message == "ticket_not_assigned_to_requester"
+    else:
+        raise AssertionError("an agent must claim or receive the ticket before changing tags")
+
+
 def test_ticket_detail_rejects_another_customer(monkeypatch, make_user, make_ticket):
     requester = make_user(id="customer-a", role=constants.Role.USER)
     ticket = make_ticket(id="ticket-b", creator_user_id="customer-b")
@@ -23,6 +114,40 @@ def test_ticket_detail_rejects_another_customer(monkeypatch, make_user, make_tic
         pass
     else:
         raise AssertionError("another customer's ticket must not be readable")
+
+
+def test_agent_list_and_detail_share_support_queue_policy(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="agent-a", role=constants.Role.AGENT)
+    assigned = make_ticket(id="assigned", assigned_agent_id=requester.id, status=constants.Status.IN_PROGRESS)
+    claimable = make_ticket(id="claimable", assigned_agent_id=None, status=constants.Status.NEW)
+    another_agents = make_ticket(id="someone-elses", assigned_agent_id="agent-b", status=constants.Status.IN_PROGRESS)
+    tickets = [assigned, claimable, another_agents]
+
+    monkeypatch.setattr(tickets_service.operations, "get_tickets", lambda *args: tickets)
+    visible = tickets_service.get_all_tickets(requester, 20, 0, "created_at", "desc", None, None)
+    assert {ticket.id for ticket in visible} == {"assigned", "claimable"}
+
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: claimable)
+    assert tickets_service.get_ticket(claimable.id, requester).id == claimable.id
+
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: another_agents)
+    try:
+        tickets_service.get_ticket(another_agents.id, requester)
+    except AuthorizationError:
+        pass
+    else:
+        raise AssertionError("an agent must not read another agent's assigned ticket")
+
+
+def test_manager_and_readonly_agent_list_all_non_deleted_tickets(monkeypatch, make_user, make_ticket):
+    first = make_ticket(id="first")
+    second = make_ticket(id="second", assigned_agent_id="agent-b", status=constants.Status.IN_PROGRESS)
+    monkeypatch.setattr(tickets_service.operations, "get_tickets", lambda *args: [first, second])
+
+    for role in [constants.Role.MANAGER, constants.Role.AGENT_READONLY]:
+        requester = make_user(role=role)
+        visible = tickets_service.get_all_tickets(requester, 20, 0, "created_at", "desc", None, None)
+        assert {ticket.id for ticket in visible} == {"first", "second"}
 
 
 def test_ticket_domain_error_has_consistent_http_shape(monkeypatch, make_user):

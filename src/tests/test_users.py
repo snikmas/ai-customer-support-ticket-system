@@ -3,9 +3,31 @@ from fastapi.testclient import TestClient
 from main import app
 from src import constants
 from src.routers import users as users_router
+from src.exceptions.domain import AuthorizationError
+from src.services import users as users_service
 
 
 client = TestClient(app)
+
+
+def test_get_user_rejects_another_ordinary_user(monkeypatch, make_user):
+    requester = make_user(id="requester", role=constants.Role.USER)
+    target = make_user(id="target", role=constants.Role.USER)
+    monkeypatch.setattr(users_service.operations, "get_user", lambda user_id: target)
+
+    try:
+        users_service.get_user(target.id, requester)
+    except AuthorizationError:
+        pass
+    else:
+        raise AssertionError("ordinary users must not read another user's private profile")
+
+
+def test_get_user_allows_self_access(monkeypatch, make_user):
+    requester = make_user(id="requester", role=constants.Role.USER)
+    monkeypatch.setattr(users_service.operations, "get_user", lambda user_id: requester)
+
+    assert users_service.get_user(requester.id, requester) is requester
 
 
 def test_get_users_requires_authentication():

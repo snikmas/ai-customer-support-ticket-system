@@ -5,6 +5,7 @@ from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
 from src.core import hash_password
+from src.exceptions.domain import AuthorizationError, UserNotFoundError
 import json
 
 
@@ -51,15 +52,15 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
     return user
 
 def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sure is it a db user or api model
-    if check_for_access(requester.role, constants.Role.USER) is False:
-        raise PermissionError
-    
+    if requester.id != id and check_for_access(requester.role, constants.Role.ADMIN) is False:
+        raise AuthorizationError()
+
     user = operations.get_user(id)
     if user is None:
-        raise ValueError("user_not_found")
+        raise UserNotFoundError()
     
     if user.user_status != constants.UserStatus.ACTIVE and requester.role not in [constants.Role.ADMIN, constants.Role.SUPER_ADMIN]:
-        return None
+        raise UserNotFoundError()
     
     return user
 
