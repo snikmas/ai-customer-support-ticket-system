@@ -1,10 +1,8 @@
 from datetime import datetime, timezone
 from .permissions import check_for_access
 from src import constants
-
 from src import models as api_models
-from src.db import models as db_models
-from src.db import operations
+from src.db import models as db_models, operations
 from src.exceptions.domain import (
     AuditLogError,
     AuthorizationError,
@@ -57,10 +55,7 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         created_at=now
     )
 
-    ticket = operations.create_ticket(ticket)
-    event_res = operations.create_event(event)
-    if event_res is False:
-        raise AuditLogError("ticket_create_audit_failed")
+    ticket = operations.create_ticket(ticket, event)
 
     return _to_api_ticket(ticket)
 
@@ -196,10 +191,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     if 'status' in updated_info.keys():
         event.event_type = constants.EventType.TICKET_STATUS_CHANGED
 
-    ticket = operations.update_ticket(updated_info_id, updated_info)
-    event_res = operations.create_event(event)
-    if event_res is False:
-        raise AuditLogError("ticket_update_audit_failed")
+    ticket = operations.update_ticket(updated_info_id, updated_info, event)
 
     if ticket is None:
         raise InternalOperationError("ticket_update_failed")
@@ -237,12 +229,8 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
 
 
 
-    if operations.delete_ticket(id, delete_info) is False:
+    if operations.delete_ticket(id, delete_info, event) is False:
         raise InternalOperationError("ticket_delete_failed")
-    
-    event_res = operations.create_event(event)
-    if event_res is False:
-        raise AuditLogError("ticket_delete_audit_failed")
     
 
 def delete_all_tickets(requester: api_models.User) -> int:
@@ -254,25 +242,21 @@ def delete_all_tickets(requester: api_models.User) -> int:
         raise AuthorizationError()
     
     all_tickets = operations.get_tickets()
+    now = datetime.now(timezone.utc)
     event = api_models.Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.TICKET,
         entity_id=None,
         actor_user_id=requester.id,
         event_type=constants.EventType.TICKETS_BULK_DELETED,
-        old_value=json.dumps({"deleted_at": None}),
-        new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+        old_value=constants._audit_json({"deleted_at": None}),
+        new_value=constants._audit_json({"deleted_at": now}), # do we need change status? for closed?
         metadata=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=now,
         batch_id=constants.generate_id()
     )
 
-    # batch_id=constants.generate_id()
-    deleted_tickets = operations.delete_all_tickets()
-    res = operations.create_event(event)
-    if res is False:
-        raise AuditLogError("ticket_bulk_delete_audit_failed")
-
+    events = [event]
     if all_tickets:
         for ticket in all_tickets:
             if ticket.deleted_at is None:
@@ -282,18 +266,15 @@ def delete_all_tickets(requester: api_models.User) -> int:
                     entity_id=ticket.id,
                     actor_user_id=requester.id,
                     event_type=constants.EventType.TICKET_DELETED,
-                    old_value=json.dumps({"deleted_at": None}),
-                    new_value=json.dumps({"deleted_at": datetime.now(timezone.utc)}), # do we need change status? for closed?
+                    old_value=constants._audit_json({"deleted_at": None}),
+                    new_value=constants._audit_json({"deleted_at": now}), # do we need change status? for closed?
                     metadata=None,
-                    created_at=datetime.now(timezone.utc),
+                    created_at=now,
                     batch_id=event.batch_id
                 )
-                res = operations.create_event(event_ticket)
-                if res is False:
-                    raise AuditLogError("ticket_delete_audit_failed")
-            
-    
-    return deleted_tickets
+                events.append(event_ticket)
+
+    return operations.delete_all_tickets(events)
 
 
 def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticket | None:

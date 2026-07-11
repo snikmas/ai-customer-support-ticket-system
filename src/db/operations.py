@@ -7,7 +7,7 @@ from src.constants import Status, DEFAULT_SORT_ORDER, DEFAULT_PAGE_LIMIT, DEFAUL
 
 # ==============================================================
 # ======================= SYSTEM ===============================
-def create_refresh_session(old_refresh_session: RefreshSession) -> RefreshSession | None:
+def create_refresh_session(old_refresh_session: RefreshSession, event_data: Event | None = None) -> RefreshSession | None:
     refresh_session = None
     with Session(engine) as session:
         refresh_session = RefreshSession(
@@ -19,6 +19,8 @@ def create_refresh_session(old_refresh_session: RefreshSession) -> RefreshSessio
             created_at=old_refresh_session.created_at
         )
         session.add(refresh_session)
+        if event_data is not None:
+            session.add(_event_from_data(event_data))
         session.commit()
     return refresh_session
 
@@ -30,18 +32,20 @@ def get_refresh_session_by_hash_refresh_token(hash_token: str) -> RefreshSession
     with Session(engine) as session:
         return session.query(RefreshSession).filter_by(refresh_token_hash=hash_token).first()
     
-def revoke_refresh_session(session_id: str) -> bool:
+def revoke_refresh_session(session_id: str, revoked_at: datetime | None = None, event_data: Event | None = None) -> bool:
     with Session(engine) as session:
         with session.begin():
             refresh_session = session.get(RefreshSession, session_id)
             if refresh_session is None:
                 return False
-            refresh_session.revoked_at = datetime.now(timezone.utc)
+            refresh_session.revoked_at = revoked_at or datetime.now(timezone.utc)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
     
     return True
 
-def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, revoked_at) -> RefreshSession | None:
+def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, revoked_at, event_data: Event | None = None) -> RefreshSession | None:
     with Session(engine) as session:
         ref_session = session.get(RefreshSession, session_id)
         if ref_session is None: return None
@@ -50,6 +54,8 @@ def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, r
         ref_session.expires_at = expires_at
         ref_session.created_at = created_at
         ref_session.revoked_at = revoked_at
+        if event_data is not None:
+            session.add(_event_from_data(event_data))
 
         session.commit()
         return session.get(RefreshSession, session_id)
@@ -58,7 +64,7 @@ def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, r
 
 # ==============================================================
 # ======================= USER =================================
-def create_user(user_data: User) -> User:
+def create_user(user_data: User, event_data: Event | None = None) -> User:
     with Session(engine) as session:
         with session.begin():
             user = User(  
@@ -78,6 +84,8 @@ def create_user(user_data: User) -> User:
             )
 
             session.add(user)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
     return user # it error -> it throws exception
 
 def get_user(id: str) -> User | None:
@@ -118,7 +126,7 @@ def get_users(
             
         return session.scalars(query).all()
 
-def update_user(id: str, new_info: dict) -> User | None:
+def update_user(id: str, new_info: dict, event_data: Event | None = None) -> User | None:
     with Session(engine) as session:
         with session.begin():
             user = session.get(User, id)
@@ -129,6 +137,8 @@ def update_user(id: str, new_info: dict) -> User | None:
             for field, value in new_info.items():
                 setattr(user, field, value)
             user.updated_at = datetime.now(timezone.utc)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
         
         session.refresh(user)
@@ -136,7 +146,7 @@ def update_user(id: str, new_info: dict) -> User | None:
         return user
 
 
-def delete_user(id: str, delete_info: dict) -> bool:
+def delete_user(id: str, delete_info: dict, event_data: Event | None = None) -> bool:
     with Session(engine) as session:
         with session.begin():
             user = session.get(User, id)
@@ -145,10 +155,12 @@ def delete_user(id: str, delete_info: dict) -> bool:
 
             for field, value in delete_info.items():
                 setattr(user, field, value)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
         return True 
         
-def delete_all_users() -> int:
+def delete_all_users(event_data: list[Event] | None = None) -> int:
     with Session(engine) as session:
         with session.begin():
             result = session.execute(
@@ -159,7 +171,8 @@ def delete_all_users() -> int:
                     user_status=UserStatus.DELETED
                 )
             )
-
+            for event in event_data or []:
+                session.add(_event_from_data(event))
 
         return result.rowcount
 
@@ -167,7 +180,7 @@ def delete_all_users() -> int:
 # ==============================================================
 # ======================= TICKETS ==============================
 
-def create_ticket(ticket_data: Ticket) -> Ticket:
+def create_ticket(ticket_data: Ticket, event_data: Event | None = None) -> Ticket:
     with Session(engine) as session:
         with session.begin():
             ticket = Ticket(
@@ -185,6 +198,8 @@ def create_ticket(ticket_data: Ticket) -> Ticket:
             )
 
             session.add(ticket)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
         session.refresh(ticket)
         return ticket
@@ -228,7 +243,7 @@ def get_tickets(
 
         return session.scalars(query).all()
 
-def update_ticket(id: str, new_info: dict) -> Ticket | None:
+def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, id)
@@ -239,12 +254,14 @@ def update_ticket(id: str, new_info: dict) -> Ticket | None:
             for field, value in new_info.items():
                 setattr(ticket, field, value)
             ticket.updated_at = datetime.now(timezone.utc)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
         session.refresh(ticket)
         return ticket
 
 
-def delete_ticket(id: str, delete_info: dict) -> bool:
+def delete_ticket(id: str, delete_info: dict, event_data: Event | None = None) -> bool:
     with Session(engine) as session:
         with session.begin():
             ticket = session.get(Ticket, id)
@@ -253,10 +270,12 @@ def delete_ticket(id: str, delete_info: dict) -> bool:
 
             for field, value in delete_info.items():
                 setattr(ticket, field, value)
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
         return True
 
-def delete_all_tickets() -> int:
+def delete_all_tickets(event_data: list[Event] | None = None) -> int:
     with Session(engine) as session:
         with session.begin():
             result = session.execute(
@@ -266,7 +285,8 @@ def delete_all_tickets() -> int:
                     deleted_at=datetime.now(timezone.utc),
                     updated_at = datetime.now(timezone.utc)
                 ))
-            
+            for event in event_data or []:
+                session.add(_event_from_data(event))
         
         return result.rowcount
 

@@ -56,6 +56,12 @@ class InternalOperationError(AppException):
     message = "Operation failed"
 
 
+class CacheUnavailableError(InternalOperationError):
+    status_code = 503  # HTTP 503: a required cache service is temporarily unavailable
+    code = "cache_unavailable"
+    message = "Cache service is unavailable"
+
+
 class EmptyUpdateError(BadRequestError):
     status_code = 400  # HTTP 400: PATCH body has no fields to change
     code = "empty_update"

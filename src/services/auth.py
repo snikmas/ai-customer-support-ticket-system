@@ -48,9 +48,7 @@ def logout_user(refresh_token_raw: str) -> bool:
     if session.expires_at < datetime.now(timezone.utc):
         return False
     
-    res = operations.revoke_refresh_session(session.id)
-    if res is False: return False
-
+    now = datetime.now(timezone.utc)
     event = Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.REFRESH_SESSION,
@@ -58,15 +56,12 @@ def logout_user(refresh_token_raw: str) -> bool:
         actor_user_id=session.user_id,
         event_type=constants.EventType.REFRESH_SESSION_REVOKED,
         old_value=constants._audit_json({"revoked_at": session.revoked_at}),
-        new_value=constants._audit_json({"revoked_at": datetime.now(timezone.utc)}),
+        new_value=constants._audit_json({"revoked_at": now}),
         metadata=None,
-        created_at=datetime.now(timezone.utc)
+        created_at=now
     )
-    
-    res_event = operations.create_event(event)
-    if res_event is False:
-        return False
-    return True
+
+    return operations.revoke_refresh_session(session.id, now, event)
 
 
 def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | None:
@@ -82,23 +77,20 @@ def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | Non
         created_at=now
         )
     
-    if operations.create_refresh_session(refresh_session): # is true
-        created_session = CreatedRefreshSession(refresh_session_id=refresh_session.id, refresh_token=raw_refresh_token)
+    event = Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.REFRESH_SESSION,
+        entity_id=refresh_session.id,
+        actor_user_id=user_id,
+        event_type=constants.EventType.REFRESH_SESSION_CREATED,
+        old_value=None,
+        new_value=constants._audit_json(_refresh_session_audit_data(refresh_session)),
+        metadata=None,
+        created_at=now
+    )
 
-        event = Event(
-            id=constants.generate_id(),
-            entity_type=constants.EntityType.REFRESH_SESSION,
-            entity_id=refresh_session.id,
-            actor_user_id=user_id,
-            event_type=constants.EventType.REFRESH_SESSION_CREATED,
-            old_value=None,
-            new_value=constants._audit_json(_refresh_session_audit_data(refresh_session)),
-            metadata=None,
-            created_at=now
-        )
-        res = operations.create_event(event)
-        if res is False: return None
-        
+    if operations.create_refresh_session(refresh_session, event):
+        created_session = CreatedRefreshSession(refresh_session_id=refresh_session.id, refresh_token=raw_refresh_token)
         return created_session #return to client a raw thing
     return None
 
@@ -129,16 +121,8 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     
     new_access_token = create_access_token(user)
     
-    updated_session = operations.rotate_refresh_session(
-        cur_session.id,
-        revoked_at=None,
-        expires_at=now + timedelta(weeks=1),
-        hash_ref_token=hash_token(new_raw_refresh_token),
-        created_at=now
-        )
-    if updated_session is None:
-        return None
-
+    new_expires_at = now + timedelta(weeks=1)
+    new_refresh_token_hash = hash_token(new_raw_refresh_token)
     event = Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.REFRESH_SESSION,
@@ -146,11 +130,26 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
         actor_user_id=user.id,
         event_type=constants.EventType.REFRESH_SESSION_ROTATED,
         old_value=None,
-        new_value=constants._audit_json(_refresh_session_audit_data(updated_session)),
+        new_value=constants._audit_json({
+            "id": cur_session.id,
+            "user_id": cur_session.user_id,
+            "expires_at": new_expires_at,
+            "revoked_at": None,
+            "created_at": now,
+        }),
         metadata=None,
         created_at=now
     )
-    res = operations.create_event(event)
-    if res is False: return None
+
+    updated_session = operations.rotate_refresh_session(
+        cur_session.id,
+        revoked_at=None,
+        expires_at=new_expires_at,
+        hash_ref_token=new_refresh_token_hash,
+        created_at=now,
+        event_data=event,
+        )
+    if updated_session is None:
+        return None
         
     return TokenResponse(access_token=new_access_token, refresh_token=new_raw_refresh_token)

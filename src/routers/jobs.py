@@ -2,15 +2,19 @@
 # router -> service -> queue -> redis
                     #-> tasks, run by worker
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from src.dependencies.auth import get_current_user
 from src.jobs import start_ticket_analysis_job, get_job
 router = APIRouter(
     tags=['jobs']
 )
 
 @router.post("/tickets/{ticket_id}/analysis-jobs", status_code=201)
-def create_ticket_analysis_job(ticket_id: str):
-    job = start_ticket_analysis_job(ticket_id)
+def create_ticket_analysis_job(
+        ticket_id: str, 
+        requester = Depends(get_current_user)):
+    
+    job = start_ticket_analysis_job(ticket_id, requester)
     if job:
         return job
     raise HTTPException(400, detail="No results")
