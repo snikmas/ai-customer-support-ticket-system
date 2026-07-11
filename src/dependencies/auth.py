@@ -27,10 +27,12 @@ def get_current_user(authorization: str | None = Header(default=None)):
     
     if payload_data is None:
         raise HTTPException(401, detail="No logged in")
-    
-    # whats inside user token?
 
-    user = operations.get_user(payload_data['sub'])   
+    user_id = payload_data.get("sub")
+    if not isinstance(user_id, str) or not user_id or payload_data.get("type") != "access":
+        raise HTTPException(401, detail="Invalid credentials")
+
+    user = operations.get_user(user_id)
     
     if user is None:
         raise HTTPException(401, detail="Requested Resourse does not exist")

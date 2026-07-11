@@ -153,6 +153,7 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
 
     updated_session = operations.rotate_refresh_session(
         cur_session.id,
+        current_hash=cur_session.refresh_token_hash,
         revoked_at=None,
         expires_at=new_expires_at,
         hash_ref_token=new_refresh_token_hash,

@@ -5,6 +5,9 @@ from src import constants
 from src.routers import users as users_router
 from src.exceptions.domain import AuthorizationError
 from src.services import users as users_service
+from src.exceptions.domain import UserAlreadyExistsError
+from sqlalchemy.exc import IntegrityError
+import pytest
 
 
 client = TestClient(app)
@@ -115,6 +118,26 @@ def test_create_user_rejects_missing_password():
     )
 
     assert response.status_code == 422
+
+
+def test_create_user_translates_duplicate_constraint_to_conflict(monkeypatch):
+    user_create = users_router.models.UserCreate(
+        nickname="duplicate-user",
+        first_name="Duplicate",
+        last_name="User",
+        password="a secure plain passphrase",
+        phone="+15550100",
+        email="duplicate@example.com",
+    )
+    monkeypatch.setattr(users_service.operations, "get_users", lambda: [object()])
+    monkeypatch.setattr(
+        users_service.operations,
+        "create_user",
+        lambda *_: (_ for _ in ()).throw(IntegrityError("insert", {}, Exception("unique"))),
+    )
+
+    with pytest.raises(UserAlreadyExistsError):
+        users_service.create_user(user_create)
 
 
 def test_update_user_uses_authenticated_requester(monkeypatch, make_user):

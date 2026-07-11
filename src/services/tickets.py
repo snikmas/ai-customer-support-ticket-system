@@ -4,6 +4,7 @@ from src import constants
 from src import models as api_models
 from src.db import models as db_models, operations
 from src.exceptions.domain import (
+    AlreadyDeletedError,
     AuditLogError,
     AuthorizationError,
     EmptyUpdateError,
@@ -221,6 +222,8 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
 
     if ticket is None:
         raise TicketNotFoundError()
+    if ticket.deleted_at is not None:
+        raise AlreadyDeletedError()
 
     if ticket.creator_user_id != requester.id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False: 
@@ -352,11 +355,8 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
     if check_for_access(requester.role, constants.Role.MANAGER) is False:
         raise AuthorizationError()
 
-    if agent.role not in [constants.Role.AGENT, constants.Role.MANAGER]:
-        raise InvalidAssigneeError()
-
-    if requester.role == agent.role:
-        raise InvalidAssigneeError("cannot_assign_same_role")
+    if agent.role != constants.Role.AGENT:
+        raise InvalidAssigneeError("assignee_must_be_agent")
 
     event = api_models.Event(
        id=constants.generate_id(),

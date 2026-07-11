@@ -6,6 +6,8 @@ from src.db import models as db_models
 from src.db import operations
 from src.core import hash_password
 from src.exceptions.domain import AuthorizationError, UserNotFoundError
+from src.exceptions.domain import UserAlreadyExistsError
+from sqlalchemy.exc import IntegrityError
 import json
 
 
@@ -47,7 +49,10 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         created_at=now
     )
 
-    operations.create_user(user, event)
+    try:
+        operations.create_user(user, event)
+    except IntegrityError as exc:
+        raise UserAlreadyExistsError() from exc
 
     return user
 

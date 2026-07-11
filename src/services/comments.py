@@ -5,7 +5,7 @@ from src import constants
 from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
-from src.exceptions.domain import AuditLogError, AuthorizationError, CommentNotFoundError, EmptyUpdateError, TicketNotFoundError
+from src.exceptions.domain import AlreadyDeletedError, AuditLogError, AuthorizationError, CommentNotFoundError, EmptyUpdateError, TicketNotFoundError
 import json
 
 
@@ -71,6 +71,8 @@ def get_comment(ticket_id: str, comment_id: str, requester: api_models.User) -> 
     if comment is None:
         raise CommentNotFoundError()
     _check_comment_belongs_to_ticket(comment, ticket_id)
+    if comment.deleted_at is not None:
+        raise CommentNotFoundError()
     
     ticket = operations.get_ticket(comment.ticket_id)
     if ticket is None or ticket.deleted_at is not None:
@@ -206,6 +208,8 @@ def delete_comment(ticket_id: str, comment_id: str, requester: api_models.User) 
     if comment is None:
         raise CommentNotFoundError()
     _check_comment_belongs_to_ticket(comment, ticket_id)
+    if comment.deleted_at is not None:
+        raise AlreadyDeletedError()
 
     if comment.author_user_id != requester.id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False:

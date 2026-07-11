@@ -1,8 +1,10 @@
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone
+import pytest
 
 from main import app
 from src import constants
-from src.exceptions.domain import AuthorizationError
+from src.exceptions.domain import AlreadyDeletedError, AuthorizationError, InvalidAssigneeError
 from src.db.models import Comment, Event, Ticket
 from src.routers import tickets as tickets_router
 from src.services import tickets as tickets_service
@@ -342,3 +344,44 @@ def test_assign_ticket_uses_agent_id_body(monkeypatch, make_user, make_ticket):
         "agent_id": "agent-user",
         "requester": requester,
     }
+
+
+def test_manager_can_assign_ticket_to_agent(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="manager-1", role=constants.Role.MANAGER)
+    agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    ticket = make_ticket(id="ticket-1", assigned_agent_id=None)
+
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
+    monkeypatch.setattr(tickets_service.operations, "get_user", lambda _: agent)
+    monkeypatch.setattr(tickets_service.operations, "assign_ticket", lambda *_: ticket)
+
+    tickets_service.assign_ticket(ticket.id, agent.id, requester)
+
+
+def test_manager_cannot_be_ticket_assignee(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="admin-1", role=constants.Role.ADMIN)
+    manager = make_user(id="manager-1", role=constants.Role.MANAGER)
+    ticket = make_ticket(id="ticket-1", assigned_agent_id=None)
+
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
+    monkeypatch.setattr(tickets_service.operations, "get_user", lambda _: manager)
+
+    with pytest.raises(InvalidAssigneeError) as exc_info:
+        tickets_service.assign_ticket(ticket.id, manager.id, requester)
+
+    assert exc_info.value.message == "assignee_must_be_agent"
+
+
+def test_repeated_ticket_delete_is_rejected_before_new_event(monkeypatch, make_user, make_ticket):
+    requester = make_user(id="owner-1")
+    ticket = make_ticket(id="ticket-1", creator_user_id=requester.id)
+    ticket.deleted_at = datetime.now(timezone.utc)
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
+    monkeypatch.setattr(
+        tickets_service.operations,
+        "delete_ticket",
+        lambda *_: pytest.fail("a repeated delete must not reach persistence"),
+    )
+
+    with pytest.raises(AlreadyDeletedError):
+        tickets_service.delete_ticket(ticket.id, requester)

@@ -9,6 +9,8 @@ from src import constants
 from src.core import security
 from src.dependencies import auth as auth_dependency
 from src.services import auth as auth_service
+from src.models import LoginRequest
+from pydantic import ValidationError
 
 
 def test_hash_password_returns_verifiable_text_hash():
@@ -97,7 +99,7 @@ def test_get_current_user_decodes_bearer_token_and_loads_active_user(
 
     def fake_decode_access_token(token):
         captured["token"] = token
-        return {"sub": "user-1"}
+        return {"sub": "user-1", "type": "access"}
 
     monkeypatch.setattr(auth_dependency.security, "decode_access_token", fake_decode_access_token)
     monkeypatch.setattr(
@@ -110,6 +112,33 @@ def test_get_current_user_decodes_bearer_token_and_loads_active_user(
 
     assert result is user
     assert captured["token"] == "abc.def.ghi"
+
+
+@pytest.mark.parametrize("payload", [{}, {"type": "access"}, {"sub": "user-1"}, {"sub": "user-1", "type": "refresh"}])
+def test_get_current_user_rejects_missing_claims_and_wrong_token_type(monkeypatch, payload):
+    monkeypatch.setattr(auth_dependency.security, "decode_access_token", lambda _: payload)
+    monkeypatch.setattr(
+        auth_dependency.operations,
+        "get_user",
+        lambda _: pytest.fail("invalid payload must be rejected before a database lookup"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth_dependency.get_current_user("Bearer token")
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"password": "valid-password"},
+        {"nickname": "mary", "email": "mary@example.com", "password": "valid-password"},
+    ],
+)
+def test_login_request_requires_exactly_one_identifier(data):
+    with pytest.raises(ValidationError):
+        LoginRequest.model_validate(data)
 
 
 @pytest.mark.parametrize("header", [None, "abc.def.ghi", "Basic abc.def.ghi"])
@@ -126,7 +155,7 @@ def test_get_current_user_rejects_deleted_user(monkeypatch, make_user):
     monkeypatch.setattr(
         auth_dependency.security,
         "decode_access_token",
-        lambda token: {"sub": "deleted-user"},
+        lambda token: {"sub": "deleted-user", "type": "access"},
     )
     monkeypatch.setattr(auth_dependency.operations, "get_user", lambda _: user)
 
@@ -168,3 +197,29 @@ def test_verify_refresh_session_rejects_revoked_session(monkeypatch):
     )
 
     assert auth_service.verify_refresh_session("raw-token") is None
+
+
+def test_refresh_rotation_rejects_a_second_use_of_the_same_session_snapshot(monkeypatch, make_user):
+    user = make_user(id="user-1")
+    stale_session = SimpleNamespace(id="session-1", user_id=user.id, refresh_token_hash="old-hash")
+    stored_hash = {"value": "old-hash"}
+    generated_tokens = iter(["first-new-token", "second-new-token"])
+
+    monkeypatch.setattr(auth_service.operations, "get_user", lambda _: user)
+    monkeypatch.setattr(auth_service, "create_access_token", lambda _: "new-access-token")
+    monkeypatch.setattr(auth_service, "generate_refresh_token", lambda: next(generated_tokens))
+    monkeypatch.setattr(auth_service, "hash_token", lambda raw: f"hash:{raw}")
+
+    def conditional_rotate(session_id, *, current_hash, hash_ref_token, **kwargs):
+        if session_id != stale_session.id or stored_hash["value"] != current_hash:
+            return None
+        stored_hash["value"] = hash_ref_token
+        return stale_session
+
+    monkeypatch.setattr(auth_service.operations, "rotate_refresh_session", conditional_rotate)
+
+    first_response = auth_service.rotate_refresh_session(stale_session)
+    second_response = auth_service.rotate_refresh_session(stale_session)
+
+    assert first_response.refresh_token == "first-new-token"
+    assert second_response is None

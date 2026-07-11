@@ -44,6 +44,11 @@ class ConflictError(AppException):
     message = "Resource state conflict"
 
 
+class AlreadyDeletedError(ConflictError):
+    code = "already_deleted"
+    message = "Resource is already deleted"
+
+
 class GoneError(AppException):
     status_code = 410  # HTTP 410: resource existed before, but is deleted now
     code = "gone"

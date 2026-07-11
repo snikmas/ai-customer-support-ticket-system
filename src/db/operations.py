@@ -45,19 +45,29 @@ def revoke_refresh_session(session_id: str, revoked_at: datetime | None = None, 
     
     return True
 
-def rotate_refresh_session(session_id, created_at, expires_at, hash_ref_token, revoked_at, event_data: Event | None = None) -> RefreshSession | None:
+def rotate_refresh_session(session_id, current_hash, created_at, expires_at, hash_ref_token, revoked_at, event_data: Event | None = None) -> RefreshSession | None:
     with Session(engine) as session:
-        ref_session = session.get(RefreshSession, session_id)
-        if ref_session is None: return None
-        
-        ref_session.refresh_token_hash = hash_ref_token
-        ref_session.expires_at = expires_at
-        ref_session.created_at = created_at
-        ref_session.revoked_at = revoked_at
-        if event_data is not None:
-            session.add(_event_from_data(event_data))
+        with session.begin():
+            result = session.execute(
+                update(RefreshSession)
+                .where(
+                    RefreshSession.id == session_id,
+                    RefreshSession.refresh_token_hash == current_hash,
+                    RefreshSession.revoked_at.is_(None),
+                    RefreshSession.expires_at > created_at,
+                )
+                .values(
+                    refresh_token_hash=hash_ref_token,
+                    expires_at=expires_at,
+                    created_at=created_at,
+                    revoked_at=revoked_at,
+                )
+            )
+            if result.rowcount != 1:
+                return None
+            if event_data is not None:
+                session.add(_event_from_data(event_data))
 
-        session.commit()
         return session.get(RefreshSession, session_id)
         
 

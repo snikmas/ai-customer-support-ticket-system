@@ -1,10 +1,11 @@
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from datetime import datetime, timezone
+import pytest
 
 from main import app
 from src import constants
-from src.exceptions.domain import CommentNotFoundError
+from src.exceptions.domain import AlreadyDeletedError, CommentNotFoundError
 from src.services import comments as comments_service
 from src.routers import tickets as tickets_router
 
@@ -219,3 +220,22 @@ def test_delete_ticket_comment_passes_nested_ids_and_requester(monkeypatch, make
         "comment_id": "comment-1",
         "requester": requester,
     }
+
+
+def test_repeated_comment_delete_is_rejected_before_new_event(monkeypatch, make_user):
+    requester = make_user(id="author-1")
+    comment = SimpleNamespace(
+        id="comment-1",
+        ticket_id="ticket-1",
+        author_user_id=requester.id,
+        deleted_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(comments_service.operations, "get_comment", lambda _: comment)
+    monkeypatch.setattr(
+        comments_service.operations,
+        "delete_comment_with_event",
+        lambda *_: pytest.fail("a repeated delete must not write another event"),
+    )
+
+    with pytest.raises(AlreadyDeletedError):
+        comments_service.delete_comment("ticket-1", "comment-1", requester)
