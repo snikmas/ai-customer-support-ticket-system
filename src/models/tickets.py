@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType
 
 class Ticket(BaseModel):
@@ -25,7 +25,7 @@ class TicketCreate(BaseModel): #ticket that creates a user
     description: str
     category: Category
     status: Status = Status.NEW
-    tags: list[Tag] | None = []
+    tags: list[Tag] = Field(default_factory=list)
     priority: Priority = Priority.NORMAL
 
 #ticket update only for agents
@@ -42,5 +42,4 @@ class RefreshTokenRequest(BaseModel):
 
 class AssignTicketRequest(BaseModel):
     agent_id: str
-
 

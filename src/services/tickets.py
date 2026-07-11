@@ -310,7 +310,7 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     
     res = operations.claim_ticket(ticket_id, requester.id, event)
     if res is None:
-        raise InternalOperationError("ticket_claim_failed")
+        raise TicketAlreadyAssignedError()
     
     return _to_api_ticket(res)
 

@@ -293,17 +293,30 @@ def delete_all_tickets(event_data: list[Event] | None = None) -> int:
 def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
-            ticket = session.get(Ticket, ticket_id)
-            if ticket is None: return None
-
             agent = session.get(User, assigned_id)
             if agent is None: return None
 
-            ticket.assigned_agent_id = assigned_id
-            ticket.status = Status.IN_PROGRESS
-            ticket.updated_at = datetime.now(timezone.utc)
+            result = session.execute(
+                update(Ticket)
+                .where(
+                    Ticket.id == ticket_id,
+                    Ticket.assigned_agent_id.is_(None),
+                    Ticket.status == Status.NEW,
+                    Ticket.deleted_at.is_(None),
+                )
+                .values(
+                    assigned_agent_id=assigned_id,
+                    status=Status.IN_PROGRESS,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            if result.rowcount != 1:
+                return None
+
             if event_data is not None:
                 session.add(_event_from_data(event_data))
+
+            ticket = session.get(Ticket, ticket_id)
 
         session.refresh(ticket)
         return ticket

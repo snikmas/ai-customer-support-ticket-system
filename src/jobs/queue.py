@@ -9,12 +9,8 @@ from src.cache import get_redis_client
 
 
 
-QUEUE_NAME = 'ticket_analysis'
+QUEUE_NAME = 'ticket_jobs'
 
-def get_ticket_analysis_queue() -> Queue:
+def get_ticket_jobs_queue() -> Queue:
     queue = Queue(QUEUE_NAME, connection=get_redis_client())
-    return queue
-
-def get_inspect_ticket_queue() -> Queue:
-    queue = Queue('inspect_ticket', connection=get_redis_client())
     return queue
