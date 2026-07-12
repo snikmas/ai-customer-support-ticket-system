@@ -99,11 +99,8 @@ async def delete_user(id: str, requester = Depends(get_current_user)):
 
 @router.delete("/", status_code=200)
 async def delete_all_users(requester = Depends(get_current_user)):
-    try:
-        data = s_users.delete_all_users(requester)
-    except ValueError:
-        raise HTTPException(404, detail="Value Error")
-    except PermissionError:
-        raise HTTPException(400, detail="Permission Error")
-    return {"data": f"Deleted: {data}"}
+    raise HTTPException(
+        status_code=503,
+        detail="Bulk user deletion is temporarily unavailable",
+    )
     

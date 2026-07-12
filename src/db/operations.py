@@ -98,6 +98,39 @@ def create_user(user_data: User, event_data: Event | None = None) -> User:
                 session.add(_event_from_data(event_data))
     return user # it error -> it throws exception
 
+
+def create_initial_superadmin(user_data: User, event_data: Event) -> bool:
+    with Session(engine) as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+            if session.scalar(select(User.id).limit(1)) is not None:
+                session.rollback()
+                return False
+
+            user = User(
+                id=user_data.id,
+                nickname=user_data.nickname,
+                avatar_url=user_data.avatar_url,
+                first_name=user_data.first_name,
+                last_name=user_data.last_name,
+                phone=user_data.phone,
+                email=user_data.email,
+                role=user_data.role,
+                password=user_data.password,
+                updated_at=user_data.updated_at,
+                created_at=user_data.created_at,
+                deleted_at=None,
+                user_status=UserStatus.ACTIVE,
+            )
+            session.add(user)
+            session.add(_event_from_data(event_data))
+            session.commit()
+            return True
+        except Exception:
+            session.rollback()
+            raise
+
 def get_user(id: str) -> User | None:
     with Session(engine) as session:
         result = session.get(User, id)

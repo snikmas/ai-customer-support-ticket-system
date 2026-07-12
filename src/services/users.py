@@ -28,10 +28,7 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         updated_at=now,
         created_at=now
     )
-    if len(operations.get_users()) == 0:
-        user.role = constants.Role.SUPER_ADMIN
 
-    
     event = api_models.Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.USER,
@@ -55,6 +52,40 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         raise UserAlreadyExistsError() from exc
 
     return user
+
+
+def bootstrap_superadmin(user_data: api_models.UserCreate) -> bool:
+    now = datetime.now(timezone.utc)
+    user = db_models.User(
+        id=constants.generate_id(),
+        nickname=user_data.nickname,
+        avatar_url=user_data.avatar_url,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        phone=user_data.phone,
+        email=user_data.email,
+        password=hash_password(user_data.password),
+        role=constants.Role.SUPER_ADMIN,
+        updated_at=now,
+        created_at=now,
+    )
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.USER,
+        entity_id=user.id,
+        actor_user_id=user.id,
+        event_type=constants.EventType.USER_CREATED,
+        old_value=None,
+        new_value=constants._audit_json({
+            "id": user.id,
+            "nickname": user.nickname,
+            "role": user.role,
+            "user_status": constants.UserStatus.ACTIVE,
+        }),
+        metadata=None,
+        created_at=now,
+    )
+    return operations.create_initial_superadmin(user, event)
 
 def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sure is it a db user or api model
     if requester.id != id and check_for_access(requester.role, constants.Role.ADMIN) is False:

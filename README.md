@@ -17,7 +17,7 @@ Implemented or started:
 - FastAPI application with router-based structure
 - SQLAlchemy models and local SQLite database setup
 - User registration, lookup, update, listing, and soft deletion
-- First registered user bootstrap as `SUPER_ADMIN`
+- Explicit environment-driven command for initial `SUPER_ADMIN` bootstrap
 - Password hashing for user creation and password updates
 - JWT access-token login with `Authorization: Bearer <access_token>`
 - Refresh-token session model and token rotation flow

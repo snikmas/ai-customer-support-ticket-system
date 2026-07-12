@@ -10,6 +10,5 @@ redis_client = redis.Redis(
     )
 
 
-
 def ping_redis() -> bool:
     return redis.ping()
