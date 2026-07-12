@@ -10,13 +10,18 @@ router = APIRouter(
     tags=["tickets"]
 )
 
+# This router intentionally uses normal `def` handlers because SQLAlchemy,
+# Redis, and RQ are synchronous in the current stack. A later end-to-end async
+# migration would require AsyncSession + an async DB driver and async Redis/HTTP
+# clients; only then should these handlers become `async def` and use `await`.
+
 def _raise_http(exc: AppException):
     # Re-raise the domain error so the application-level handler keeps one
     # response shape for every router.
     raise exc
 
 @router.get("/", status_code=200)
-async def get_tickets(requester = Depends(get_current_user), 
+def get_tickets(requester = Depends(get_current_user),
                     limit: int = Query(constants.DEFAULT_PAGE_LIMIT, 
                                          ge=1,
                                          le=constants.MAX_PAGE_LIMIT),
@@ -37,7 +42,7 @@ async def get_tickets(requester = Depends(get_current_user),
 
 
 @router.get("/{id}", status_code=200)
-async def get_ticket(id: str, requester = Depends(get_current_user)):
+def get_ticket(id: str, requester = Depends(get_current_user)):
     try:    
         data = s_tickets.get_ticket(id, requester)
     except PermissionError:
@@ -49,7 +54,7 @@ async def get_ticket(id: str, requester = Depends(get_current_user)):
 
 
 @router.post("/", status_code=201)
-async def create_ticket(cur_ticket: models.TicketCreate, requester = Depends(get_current_user)):
+def create_ticket(cur_ticket: models.TicketCreate, requester = Depends(get_current_user)):
     
     ticket = s_tickets.create_ticket(cur_ticket, requester)
     
@@ -57,7 +62,7 @@ async def create_ticket(cur_ticket: models.TicketCreate, requester = Depends(get
 
 
 @router.patch("/{ticket_id}", status_code=200)
-async def update_ticket(ticket_id: str, new_info: models.TicketUpdate, requester = Depends(get_current_user)):
+def update_ticket(ticket_id: str, new_info: models.TicketUpdate, requester = Depends(get_current_user)):
     
     try:
         data = s_tickets.update_ticket(ticket_id, new_info, requester)
@@ -70,7 +75,7 @@ async def update_ticket(ticket_id: str, new_info: models.TicketUpdate, requester
 
     
 @router.delete("/{id}", status_code=200)
-async def delete_ticket(id: str, requester = Depends(get_current_user)):
+def delete_ticket(id: str, requester = Depends(get_current_user)):
 
     try:
         data = s_tickets.delete_ticket(id, requester)
@@ -83,7 +88,7 @@ async def delete_ticket(id: str, requester = Depends(get_current_user)):
 
 
 @router.delete("/", status_code=200)
-async def delete_all_tickets(requester = Depends(get_current_user)):
+def delete_all_tickets(requester = Depends(get_current_user)):
 
     try:
         data = s_tickets.delete_all_tickets(requester)
@@ -93,7 +98,7 @@ async def delete_all_tickets(requester = Depends(get_current_user)):
     return {'data': data}
 
 @router.post("/{ticket_id}/claim", status_code=200)
-async def claim_ticket(ticket_id: str, requester: models.User = Depends(get_current_user)):
+def claim_ticket(ticket_id: str, requester: models.User = Depends(get_current_user)):
     try:
         data = s_tickets.claim_ticket(ticket_id, requester)
     except PermissionError:
@@ -104,7 +109,7 @@ async def claim_ticket(ticket_id: str, requester: models.User = Depends(get_curr
     return {'data': data}
 
 @router.post("/{ticket_id}/assign", status_code=200)
-async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRequest, requester: models.User = Depends(get_current_user)):
+def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRequest, requester: models.User = Depends(get_current_user)):
     try:
         data = s_tickets.assign_ticket(ticket_id, assign_ticket_req.agent_id, requester)
     except PermissionError:
@@ -116,7 +121,7 @@ async def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRe
 
 
 @router.get("/{ticket_id}/comments", status_code=200)
-async def get_ticket_comments(
+def get_ticket_comments(
             ticket_id: str, 
             requester: models.User = Depends(get_current_user),
             limit: int = Query(constants.DEFAULT_PAGE_LIMIT, 
@@ -136,7 +141,7 @@ async def get_ticket_comments(
     return {"data": data}
 
 @router.post("/{ticket_id}/comments", status_code=201)
-async def create_ticket_comment(ticket_id: str, comment: models.CommentCreate, requester: models.User = Depends(get_current_user)):
+def create_ticket_comment(ticket_id: str, comment: models.CommentCreate, requester: models.User = Depends(get_current_user)):
     try:
         data = s_comments.create_ticket_comment(ticket_id, comment, requester)
     except AppException as exc:
@@ -147,7 +152,7 @@ async def create_ticket_comment(ticket_id: str, comment: models.CommentCreate, r
     return {"data": data}
 
 @router.get("/{ticket_id}/comments/{comment_id}", status_code=200)
-async def get_ticket_comment(ticket_id: str, comment_id: str, requester: models.User = Depends(get_current_user)):
+def get_ticket_comment(ticket_id: str, comment_id: str, requester: models.User = Depends(get_current_user)):
     try:
         data = s_comments.get_comment(ticket_id, comment_id, requester)
     except AppException as exc:
@@ -158,7 +163,7 @@ async def get_ticket_comment(ticket_id: str, comment_id: str, requester: models.
     return {"data": data}
 
 @router.patch("/{ticket_id}/comments/{comment_id}", status_code=200)
-async def update_ticket_comment(ticket_id: str, comment_id: str, new_info: models.CommentUpdate, requester: models.User = Depends(get_current_user)):
+def update_ticket_comment(ticket_id: str, comment_id: str, new_info: models.CommentUpdate, requester: models.User = Depends(get_current_user)):
     try:
         data = s_comments.update_comment(ticket_id, comment_id, new_info, requester)
     except AppException as exc:
@@ -169,7 +174,7 @@ async def update_ticket_comment(ticket_id: str, comment_id: str, new_info: model
     return {"data": data}
 
 @router.delete("/{ticket_id}/comments/{comment_id}", status_code=200)
-async def delete_ticket_comment(ticket_id: str, comment_id: str, requester: models.User = Depends(get_current_user)):
+def delete_ticket_comment(ticket_id: str, comment_id: str, requester: models.User = Depends(get_current_user)):
     try:
         data = s_comments.delete_comment(ticket_id, comment_id, requester)
     except AppException as exc:

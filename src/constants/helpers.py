@@ -90,9 +90,16 @@ def apply_sort_order(column, sort_order: str):
         case 'asc': return column.asc()
 
 def translate_rq_status(rq_status: str) -> JobStatus:
-    match rq_status:
-        case "queued": return JobStatus.QUEUED
-        case "started": return JobStatus.RUNNING
-        case "finished": return JobStatus.COMPLETED
-        case "failed": return JobStatus.FAILED
-    return JobStatus.FAILED
+    status_mapping = {
+        "queued": JobStatus.QUEUED,
+        "started": JobStatus.RUNNING,
+        "finished": JobStatus.COMPLETED,
+        "failed": JobStatus.FAILED,
+        "deferred": JobStatus.DEFERRED,
+        "scheduled": JobStatus.SCHEDULED,
+        "stopped": JobStatus.STOPPED,
+        "canceled": JobStatus.CANCELED,
+        "rate_limited": JobStatus.RATE_LIMITED,
+        "ready_to_enqueue": JobStatus.READY_TO_ENQUEUE,
+    }
+    return status_mapping.get(rq_status, JobStatus.UNKNOWN)

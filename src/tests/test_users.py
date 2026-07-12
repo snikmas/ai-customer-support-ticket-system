@@ -46,6 +46,16 @@ def test_get_users_requires_authentication():
     assert response.status_code == 401
 
 
+def test_get_users_returns_403_for_authenticated_user_without_permission(make_user):
+    requester = make_user(role=constants.Role.USER)
+    app.dependency_overrides[users_router.get_current_user] = lambda: requester
+
+    response = client.get("/users/")
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "authorization_error"
+
+
 def test_get_users_returns_current_service_shape(monkeypatch, make_user):
     requester = make_user(role=constants.Role.MANAGER)
     returned_user = make_user(id="visible-user", nickname="visible")

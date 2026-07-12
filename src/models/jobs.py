@@ -8,5 +8,5 @@ class JobResponse(BaseModel):
 class JobStatusResponse(BaseModel):
     job_id: str
     status: JobStatus
+    result: dict | None = None
     error: str | None = None
-

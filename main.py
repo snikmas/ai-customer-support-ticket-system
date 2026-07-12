@@ -9,10 +9,6 @@ from src.routers import users, tickets, auth
 from src.db.utils import create_db
 from src.core import setup_logging
 from src.exceptions.domain import AppException
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
 
 # later convert to startup/lifespan
 create_db()

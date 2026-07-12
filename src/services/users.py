@@ -5,8 +5,13 @@ from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
 from src.core import hash_password
-from src.exceptions.domain import AuthorizationError, UserNotFoundError
-from src.exceptions.domain import UserAlreadyExistsError
+from src.exceptions.domain import (
+    AuthorizationError,
+    EmptyUpdateError,
+    InternalOperationError,
+    UserAlreadyExistsError,
+    UserNotFoundError,
+)
 from sqlalchemy.exc import IntegrityError
 import json
 
@@ -106,32 +111,32 @@ def get_all_users(requester: api_models.User,
                   sort_by: str,
                   sort_order: str) -> list[db_models.User]:
     if check_for_access(requester.role, constants.Role.MANAGER) is False:
-        raise PermissionError
+        raise AuthorizationError()
 
     return operations.get_users(limit, offset, sort_by, sort_order)
 
 def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, requester: api_models.User) -> db_models.User:
     requester = operations.get_user(requester.id)
     if requester is None:
-        raise ValueError("user_not_found")
+        raise UserNotFoundError()
     
     user = operations.get_user(updated_info_id)
     if user is None:
-        raise ValueError("user_not_found")
+        raise UserNotFoundError()
 
     audit_new_info = updated_info.model_dump(exclude_unset=True, mode="json")
     updated_info = updated_info.model_dump(exclude_unset=True)
     if not updated_info:
-        raise ValueError("empty_update")
+        raise EmptyUpdateError()
 
     if any(key in updated_info for key in ['updated_at', 'created_at']): return None #no one can change it
     if requester.id != updated_info_id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False:
-            raise PermissionError
+            raise AuthorizationError()
 
     if any(key in updated_info for key in ['role', 'user_status', 'deleted_at']):
         if check_for_access(requester.role, constants.Role.ADMIN) is False:
-            raise PermissionError
+            raise AuthorizationError()
 
     if 'password' in updated_info:
         updated_info['password'] = hash_password(updated_info['password'])
@@ -159,7 +164,7 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
 
     user = operations.update_user(updated_info_id, updated_info, event)
     if user is None:
-        raise ValueError("Some error during updating, the operation canceled")
+        raise InternalOperationError("user_update_failed")
 
     return user
 
@@ -167,15 +172,15 @@ def delete_user(id: str, reqiester_user: api_models.User) -> None:
     requester = operations.get_user(reqiester_user.id) # if its exist?
 
     if requester is None:
-        raise ValueError("user_not_found")
+        raise UserNotFoundError()
     
     user = operations.get_user(id)
     if user is None:
-        raise ValueError("user_not_found")
+        raise UserNotFoundError()
 
     if requester.id != id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False: 
-            raise PermissionError
+            raise AuthorizationError()
     
     now = datetime.now(timezone.utc)
     old_data = {'deleted_at': user.deleted_at, 'updated_at': user.updated_at, 'user_status': user.user_status}
@@ -193,16 +198,16 @@ def delete_user(id: str, reqiester_user: api_models.User) -> None:
     )
 
     if operations.delete_user(id, delete_info, event) is not True:
-        raise ValueError("Some error during deleting, the operation cancelled")
+        raise InternalOperationError("user_delete_failed")
 
 
 def delete_all_users(requester: api_models.User) -> int:
     requester = operations.get_user(requester.id)
     if requester is None:
-        raise ValueError("user_not_found")
+        raise UserNotFoundError()
     
     if check_for_access(requester.role, constants.Role.SUPER_ADMIN) is False:
-        raise PermissionError
+        raise AuthorizationError()
 
 
     users = operations.get_users()

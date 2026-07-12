@@ -22,7 +22,7 @@ class Category(Enum):
     MODEL_OUTPUT    = "Model Output"
     RAG_RETRIEVAL   = "Rag Retrieval"
     AGENT_WORKFLOW  = "Agent Workflow"
-    PERFORMANCE     = "Perfomance"
+    PERFORMANCE     = "Performance"
     BILLING         = "Billing"
     ACCOUNT_ACCESS  = "Account Access"
     DOCUMENTATION   = "Documentation"
@@ -84,7 +84,7 @@ class EventType(Enum):
     TICKET_STATUS_CHANGED = 'Ticket Status Changed'
     TICKET_UPDATED = 'Ticket Updated'
     USER_CREATED = 'User Created'
-    USER_BULK_DELETED = 'Tickets Bulk Deleted'
+    USER_BULK_DELETED = 'Users Bulk Deleted'
     USER_UPDATED = 'User Updated'
     USER_DELETED = 'User Deleted'
     REFRESH_SESSION_CREATED = 'Refresh Session Created'
@@ -117,9 +117,13 @@ class JobStatus(str, Enum):
     RUNNING = 'running'
     COMPLETED = 'completed'
     FAILED = 'failed'
-
-    RETRYING = 'retrying'
-    CANCELLED = 'cancelled'
+    DEFERRED = 'deferred'
+    SCHEDULED = 'scheduled'
+    STOPPED = 'stopped'
+    CANCELED = 'canceled'
+    RATE_LIMITED = 'rate_limited'
+    READY_TO_ENQUEUE = 'ready_to_enqueue'
+    UNKNOWN = 'unknown'
 
 #   NEW -> due_at = now + 2 hours
 #   OPEN -> due_at = now + 6 hours

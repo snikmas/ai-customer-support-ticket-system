@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from datetime import datetime
-from src import models, db, constants
+from src import models, constants
 from src.services import users as s_users
 from src.dependencies.auth import get_current_user
 from typing import Literal
@@ -10,25 +9,21 @@ router = APIRouter(
     tags=["users"]
 )
 
+# This router intentionally uses normal `def` handlers because its SQLAlchemy
+# service path is synchronous. A later end-to-end async migration would require
+# AsyncSession + an async DB driver and async Redis/HTTP clients; only then
+# should these handlers become `async def` and await those operations.
+
 
 @router.get("/{id}", status_code=200)
-async def get_user(id: str, requester = Depends(get_current_user)):
-    try:
-        data = s_users.get_user(id, requester)
-        if data:
-            user = models.UserResponse.model_validate(data, from_attributes=True)
-    except ValueError:
-        raise HTTPException(404, detail="Value Error")
-    except PermissionError:
-        raise HTTPException(400, detail="Permission Error")
-
-    if data is None:
-        raise HTTPException(status_code=404, detail="User not found")
+def get_user(id: str, requester = Depends(get_current_user)):
+    data = s_users.get_user(id, requester)
+    user = models.UserResponse.model_validate(data, from_attributes=True)
     return {"data": user}
 
 
 @router.get("/", status_code=200)
-async def get_users(requester = Depends(get_current_user),
+def get_users(requester = Depends(get_current_user),
                     limit: int = Query(constants.DEFAULT_PAGE_LIMIT,
                                        ge=1,
                                        le=constants.MAX_PAGE_LIMIT),
@@ -42,63 +37,32 @@ async def get_users(requester = Depends(get_current_user),
                     sort_order: Literal['asc', 'desc'] = constants.DEFAULT_SORT_ORDER,
                     ):
 
-    try:
-        data = s_users.get_all_users(requester, limit, offset, sort_by, sort_order)
-        if data:
-            return {"data": [models.UserResponse.model_validate(user, from_attributes=True) for user in data]}
-        else:
-            return {"data": []}
-    except PermissionError:
-        raise HTTPException(400, detail="Permission Error")
+    data = s_users.get_all_users(requester, limit, offset, sort_by, sort_order)
+    if data:
+        return {"data": [models.UserResponse.model_validate(user, from_attributes=True) for user in data]}
+    return {"data": []}
 
 @router.post("/", status_code=201)
-async def create_user(cur_user: models.UserCreate):
-
-    try:
-        data = s_users.create_user(cur_user)
-        if data:
-            user = models.UserResponse.model_validate(data, from_attributes=True)
-    except ValueError:
-        raise HTTPException(404, detail="Value Error")
-    except PermissionError:
-        raise HTTPException(400, detail="Permission Error")
-    
-    if data is None:
-        raise HTTPException(status_code=400, detail="Some error happened")
-
+def create_user(cur_user: models.UserCreate):
+    data = s_users.create_user(cur_user)
+    user = models.UserResponse.model_validate(data, from_attributes=True)
     return {"data": user}
 
 @router.patch("/{updated_user_id}", status_code=200)
-async def update_user(updated_user_id: str, updated_info: models.UserUpdate, requester = Depends(get_current_user)):
-
-    try:
-        data = s_users.update_user(updated_user_id, updated_info, requester)
-        if data:
-            user = models.UserResponse.model_validate(data, from_attributes=True)
-    except ValueError:
-        raise HTTPException(404, detail="Value Error")
-    except PermissionError:
-        raise HTTPException(400, detail="Permission Error")
-
-    if data is None:
-        raise HTTPException(404, detail="Some error happened")
-    
+def update_user(updated_user_id: str, updated_info: models.UserUpdate, requester = Depends(get_current_user)):
+    data = s_users.update_user(updated_user_id, updated_info, requester)
+    user = models.UserResponse.model_validate(data, from_attributes=True)
     return {'data': user}
 
 
 
 @router.delete("/{id}", status_code=204)
-async def delete_user(id: str, requester = Depends(get_current_user)):
-    try:
-        s_users.delete_user(id, requester)
-    except ValueError:
-        raise HTTPException(404, detail="Value Error")
-    except PermissionError:
-        raise HTTPException(400, detail="Permission Error")
+def delete_user(id: str, requester = Depends(get_current_user)):
+    s_users.delete_user(id, requester)
 
 
 @router.delete("/", status_code=200)
-async def delete_all_users(requester = Depends(get_current_user)):
+def delete_all_users(requester = Depends(get_current_user)):
     raise HTTPException(
         status_code=503,
         detail="Bulk user deletion is temporarily unavailable",
