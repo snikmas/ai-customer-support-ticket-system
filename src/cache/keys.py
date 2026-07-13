@@ -15,3 +15,8 @@ def build_login_attempt_key(identifier: str) -> str:
     else: identifier_type = 'nickname'
 
     return f"login_attempts:{identifier_type}:{normalized_identifier}"
+
+def build_ticket_key(ticket_id: str) -> str:
+    normalized_ticket_id = ticket_id.strip().lower()
+    return f"ticket:{ticket_id}"
+    

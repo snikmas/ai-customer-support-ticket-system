@@ -16,6 +16,7 @@ from src.exceptions.domain import (
     TicketStatusConflictError,
     UserNotFoundError,
 )
+from src.cache import check_ticket, cache_ticket
 import json
 
 def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
@@ -85,10 +86,14 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im no
     if check_for_access(requester.role, constants.Role.USER) is False:
         raise AuthorizationError()
     
-    ticket = operations.get_ticket(id)
+    ticket = check_ticket(id)
+    if ticket is None:
+        ticket = operations.get_ticket(id)
+    
     if ticket is None:
         raise TicketNotFoundError()
 
+    cache_ticket(ticket)
     if _can_read_ticket(ticket, requester) is False:
         raise AuthorizationError()
 
