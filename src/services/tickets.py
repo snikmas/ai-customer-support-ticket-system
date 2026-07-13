@@ -16,7 +16,7 @@ from src.exceptions.domain import (
     TicketStatusConflictError,
     UserNotFoundError,
 )
-from src.cache import check_ticket, cache_ticket
+from src.cache import check_ticket as check_cached_ticket, cache_ticket, delete_ticket as delete_cached_ticket
 import json
 
 def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
@@ -86,14 +86,16 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im no
     if check_for_access(requester.role, constants.Role.USER) is False:
         raise AuthorizationError()
     
-    ticket = check_ticket(id)
+    ticket = check_cached_ticket(id)
     if ticket is None:
         ticket = operations.get_ticket(id)
     
     if ticket is None:
         raise TicketNotFoundError()
 
-    cache_ticket(ticket)
+    if cache_ticket(ticket) is False:
+        # raise Exception("no cache")
+        pass
     if _can_read_ticket(ticket, requester) is False:
         raise AuthorizationError()
 
@@ -219,7 +221,15 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
 
     if ticket is None:
         raise InternalOperationError("ticket_update_failed")
-    
+
+
+    # check a cache and delete if
+    if check_cached_ticket(ticket.id):
+        is_deleted = delete_cached_ticket(ticket.id)
+        if is_deleted:
+            cache_ticket(ticket) #idk should i do exception or somehingl ike this if it doesnt cache
+
+
     return _to_api_ticket(ticket)
 
 def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = None) -> None:
@@ -239,6 +249,9 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
         "deleted_at": now,
         "updated_at": now,
     }
+
+    if get_ticket(ticket.id):
+        delete_ticket(ticket.id)
     
     event = api_models.Event(
         id=constants.generate_id(),
