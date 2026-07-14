@@ -7,8 +7,6 @@
 from rq import Queue
 from src.cache import get_redis_client
 
-
-
 QUEUE_NAME = 'ticket_jobs'
 
 def get_ticket_jobs_queue() -> Queue:

@@ -17,6 +17,7 @@ from src.exceptions.domain import (
     UserNotFoundError,
 )
 from src.cache import check_ticket as check_cached_ticket, cache_ticket, delete_ticket as delete_cached_ticket
+from src.jobs import start_ticket_inspection_job, get_job as jobs_get_job
 import json
 
 def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
@@ -89,13 +90,26 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im no
     ticket = check_cached_ticket(id)
     if ticket is None:
         ticket = operations.get_ticket(id)
-    
-    if ticket is None:
-        raise TicketNotFoundError()
+        if ticket is None:
+            raise TicketNotFoundError()
+        
+        match requester.role:
+            case constants.Role.USER:
+                if ticket.creator_user_id != requester.id:
+                    raise AuthorizationError()
+            case constants.Role.AGENT:
+                if ticket.creator_user_id != requester.id and ticket.assigned_agent_id != requester.id and ticket.status != constants.Status.NEW:
+                    raise AuthorizationError()
+            case constants.Role.MANAGER:
+                if ticket.deleted_at is not None:
+                    raise AuthorizationError()
+            case constants.Role.AGENT_READONLY:
+                if ticket.deleted_at is not None:
+                    raise AuthorizationError()
+        
+        cache_ticket(_to_api_ticket(ticket))
 
-    if cache_ticket(ticket) is False:
-        # raise Exception("no cache")
-        pass
+
     if _can_read_ticket(ticket, requester) is False:
         raise AuthorizationError()
 
@@ -223,11 +237,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         raise InternalOperationError("ticket_update_failed")
 
 
-    # check a cache and delete if
-    if check_cached_ticket(ticket.id):
-        is_deleted = delete_cached_ticket(ticket.id)
-        if is_deleted:
-            cache_ticket(ticket) #idk should i do exception or somehingl ike this if it doesnt cache
+    delete_cached_ticket(ticket.id)
 
 
     return _to_api_ticket(ticket)
@@ -250,9 +260,6 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
         "updated_at": now,
     }
 
-    if get_ticket(ticket.id):
-        delete_ticket(ticket.id)
-    
     event = api_models.Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.TICKET,
@@ -270,6 +277,8 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
 
     if operations.delete_ticket(id, delete_info, event) is False:
         raise InternalOperationError("ticket_delete_failed")
+
+    delete_cached_ticket(id)
     
 
 def delete_all_tickets(requester: api_models.User) -> int:
@@ -313,7 +322,10 @@ def delete_all_tickets(requester: api_models.User) -> int:
                 )
                 events.append(event_ticket)
 
-    return operations.delete_all_tickets(events)
+    deleted_count = operations.delete_all_tickets(events)
+    for ticket in all_tickets:
+        delete_cached_ticket(ticket.id)
+    return deleted_count
 
 
 def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticket | None:
@@ -350,6 +362,8 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     res = operations.claim_ticket(ticket_id, requester.id, event)
     if res is None:
         raise TicketAlreadyAssignedError()
+
+    delete_cached_ticket(ticket_id)
     
     return _to_api_ticket(res)
 
@@ -395,4 +409,25 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
     if res is None:
         raise InternalOperationError("ticket_assignment_failed")
 
+    delete_cached_ticket(ticket_id)
+
     return _to_api_ticket(res)
+
+
+def analysis_job(ticket_id: str, requester: api_models.User) -> api_models.JobResponse | None:
+    if check_for_access(requester.role, constants.Role.AGENT) is False:
+        raise AuthorizationError("no rights")
+ 
+    ticket = check_cached_ticket(ticket_id)
+    if ticket is None:
+        ticket = operations.get_ticket(ticket_id)
+        if ticket is None:
+            raise TicketNotFoundError("no_ticket")
+
+    if requester.role == constants.Role.AGENT:
+        if ticket.assigned_agent_id != requester.id: 
+            raise AuthorizationError("you don't have access to this ticket")
+    
+
+    job_response = start_ticket_inspection_job(ticket_id)
+    return job_response

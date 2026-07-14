@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
 from src.constants import helpers
-from src.routers import users, tickets, auth
+from src.routers import users, tickets, auth, jobs
 from src.db.utils import create_db
 from src.core import setup_logging
 from src.exceptions.domain import AppException
@@ -63,6 +63,7 @@ async def handle_validation_exception(request: Request, exc: RequestValidationEr
 app.include_router(users.router)
 app.include_router(tickets.router)
 app.include_router(auth.router)
+app.include_router(jobs.router)
 
 @app.get("/")
 async def root():

@@ -1,7 +1,6 @@
 # TICKET CACHE LOGIC ONLY
 from . import get_redis_client
 from src.constants import logger
-from src.exceptions import CacheUnavailableError
 from redis import RedisError
 from src.models import Ticket
 import json
@@ -33,8 +32,12 @@ def check_ticket(ticket_id: str) -> Ticket | None:
         return Ticket.model_validate(data)
 
     except RedisError as exc:
-        logger.exception("Redis unavailable while cheking the ticket")
-        raise CacheUnavailableError() from exc
+        logger.warning(
+            "Ticket cache read failed",
+            extra={"operation": "get", "ticket_id": ticket_id},
+            exc_info=exc,
+        )
+        return None
     
 def delete_ticket(ticket_id: str) -> bool:
     try:
@@ -43,10 +46,15 @@ def delete_ticket(ticket_id: str) -> bool:
 
         ticket_key = build_ticket_key(ticket_id)
         #do i have to check if ticket key is none?
-        return client.delete(ticket_key)
+        return client.delete(ticket_key) > 0
 
     except RedisError as exc:
-        raise CacheUnavailableError from exc
+        logger.warning(
+            "Ticket cache delete failed",
+            extra={"operation": "delete", "ticket_id": ticket_id},
+            exc_info=exc,
+        )
+        return False
 
 def cache_ticket(ticket: Ticket) -> bool:
 #   When saving a ticket:
@@ -61,7 +69,7 @@ def cache_ticket(ticket: Ticket) -> bool:
     try:
         client = get_redis_client()
         if client is None:
-            raise CacheUnavailableError
+            return False
 
         ticket_dict = ticket.model_dump(mode='json')
         ticket_json = json.dumps(ticket_dict)
@@ -69,4 +77,9 @@ def cache_ticket(ticket: Ticket) -> bool:
         ticket_key = build_ticket_key(ticket.id)
         return client.set(ticket_key, ticket_json, ex=300) #from pydantic -> json -> bytes?
     except RedisError as exc:
-        raise CacheUnavailableError() from exc
+        logger.warning(
+            "Ticket cache write failed",
+            extra={"operation": "set", "ticket_id": ticket.id},
+            exc_info=exc,
+        )
+        return False

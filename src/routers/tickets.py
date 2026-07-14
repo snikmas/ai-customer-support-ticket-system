@@ -183,3 +183,16 @@ def delete_ticket_comment(ticket_id: str, comment_id: str, requester: models.Use
         raise HTTPException(400, detail=str(exc))
 
     return {"data": data}
+
+
+
+@router.post("/{ticket_id}/analysis-jobs", status_code=200)
+def analysis_job(ticket_id: str, requester: models.User = Depends(get_current_user)):
+    try:
+        data = s_tickets.analysis_job(ticket_id, requester)
+    except AppException as exc:
+        _raise_http(exc)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+    return data

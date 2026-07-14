@@ -26,30 +26,34 @@ def test_translate_rq_status_preserves_non_failure_states(rq_status, expected):
     assert constants.translate_rq_status(rq_status) is expected
 
 
-def test_get_job_includes_result_only_after_success(monkeypatch):
+def test_get_job_includes_result_only_after_success(monkeypatch, make_user):
     result = {"ticket_id": "ticket-1", "priority": 2}
     job = SimpleNamespace(
         id="job-1",
+        args=("ticket-1",),
         result=result,
         get_status=lambda: "finished",
     )
     queue = SimpleNamespace(fetch_job=lambda job_id: job if job_id == job.id else None)
     monkeypatch.setattr(jobs_service, "get_ticket_jobs_queue", lambda: queue)
+    monkeypatch.setattr(jobs_service.tickets, "get_ticket", lambda *_: object())
 
-    response = jobs_service.get_job(job.id)
+    response = jobs_service.get_job(job.id, make_user(role=constants.Role.AGENT))
 
     assert response.result == result
 
 
-def test_get_job_hides_result_while_job_is_not_finished(monkeypatch):
+def test_get_job_hides_result_while_job_is_not_finished(monkeypatch, make_user):
     job = SimpleNamespace(
         id="job-1",
+        args=("ticket-1",),
         result={"partial": "must not leak"},
         get_status=lambda: "started",
     )
     queue = SimpleNamespace(fetch_job=lambda _: job)
     monkeypatch.setattr(jobs_service, "get_ticket_jobs_queue", lambda: queue)
+    monkeypatch.setattr(jobs_service.tickets, "get_ticket", lambda *_: object())
 
-    response = jobs_service.get_job(job.id)
+    response = jobs_service.get_job(job.id, make_user(role=constants.Role.AGENT))
 
     assert response.result is None
