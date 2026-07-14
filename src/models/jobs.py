@@ -10,3 +10,12 @@ class JobStatusResponse(BaseModel):
     status: JobStatus
     result: dict | None = None
     error: str | None = None
+
+class Job(BaseModel):
+    id: str
+    func_name: str
+    status: str
+    result: str
+    created_at: str
+    enqueued_at: str
+    ended_at: str

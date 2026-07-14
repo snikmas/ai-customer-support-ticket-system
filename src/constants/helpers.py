@@ -1,6 +1,7 @@
 import logging
 from uuid import uuid4
 from .enums import Role, Status, Tag, JobStatus
+from src.models.jobs import JobResponse, JobStatusResponse, Job
 import json
 from datetime import datetime
 from sqlalchemy import asc, desc
@@ -103,3 +104,16 @@ def translate_rq_status(rq_status: str) -> JobStatus:
         "ready_to_enqueue": JobStatus.READY_TO_ENQUEUE,
     }
     return status_mapping.get(rq_status, JobStatus.UNKNOWN)
+
+
+def raw_job_to_job_response(raw_job) -> Job:
+    job = Job(
+        id=raw_job.id,
+        func_name=raw_job.func_name,
+        status=raw_job.get_status(),
+        result=raw_job.result,
+        created_at=raw_job.created_at,
+        enqueued_at=raw_job.enqueued_at,
+        ended_at=raw_job.ended_at
+    )
+    return job

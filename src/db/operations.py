@@ -124,6 +124,7 @@ def create_initial_superadmin(user_data: User, event_data: Event) -> bool:
                 user_status=UserStatus.ACTIVE,
             )
             session.add(user)
+            session.flush()
             session.add(_event_from_data(event_data))
             session.commit()
             return True

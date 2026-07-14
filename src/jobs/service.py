@@ -1,8 +1,8 @@
 # rq business logic around jobs
 from src.jobs.queue import get_ticket_jobs_queue
 from src.jobs.tasks import inspect_ticket
-from src.models import JobResponse, JobStatusResponse, User
-from src.constants import JobStatus, translate_rq_status, Role
+from src.models import JobResponse, JobStatusResponse, User, Job 
+from src.constants import JobStatus, translate_rq_status, Role, raw_job_to_job_response
 from src.services import check_for_access
 from src.services import tickets
 from src.exceptions import AuthorizationError
@@ -40,3 +40,18 @@ def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
         status=status,
         result=raw_job.result if status is JobStatus.COMPLETED else None,
     )
+
+
+def get_all_jobs(requester: User) -> list[Job] | None:
+    if check_for_access(requester.role, Role.ADMIN) is False:
+        raise AuthorizationError("only_admins_can_view_all_jobs")
+
+    queue = get_ticket_jobs_queue()
+    
+    raw_jobs = queue.get_jobs()
+    if raw_jobs is None: return None
+    jobs = []
+    for raw_job in raw_jobs:
+        jobs.append(raw_job_to_job_response(raw_job))
+    return jobs
+    
