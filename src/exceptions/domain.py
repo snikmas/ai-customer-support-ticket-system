@@ -85,6 +85,18 @@ class UserAlreadyExistsError(ConflictError):
     message = "User already exists"
 
 
+class AgentHasActiveTicketsError(ConflictError):
+    code = "agent_has_active_tickets"
+    message = "Agent has active assigned tickets; resolve or reassign them before changing the role"
+
+    def __init__(self, active_ticket_count: int):
+        self.active_ticket_count = active_ticket_count
+        super().__init__(
+            f"Agent has {active_ticket_count} active assigned ticket(s); "
+            "resolve or reassign them before changing the role"
+        )
+
+
 class InactiveUserError(AuthorizationError):
     status_code = 403  # HTTP 403: deleted/banned user cannot use the system
     code = "inactive_user"

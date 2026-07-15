@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from datetime import datetime, timedelta
 from src.constants import (
     Role, 
@@ -13,7 +13,8 @@ from src.constants import (
     EntityType,
     Visibility, 
     Source,
-    AnalysisStatus
+    AnalysisStatus,
+    AvailabilityStatus,
     )
 from sqlalchemy.dialects.postgresql import ARRAY
 
@@ -77,6 +78,12 @@ class User(Base):
 
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     user_status: Mapped[UserStatus] = mapped_column(Enum(UserStatus))
+    agent_profile: Mapped[Optional["AgentProfile"]] = relationship(
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
    
     def __repr__(self):
         return (f"User(id={self.id!r}, nickname={self.nickname!r}, "
@@ -84,6 +91,34 @@ class User(Base):
                 f"last_name={self.last_name!r}, phone={self.phone!r}, "
                 f"email={self.email!r}, role={self.role!r}, "
                 f"updated_at={self.updated_at!r}, created_at={self.created_at!r})")
+
+
+class AgentProfile(Base):
+    __tablename__ = "agent_profiles"
+
+    # Using the foreign key as the primary key guarantees one profile per user.
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    availability_status: Mapped[AvailabilityStatus] = mapped_column(
+        Enum(AvailabilityStatus),
+        nullable=False,
+    )
+    availability_reason: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    availability_note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    unavailable_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    max_active_tickets: Mapped[int] = mapped_column(nullable=False, default=0)
+    # Department is introduced in Slice 3, so this cannot be a foreign key yet.
+    department_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="agent_profile")
     
 
 class Event(Base):

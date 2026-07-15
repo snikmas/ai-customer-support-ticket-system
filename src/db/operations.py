@@ -1,9 +1,28 @@
 from sqlalchemy.orm import Session
 from .engine import engine
-from .models import Ticket, User, RefreshSession, UserStatus, Event, Comment, AnalysisResult
-from sqlalchemy import Row, select, delete, update
+from .models import AgentProfile, Ticket, User, RefreshSession, UserStatus, Event, Comment, AnalysisResult
+from sqlalchemy import Row, func, select, delete, update
 from datetime import datetime, timezone
-from src.constants import Status, DEFAULT_SORT_ORDER, DEFAULT_PAGE_LIMIT, DEFAULT_SORT_BY, apply_sort_order, Priority
+from src.constants import (
+    AvailabilityStatus,
+    Role,
+    Status,
+    DEFAULT_SORT_ORDER,
+    DEFAULT_PAGE_LIMIT,
+    DEFAULT_SORT_BY,
+    apply_sort_order,
+    Priority,
+)
+from src.exceptions.domain import AgentHasActiveTicketsError
+
+
+ACTIVE_TICKET_STATUSES = (
+    Status.OPEN,
+    Status.IN_PROGRESS,
+    Status.PENDING,
+    Status.ON_HOLD,
+    Status.REOPENED,
+)
 
 # ==============================================================
 # ======================= SYSTEM ===============================
@@ -170,6 +189,84 @@ def get_users(
             
         return session.scalars(query).all()
 
+
+def get_agent_profile(user_id: str) -> AgentProfile | None:
+    with Session(engine) as session:
+        return session.get(AgentProfile, user_id)
+
+
+def count_active_assigned_tickets(agent_user_id: str) -> int:
+    with Session(engine) as session:
+        return _count_active_assigned_tickets(session, agent_user_id)
+
+
+def _count_active_assigned_tickets(session: Session, agent_user_id: str) -> int:
+    statement = (
+        select(func.count())
+        .select_from(Ticket)
+        .where(
+            Ticket.assigned_agent_id == agent_user_id,
+            Ticket.deleted_at.is_(None),
+            Ticket.status.in_(ACTIVE_TICKET_STATUSES),
+        )
+    )
+    return session.scalar(statement) or 0
+
+
+def _apply_agent_role_lifecycle(
+    session: Session,
+    user: User,
+    new_role: Role,
+    now: datetime,
+) -> None:
+    old_role = user.role
+
+    if old_role == Role.USER and new_role == Role.AGENT:
+        profile = session.get(AgentProfile, user.id)
+        if profile is None:
+            profile = AgentProfile(
+                user_id=user.id,
+                availability_status=AvailabilityStatus.OFFLINE,
+                availability_reason="profile_setup_required",
+                availability_note=None,
+                unavailable_until=None,
+                max_active_tickets=0,
+                department_id=None,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(profile)
+        else:
+            profile.availability_status = AvailabilityStatus.OFFLINE
+            profile.availability_reason = "profile_setup_required"
+            profile.updated_at = now
+
+    if old_role == Role.AGENT and new_role == Role.MANAGER:
+        active_ticket_count = _count_active_assigned_tickets(session, user.id)
+        if active_ticket_count:
+            raise AgentHasActiveTicketsError(active_ticket_count)
+
+        profile = session.get(AgentProfile, user.id)
+        if profile is None:
+            # Supports agents created before AgentProfile existed.
+            profile = AgentProfile(
+                user_id=user.id,
+                availability_status=AvailabilityStatus.OFFLINE,
+                availability_reason="role_changed_to_manager",
+                availability_note=None,
+                unavailable_until=None,
+                max_active_tickets=0,
+                department_id=None,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(profile)
+        else:
+            profile.availability_status = AvailabilityStatus.OFFLINE
+            profile.availability_reason = "role_changed_to_manager"
+            profile.unavailable_until = None
+            profile.updated_at = now
+
 def update_user(id: str, new_info: dict, event_data: Event | None = None) -> User | None:
     with Session(engine) as session:
         with session.begin():
@@ -178,9 +275,14 @@ def update_user(id: str, new_info: dict, event_data: Event | None = None) -> Use
             if user is None:
                 return None
 
+            now = datetime.now(timezone.utc)
+            new_role = new_info.get("role")
+            if new_role is not None and new_role != user.role:
+                _apply_agent_role_lifecycle(session, user, new_role, now)
+
             for field, value in new_info.items():
                 setattr(user, field, value)
-            user.updated_at = datetime.now(timezone.utc)
+            user.updated_at = now
             if event_data is not None:
                 session.add(_event_from_data(event_data))
 

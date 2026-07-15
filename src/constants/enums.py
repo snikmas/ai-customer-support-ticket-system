@@ -16,6 +16,12 @@ class UserStatus(Enum):
     BANNED = 'Banned'
 
 
+class AvailabilityStatus(str, Enum):
+    AVAILABLE = "available"
+    PAUSED = "paused"
+    OFFLINE = "offline"
+
+
 class Category(Enum):
     API_ERROR       = "API_Error"
     AUTHENTICATION  = "Authentication"
