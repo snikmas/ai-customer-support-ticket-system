@@ -2,10 +2,16 @@
 from src.jobs.queue import get_ticket_jobs_queue
 from src.jobs.tasks import inspect_ticket
 from src.models import JobResponse, JobStatusResponse, User, Job 
-from src.constants import JobStatus, translate_rq_status, Role, raw_job_to_job_response
-from src.services import check_for_access
-from src.services import tickets
+from src.constants import JobStatus, logger, translate_rq_status, Role, raw_job_to_job_response
 from src.exceptions import AuthorizationError
+
+
+def _get_ticket_for_requester(ticket_id: str, requester: User):
+    # Import lazily so a standalone RQ worker can import src.jobs.tasks without
+    # entering the services -> tickets -> jobs package cycle during startup.
+    from src.services import tickets
+
+    return tickets.get_ticket(ticket_id, requester)
 
 def start_ticket_inspection_job(ticket_id: str) -> JobResponse:
     queue = get_ticket_jobs_queue()
@@ -16,6 +22,10 @@ def start_ticket_inspection_job(ticket_id: str) -> JobResponse:
         job_timeout=180,
         result_ttl=600,
     )
+    logger.info(
+        "Ticket inspection job enqueued",
+        extra={"job_id": job.id, "ticket_id": ticket_id},
+    )
     return JobResponse(
         job_id=job.id,
         status=translate_rq_status(job.get_status())
@@ -23,6 +33,8 @@ def start_ticket_inspection_job(ticket_id: str) -> JobResponse:
 
 
 def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
+    from src.services.permissions import check_for_access
+
     if check_for_access(requester.role, Role.AGENT) is False:
         raise AuthorizationError("only_agents_can_view_jobs")
 
@@ -32,7 +44,7 @@ def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
         return None
 
     ticket_id = raw_job.args[0]
-    tickets.get_ticket(ticket_id, requester)
+    _get_ticket_for_requester(ticket_id, requester)
 
     status = translate_rq_status(raw_job.get_status())
     return JobStatusResponse(
@@ -43,6 +55,8 @@ def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
 
 
 def get_all_jobs(requester: User) -> list[Job] | None:
+    from src.services.permissions import check_for_access
+
     if check_for_access(requester.role, Role.ADMIN) is False:
         raise AuthorizationError("only_admins_can_view_all_jobs")
 

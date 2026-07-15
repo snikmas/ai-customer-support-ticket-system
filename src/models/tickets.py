@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
-from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType
+from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType, AnalysisStatus
 from .validation import EntityId, LongBody, RefreshToken, TicketTitle
 
 class Ticket(BaseModel):
@@ -49,3 +49,16 @@ class AssignTicketRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: EntityId
+
+
+class AnalysisResult(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    id: str
+    summary: str
+    full_description: str
+    ticket_id: str
+    job_id: str
+    requester_id: str
+    created_at: datetime
+    status: AnalysisStatus

@@ -30,5 +30,8 @@ from .operations import (
     update_comment_with_event,
     update_ticket,
     update_user,
+    get_analysis_result_by_job,
+    get_analysis_results_by_ticket,
+    create_analysis_result
 )
 from .engine import engine

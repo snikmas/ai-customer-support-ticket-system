@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from .engine import engine
-from .models import Ticket, User, RefreshSession, UserStatus, Event, Comment
+from .models import Ticket, User, RefreshSession, UserStatus, Event, Comment, AnalysisResult
 from sqlalchemy import Row, select, delete, update
 from datetime import datetime, timezone
 from src.constants import Status, DEFAULT_SORT_ORDER, DEFAULT_PAGE_LIMIT, DEFAULT_SORT_BY, apply_sort_order, Priority
@@ -554,3 +554,27 @@ def create_event(event: Event) -> bool:
             if event is None: return False
             session.add(_event_from_data(event))
     return True
+
+
+# ================================================================
+# ======================= ANALYSIS ===============================
+def create_analysis_result(analysis: AnalysisResult) -> bool:
+    with Session(engine) as session:
+        with session.begin():
+            if analysis is None: return False
+            session.add(analysis)
+    return True
+
+def get_analysis_result_by_job(job_id: str) -> AnalysisResult | None:
+    with Session(engine) as session:
+        with session.begin():
+            if job_id is None: return False
+
+            return session.query(AnalysisResult).filter_by(job_id=job_id).first()
+
+def get_analysis_results_by_ticket(ticket_id: str) -> list[AnalysisResult] | None:
+    with Session(engine) as session: 
+        query = select(AnalysisResult)
+        query = query.where(AnalysisResult.ticket_id == ticket_id)
+
+        return session.scalars(query).all()

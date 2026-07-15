@@ -196,3 +196,14 @@ def analysis_job(ticket_id: str, requester: models.User = Depends(get_current_us
         raise HTTPException(400, detail=str(exc))
 
     return data
+
+@router.get("/{ticket_id}/analyse_ticket", status_code=200)
+def get_analysis_job(ticket_id: str, requester: models.User = Depends(get_current_user)):
+    try:
+        data = s_tickets.get_analysis_job(ticket_id, requester)
+    except AppException as exc:
+        _raise_http(exc)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+    
+    return data

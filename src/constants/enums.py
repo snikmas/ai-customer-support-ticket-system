@@ -125,6 +125,14 @@ class JobStatus(str, Enum):
     READY_TO_ENQUEUE = 'ready_to_enqueue'
     UNKNOWN = 'unknown'
 
+class AnalysisStatus(str, Enum):
+    PENDING = 'pending'
+    RUNNING = 'running'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+    STOPPED = 'stopped'
+    CANCELED = 'canceled'
+
 #   NEW -> due_at = now + 2 hours
 #   OPEN -> due_at = now + 6 hours
 #   IN_PROGRESS -> due_at = now + 12 hours

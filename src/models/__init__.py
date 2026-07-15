@@ -4,6 +4,8 @@ from .tickets import (
     Ticket,
     TicketCreate,
     TicketUpdate,
+    AnalysisResult,
+    AnalysisStatus
 )
 from .users import User, UserCreate, UserResponse, UserUpdate
 from .session import (

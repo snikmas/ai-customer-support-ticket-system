@@ -431,3 +431,20 @@ def analysis_job(ticket_id: str, requester: api_models.User) -> api_models.JobRe
 
     job_response = start_ticket_inspection_job(ticket_id)
     return job_response
+
+def get_analysis_job(ticket_id: str, requester: api_models.User) -> api_models.AnalysisResult:
+    #how to get a job?
+    if check_for_access(requester.role, constants.Role.AGENT) is False:
+        raise AuthorizationError('no rights')
+    
+    ticket = check_cached_ticket(ticket_id)
+    if ticket is None:
+        ticket = operations.get_ticket(ticket_id)
+        if ticket is None:
+            raise TicketNotFoundError("no_ticket")
+
+    if requester.role == constants.Role.AGENT:
+        if ticket.assigned_agent_id != requester.id: 
+            raise AuthorizationError("you don't have access to this ticket")
+        
+    res = operations.get_analysis_result_by_job()

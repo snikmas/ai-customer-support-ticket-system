@@ -2,7 +2,19 @@ from typing import List, Optional
 from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime, timedelta
-from src.constants import Role, Category, Priority, Status, Tag, UserStatus, EventType, EntityType, Visibility, Source
+from src.constants import (
+    Role, 
+    Category, 
+    Priority, 
+    Status, 
+    Tag, 
+    UserStatus, 
+    EventType, 
+    EntityType,
+    Visibility, 
+    Source,
+    AnalysisStatus
+    )
 from sqlalchemy.dialects.postgresql import ARRAY
 
 
@@ -135,3 +147,23 @@ class RefreshSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+# =================================================================
+class AnalysisResult(Base):
+    __tablename__ = 'analysis_result'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    summary: Mapped[str] = mapped_column(String(300))
+    full_description: Mapped[str] = mapped_column(String(2000))
+    ticket_id: Mapped[str] = mapped_column(
+                                String(36),
+                                ForeignKey('tickets.id', ondelete='SET NULL')
+                                )
+    job_id: Mapped[str] = mapped_column(String(36))
+    requester_id: Mapped[str] = mapped_column(
+                                String(36),
+                                ForeignKey('users.id', ondelete='SET NULL')
+                                )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[AnalysisStatus] = mapped_column(Enum(AnalysisStatus))
+                                
