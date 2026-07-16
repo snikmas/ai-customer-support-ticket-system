@@ -55,6 +55,26 @@ def update_user(updated_user_id: str, updated_info: models.UserUpdate, requester
     return {'data': user}
 
 
+@router.patch("/{agent_id}/availability", status_code=200)
+def update_agent_availability(
+    agent_id: str,
+    update_data: models.AgentAvailabilityUpdate,
+    requester=Depends(get_current_user),
+):
+    profile = s_users.update_agent_availability(agent_id, update_data, requester)
+    return {"data": profile}
+
+
+@router.patch("/{agent_id}/agent-profile", status_code=200)
+def update_agent_profile_settings(
+    agent_id: str,
+    update_data: models.AgentProfileManagementUpdate,
+    requester=Depends(get_current_user),
+):
+    profile = s_users.update_agent_profile_settings(agent_id, update_data, requester)
+    return {"data": profile}
+
+
 
 @router.delete("/{id}", status_code=204)
 def delete_user(id: str, requester = Depends(get_current_user)):

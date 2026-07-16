@@ -200,6 +200,27 @@ def count_active_assigned_tickets(agent_user_id: str) -> int:
         return _count_active_assigned_tickets(session, agent_user_id)
 
 
+def update_agent_profile(
+    user_id: str,
+    new_info: dict,
+    event_data: Event,
+) -> AgentProfile | None:
+    """Save the profile change and its audit event atomically."""
+
+    with Session(engine) as session:
+        with session.begin():
+            profile = session.get(AgentProfile, user_id)
+            if profile is None:
+                return None
+
+            for field, value in new_info.items():
+                setattr(profile, field, value)
+            session.add(_event_from_data(event_data))
+
+        session.refresh(profile)
+        return profile
+
+
 def _count_active_assigned_tickets(session: Session, agent_user_id: str) -> int:
     statement = (
         select(func.count())

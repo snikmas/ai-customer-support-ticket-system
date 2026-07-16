@@ -97,6 +97,11 @@ class AgentHasActiveTicketsError(ConflictError):
         )
 
 
+class AgentProfileNotFoundError(NotFoundError):
+    code = "agent_profile_not_found"
+    message = "Agent profile not found"
+
+
 class InactiveUserError(AuthorizationError):
     status_code = 403  # HTTP 403: deleted/banned user cannot use the system
     code = "inactive_user"

@@ -7,7 +7,15 @@ from .tickets import (
     AnalysisResult,
     AnalysisStatus
 )
-from .users import User, UserCreate, UserResponse, UserUpdate
+from .users import (
+    AgentAvailabilityUpdate,
+    AgentProfileManagementUpdate,
+    AgentProfileResponse,
+    User,
+    UserCreate,
+    UserResponse,
+    UserUpdate,
+)
 from .session import (
     CreatedRefreshSession,
     Event,

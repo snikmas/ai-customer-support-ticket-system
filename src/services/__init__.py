@@ -17,6 +17,8 @@ from .users import (
     get_all_users,
     get_user,
     update_user,
+    update_agent_availability,
+    update_agent_profile_settings,
 )
 from .auth import (
     create_refresh_session_for_user,

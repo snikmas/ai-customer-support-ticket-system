@@ -132,11 +132,11 @@ class Event(Base):
                         ForeignKey('users.id', ondelete='RESTRICT'),
                         nullable=False)
     event_type:     Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
-    # PostgreSQL migration: expand these audit payload columns to Text or JSON/JSONB.
-    # String(255) is not large enough for serialized values such as comment bodies.
-    old_value:      Mapped[str] = mapped_column(String(255), nullable=True)
+    # Audit snapshots can include a short note plus several routing fields, so a
+    # 255-character column is too small even when every individual field is bounded.
+    old_value:      Mapped[str] = mapped_column(Text, nullable=True)
     batch_id:       Mapped[str] = mapped_column(String(36), nullable=True, default=None)
-    new_value:      Mapped[str] = mapped_column(String(255), nullable=False)
+    new_value:      Mapped[str] = mapped_column(Text, nullable=False)
     metadata_:      Mapped[str] = mapped_column("metadata", String(200), nullable=True) #additional info
     created_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

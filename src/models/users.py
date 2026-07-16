@@ -1,6 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
-from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus
+from pydantic import BaseModel, ConfigDict, Field
+from src.constants.enums import AvailabilityReason, AvailabilityStatus, Role, UserStatus
 from .validation import AvatarUrl, EmailAddress, NewPassword, Nickname, PersonName, PhoneNumber
 
 
@@ -61,3 +61,41 @@ class UserResponse(BaseModel):
     created_at: datetime
     deleted_at: datetime | None = None
     user_status: UserStatus | None = UserStatus.ACTIVE
+
+
+class AgentAvailabilityUpdate(BaseModel):
+    """Fields an agent may update for themselves.
+
+    The note is intentionally short. It is operational context for routing,
+    not a place for medical or other sensitive personal information.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    availability_status: AvailabilityStatus
+    reason: AvailabilityReason | None = None
+    note: str | None = Field(default=None, max_length=200)
+    unavailable_until: datetime | None = None
+
+
+class AgentProfileManagementUpdate(BaseModel):
+    """Routing settings reserved for managers and administrators."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_active_tickets: int | None = Field(default=None, ge=0, le=100)
+    department_id: str | None = Field(default=None, max_length=36)
+
+
+class AgentProfileResponse(BaseModel):
+    user_id: str
+    availability_status: AvailabilityStatus
+    availability_reason: str | None = None
+    availability_note: str | None = None
+    unavailable_until: datetime | None = None
+    max_active_tickets: int
+    department_id: str | None = None
+    current_active_tickets: int
+    can_receive_new_tickets: bool
+    created_at: datetime
+    updated_at: datetime

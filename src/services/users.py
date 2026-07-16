@@ -7,6 +7,7 @@ from src.db import operations
 from src.core import hash_password
 from src.exceptions.domain import (
     AuthorizationError,
+    AgentProfileNotFoundError,
     EmptyUpdateError,
     InternalOperationError,
     UserAlreadyExistsError,
@@ -14,6 +15,144 @@ from src.exceptions.domain import (
 )
 from sqlalchemy.exc import IntegrityError
 import json
+
+
+PROFILE_MANAGER_ROLES = {
+    constants.Role.MANAGER,
+    constants.Role.ADMIN,
+    constants.Role.SUPER_ADMIN,
+}
+
+
+def _load_agent_profile_context(
+    agent_id: str,
+    requester: api_models.User,
+) -> tuple[db_models.User, db_models.User, db_models.AgentProfile]:
+    stored_requester = operations.get_user(requester.id)
+    if stored_requester is None:
+        raise UserNotFoundError()
+
+    agent = operations.get_user(agent_id)
+    if agent is None or agent.role is not constants.Role.AGENT:
+        raise AgentProfileNotFoundError()
+
+    profile = operations.get_agent_profile(agent_id)
+    if profile is None:
+        raise AgentProfileNotFoundError()
+
+    return stored_requester, agent, profile
+
+
+def _agent_profile_response(
+    agent: db_models.User,
+    profile: db_models.AgentProfile,
+) -> api_models.AgentProfileResponse:
+    current_workload = operations.count_active_assigned_tickets(agent.id)
+    can_receive_new_tickets = (
+        agent.role is constants.Role.AGENT
+        and agent.user_status is constants.UserStatus.ACTIVE
+        and agent.deleted_at is None
+        and profile.availability_status is constants.AvailabilityStatus.AVAILABLE
+        and current_workload < profile.max_active_tickets
+    )
+    return api_models.AgentProfileResponse(
+        user_id=profile.user_id,
+        availability_status=profile.availability_status,
+        availability_reason=profile.availability_reason,
+        availability_note=profile.availability_note,
+        unavailable_until=profile.unavailable_until,
+        max_active_tickets=profile.max_active_tickets,
+        department_id=profile.department_id,
+        current_active_tickets=current_workload,
+        can_receive_new_tickets=can_receive_new_tickets,
+        created_at=profile.created_at,
+        updated_at=profile.updated_at,
+    )
+
+
+def update_agent_availability(
+    agent_id: str,
+    update_data: api_models.AgentAvailabilityUpdate,
+    requester: api_models.User,
+) -> api_models.AgentProfileResponse:
+    stored_requester, agent, profile = _load_agent_profile_context(agent_id, requester)
+    if stored_requester.id != agent_id and stored_requester.role not in PROFILE_MANAGER_ROLES:
+        raise AuthorizationError()
+
+    now = datetime.now(timezone.utc)
+    new_info = {
+        "availability_status": update_data.availability_status,
+        "availability_reason": (
+            update_data.reason.value if update_data.reason is not None else None
+        ),
+        "availability_note": update_data.note,
+        "unavailable_until": update_data.unavailable_until,
+        "updated_at": now,
+    }
+    if update_data.availability_status is constants.AvailabilityStatus.AVAILABLE:
+        new_info.update(
+            availability_reason=None,
+            availability_note=None,
+            unavailable_until=None,
+        )
+
+    old_info = {
+        "availability_status": profile.availability_status,
+        "availability_reason": profile.availability_reason,
+        "availability_note": profile.availability_note,
+        "unavailable_until": profile.unavailable_until,
+    }
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.AGENT_PROFILE,
+        entity_id=agent_id,
+        actor_user_id=stored_requester.id,
+        event_type=constants.EventType.AGENT_AVAILABILITY_CHANGED,
+        old_value=constants._audit_json(old_info),
+        new_value=constants._audit_json(new_info),
+        metadata=None,
+        created_at=now,
+    )
+    updated_profile = operations.update_agent_profile(agent_id, new_info, event)
+    if updated_profile is None:
+        raise AgentProfileNotFoundError()
+    return _agent_profile_response(agent, updated_profile)
+
+
+def update_agent_profile_settings(
+    agent_id: str,
+    update_data: api_models.AgentProfileManagementUpdate,
+    requester: api_models.User,
+) -> api_models.AgentProfileResponse:
+    stored_requester, agent, profile = _load_agent_profile_context(agent_id, requester)
+    if stored_requester.role not in PROFILE_MANAGER_ROLES:
+        raise AuthorizationError()
+
+    new_info = update_data.model_dump(exclude_unset=True)
+    if not new_info:
+        raise EmptyUpdateError()
+
+    old_info = {
+        field: constants._audit_value(getattr(profile, field))
+        for field in new_info
+    }
+    now = datetime.now(timezone.utc)
+    new_info["updated_at"] = now
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.AGENT_PROFILE,
+        entity_id=agent_id,
+        actor_user_id=stored_requester.id,
+        event_type=constants.EventType.AGENT_PROFILE_UPDATED,
+        old_value=constants._audit_json(old_info),
+        new_value=constants._audit_json(new_info),
+        metadata=None,
+        created_at=now,
+    )
+    updated_profile = operations.update_agent_profile(agent_id, new_info, event)
+    if updated_profile is None:
+        raise AgentProfileNotFoundError()
+    return _agent_profile_response(agent, updated_profile)
 
 
 

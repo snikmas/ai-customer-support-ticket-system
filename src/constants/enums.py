@@ -22,6 +22,16 @@ class AvailabilityStatus(str, Enum):
     OFFLINE = "offline"
 
 
+class AvailabilityReason(str, Enum):
+    BREAK = "BREAK"
+    MEETING = "MEETING"
+    TRAINING = "TRAINING"
+    OTHER_WORK = "OTHER_WORK"
+    SHIFT_ENDED = "SHIFT_ENDED"
+    PERSONAL_LEAVE = "PERSONAL_LEAVE"
+    OTHER = "OTHER"
+
+
 class Category(Enum):
     API_ERROR       = "API_Error"
     AUTHENTICATION  = "Authentication"
@@ -93,6 +103,8 @@ class EventType(Enum):
     USER_BULK_DELETED = 'Users Bulk Deleted'
     USER_UPDATED = 'User Updated'
     USER_DELETED = 'User Deleted'
+    AGENT_AVAILABILITY_CHANGED = 'Agent Availability Changed'
+    AGENT_PROFILE_UPDATED = 'Agent Profile Updated'
     REFRESH_SESSION_CREATED = 'Refresh Session Created'
     REFRESH_SESSION_REVOKED = 'Refresh Session Revoked'
     REFRESH_SESSION_ROTATED = 'Refresh Session Rotated'
@@ -103,6 +115,7 @@ class EventType(Enum):
 class EntityType(Enum):
     TICKET = 'Ticket'
     USER = 'User'
+    AGENT_PROFILE = 'Agent Profile'
     REFRESH_SESSION = 'Refresh Session'
     COMMENT = 'Comment'
 

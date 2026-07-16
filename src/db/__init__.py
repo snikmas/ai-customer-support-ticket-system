@@ -28,6 +28,7 @@ from .operations import (
     rotate_refresh_session,
     update_comment,
     update_comment_with_event,
+    update_agent_profile,
     update_ticket,
     update_user,
     get_analysis_result_by_job,
