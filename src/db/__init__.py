@@ -24,6 +24,7 @@ from .operations import (
     get_user_by_email,
     get_user_by_nickname,
     get_users,
+    get_least_loaded_eligible_agent,
     revoke_refresh_session,
     rotate_refresh_session,
     update_comment,

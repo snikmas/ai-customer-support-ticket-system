@@ -13,7 +13,7 @@ from src.constants import (
     apply_sort_order,
     Priority,
 )
-from src.exceptions.domain import AgentHasActiveTicketsError
+from src.exceptions.domain import AgentHasActiveTicketsError, AgentProfileNotFoundError
 
 
 ACTIVE_TICKET_STATUSES = (
@@ -200,6 +200,41 @@ def count_active_assigned_tickets(agent_user_id: str) -> int:
         return _count_active_assigned_tickets(session, agent_user_id)
 
 
+def get_least_loaded_eligible_agent() -> User | None:
+    #Department, skill, tag, and performance ranking deliberately do not belong in this first routing query.
+
+
+    active_ticket_count = (
+        select(func.count(Ticket.id))
+        .where(
+            Ticket.assigned_agent_id == User.id,
+            Ticket.deleted_at.is_(None),
+            Ticket.status.in_(ACTIVE_TICKET_STATUSES),
+        )
+        .correlate(User)
+        .scalar_subquery()
+    )
+    statement = (
+        select(User)
+        .join(AgentProfile, AgentProfile.user_id == User.id)
+        .where(
+            User.role == Role.AGENT,
+            User.user_status == UserStatus.ACTIVE,
+            User.deleted_at.is_(None),
+            AgentProfile.availability_status == AvailabilityStatus.AVAILABLE,
+            active_ticket_count < AgentProfile.max_active_tickets,
+        )
+        .order_by(
+            active_ticket_count.asc(),
+            AgentProfile.last_assigned_at.asc().nulls_first(),
+            User.id.asc(),
+        )
+        .limit(1)
+    )
+    with Session(engine) as session:
+        return session.scalar(statement)
+
+
 def update_agent_profile(
     user_id: str,
     new_info: dict,
@@ -252,6 +287,7 @@ def _apply_agent_role_lifecycle(
                 availability_note=None,
                 unavailable_until=None,
                 max_active_tickets=0,
+                last_assigned_at=None,
                 department_id=None,
                 created_at=now,
                 updated_at=now,
@@ -277,6 +313,7 @@ def _apply_agent_role_lifecycle(
                 availability_note=None,
                 unavailable_until=None,
                 max_active_tickets=0,
+                last_assigned_at=None,
                 department_id=None,
                 created_at=now,
                 updated_at=now,
@@ -418,9 +455,14 @@ def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> T
             if ticket is None:
                 return None
 
+            old_assignee_id = ticket.assigned_agent_id
             for field, value in new_info.items():
                 setattr(ticket, field, value)
-            ticket.updated_at = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
+            ticket.updated_at = now
+            new_assignee_id = ticket.assigned_agent_id
+            if new_assignee_id is not None and new_assignee_id != old_assignee_id:
+                _record_agent_received_ticket(session, new_assignee_id, now)
             if event_data is not None:
                 session.add(_event_from_data(event_data))
 
@@ -463,6 +505,7 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
             agent = session.get(User, assigned_id)
             if agent is None: return None
 
+            now = datetime.now(timezone.utc)
             result = session.execute(
                 update(Ticket)
                 .where(
@@ -474,7 +517,7 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
                 .values(
                     assigned_agent_id=assigned_id,
                     status=Status.IN_PROGRESS,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=now,
                 )
             )
             if result.rowcount != 1:
@@ -482,6 +525,8 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
 
             if event_data is not None:
                 session.add(_event_from_data(event_data))
+
+            _record_agent_received_ticket(session, assigned_id, now)
 
             ticket = session.get(Ticket, ticket_id)
 
@@ -498,14 +543,30 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | Non
             user = session.get(User, assigned_agent_id)
             if user is None: return None
 
+            old_assignee_id = ticket.assigned_agent_id
+            now = datetime.now(timezone.utc)
             ticket.assigned_agent_id = user.id
             ticket.status = Status.IN_PROGRESS
-            ticket.updated_at = datetime.now(timezone.utc)
+            ticket.updated_at = now
+            if user.id != old_assignee_id:
+                _record_agent_received_ticket(session, user.id, now)
             if event_data is not None:
                 session.add(_event_from_data(event_data))
 
         session.refresh(ticket)
         return ticket
+
+
+def _record_agent_received_ticket(
+    session: Session,
+    agent_user_id: str,
+    assigned_at: datetime,
+) -> None:
+    profile = session.get(AgentProfile, agent_user_id)
+    if profile is None:
+        raise AgentProfileNotFoundError()
+    profile.last_assigned_at = assigned_at
+    profile.updated_at = assigned_at
 
 
 # ==============================================================

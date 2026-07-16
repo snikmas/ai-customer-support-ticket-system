@@ -42,6 +42,7 @@ def _profile(
     note: str | None = None,
     unavailable_until: datetime | None = None,
     capacity: int = 3,
+    last_assigned_at: datetime | None = None,
 ) -> db_models.AgentProfile:
     return db_models.AgentProfile(
         user_id=user_id,
@@ -50,6 +51,7 @@ def _profile(
         availability_note=note,
         unavailable_until=unavailable_until,
         max_active_tickets=capacity,
+        last_assigned_at=last_assigned_at,
         department_id="support",
         created_at=now,
         updated_at=now,
@@ -63,6 +65,211 @@ def _prepare_database(monkeypatch, tmp_path):
     db_models.Base.metadata.create_all(test_engine)
     monkeypatch.setattr(operations, "engine", test_engine)
     return test_engine
+
+
+def _ticket(
+    ticket_id: str,
+    creator_id: str,
+    now: datetime,
+    *,
+    assigned_agent_id: str | None = None,
+    status: constants.Status = constants.Status.NEW,
+) -> db_models.Ticket:
+    return db_models.Ticket(
+        id=ticket_id,
+        title="Ticket",
+        description="Description",
+        category=constants.Category.ACCOUNT_ACCESS,
+        tags=None,
+        assigned_agent_id=assigned_agent_id,
+        creator_user_id=creator_id,
+        status=status,
+        priority=constants.Priority.NORMAL,
+        updated_at=now,
+        created_at=now,
+        deleted_at=None,
+    )
+
+
+def _seed_routing_pool(
+    test_engine,
+    now: datetime,
+    profiles: list[db_models.AgentProfile],
+    tickets: list[db_models.Ticket] | None = None,
+) -> None:
+    with Session(test_engine) as session, session.begin():
+        session.add(_user("customer", constants.Role.USER, now))
+        session.add_all(
+            _user(profile.user_id, constants.Role.AGENT, now)
+            for profile in profiles
+        )
+        session.add_all(profiles)
+        session.add_all(tickets or [])
+
+
+def test_least_loaded_agent_wins_before_tie_breakers(monkeypatch, tmp_path):
+    test_engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    profiles = [
+        _profile("agent-busy", now, last_assigned_at=None),
+        _profile("agent-free", now, last_assigned_at=now),
+    ]
+    tickets = [
+        _ticket(
+            "active-ticket",
+            "customer",
+            now,
+            assigned_agent_id="agent-busy",
+            status=constants.Status.OPEN,
+        )
+    ]
+    _seed_routing_pool(test_engine, now, profiles, tickets)
+
+    selected = operations.get_least_loaded_eligible_agent()
+
+    assert selected is not None
+    assert selected.id == "agent-free"
+
+
+def test_routing_query_uses_only_current_hard_eligibility_pool(
+    monkeypatch,
+    tmp_path,
+):
+    test_engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    eligible = _user("eligible", constants.Role.AGENT, now)
+    inactive = _user("inactive", constants.Role.AGENT, now)
+    inactive.user_status = constants.UserStatus.BANNED
+    deleted = _user("deleted", constants.Role.AGENT, now)
+    deleted.deleted_at = now
+
+    with Session(test_engine) as session, session.begin():
+        session.add_all(
+            [
+                _user("customer", constants.Role.USER, now),
+                eligible,
+                inactive,
+                deleted,
+                _user("manager", constants.Role.MANAGER, now),
+                _user("unavailable", constants.Role.AGENT, now),
+                _user("at-capacity", constants.Role.AGENT, now),
+            ]
+        )
+        session.add_all(
+            [
+                _profile("eligible", now),
+                _profile("inactive", now),
+                _profile("deleted", now),
+                _profile("manager", now),
+                _profile(
+                    "unavailable",
+                    now,
+                    status=constants.AvailabilityStatus.OFFLINE,
+                ),
+                _profile("at-capacity", now, capacity=0),
+            ]
+        )
+
+    selected = operations.get_least_loaded_eligible_agent()
+
+    assert selected is not None
+    assert selected.id == "eligible"
+
+
+def test_never_assigned_agent_wins_equal_workload_tie(monkeypatch, tmp_path):
+    test_engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    _seed_routing_pool(
+        test_engine,
+        now,
+        [
+            _profile("agent-recent", now, last_assigned_at=now),
+            _profile("agent-never", now, last_assigned_at=None),
+        ],
+    )
+
+    selected = operations.get_least_loaded_eligible_agent()
+
+    assert selected is not None
+    assert selected.id == "agent-never"
+
+
+def test_oldest_last_assignment_wins_next_tie(monkeypatch, tmp_path):
+    test_engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    _seed_routing_pool(
+        test_engine,
+        now,
+        [
+            _profile("agent-newer", now, last_assigned_at=now - timedelta(hours=1)),
+            _profile("agent-older", now, last_assigned_at=now - timedelta(days=1)),
+        ],
+    )
+
+    selected = operations.get_least_loaded_eligible_agent()
+
+    assert selected is not None
+    assert selected.id == "agent-older"
+
+
+def test_user_id_breaks_final_routing_tie(monkeypatch, tmp_path):
+    test_engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    same_assignment_time = now - timedelta(hours=1)
+    _seed_routing_pool(
+        test_engine,
+        now,
+        [
+            _profile("agent-b", now, last_assigned_at=same_assignment_time),
+            _profile("agent-a", now, last_assigned_at=same_assignment_time),
+        ],
+    )
+
+    selected = operations.get_least_loaded_eligible_agent()
+
+    assert selected is not None
+    assert selected.id == "agent-a"
+
+
+def test_receiving_ticket_updates_only_new_owner_last_assigned_at(
+    monkeypatch,
+    tmp_path,
+):
+    test_engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    _seed_routing_pool(
+        test_engine,
+        now,
+        [_profile("agent-a", now), _profile("agent-b", now)],
+        [_ticket("ticket", "customer", now)],
+    )
+
+    assigned = operations.assign_ticket("ticket", "agent-a")
+    assert assigned is not None
+    with Session(test_engine) as session:
+        first_assignment = session.get(
+            db_models.AgentProfile,
+            "agent-a",
+        ).last_assigned_at
+        assert first_assignment is not None
+
+    reassigned = operations.assign_ticket("ticket", "agent-b")
+    assert reassigned is not None
+    with Session(test_engine) as session:
+        agent_a = session.get(db_models.AgentProfile, "agent-a")
+        agent_b = session.get(db_models.AgentProfile, "agent-b")
+        assert agent_a.last_assigned_at == first_assignment
+        assert agent_b.last_assigned_at is not None
+
+    operations.update_ticket(
+        "ticket",
+        {"status": constants.Status.RESOLVED, "assigned_agent_id": None},
+    )
+    with Session(test_engine) as session:
+        agent_a = session.get(db_models.AgentProfile, "agent-a")
+        agent_b = session.get(db_models.AgentProfile, "agent-b")
+        assert agent_a.last_assigned_at == first_assignment
+        assert agent_b.last_assigned_at is not None
 
 
 def test_agent_can_pause_self_and_change_is_audited(monkeypatch, tmp_path, make_user):

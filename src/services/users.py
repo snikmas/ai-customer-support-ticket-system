@@ -62,6 +62,7 @@ def _agent_profile_response(
         availability_note=profile.availability_note,
         unavailable_until=profile.unavailable_until,
         max_active_tickets=profile.max_active_tickets,
+        last_assigned_at=profile.last_assigned_at,
         department_id=profile.department_id,
         current_active_tickets=current_workload,
         can_receive_new_tickets=can_receive_new_tickets,

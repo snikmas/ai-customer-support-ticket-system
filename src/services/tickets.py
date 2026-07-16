@@ -195,8 +195,8 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         agent = operations.get_user(updated_info['assigned_agent_id'])
         if agent is None:
             raise InvalidAssigneeError("assignee_not_found")
-        if agent.role not in [constants.Role.AGENT, constants.Role.MANAGER]:
-            raise InvalidAssigneeError()
+        if agent.role is not constants.Role.AGENT:
+            raise InvalidAssigneeError("assignee_must_be_agent")
 
 
     if "status" in requested_fields:

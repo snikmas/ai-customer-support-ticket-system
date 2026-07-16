@@ -94,6 +94,7 @@ class AgentProfileResponse(BaseModel):
     availability_note: str | None = None
     unavailable_until: datetime | None = None
     max_active_tickets: int
+    last_assigned_at: datetime | None = None
     department_id: str | None = None
     current_active_tickets: int
     can_receive_new_tickets: bool

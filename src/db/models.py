@@ -113,7 +113,11 @@ class AgentProfile(Base):
         nullable=True,
     )
     max_active_tickets: Mapped[int] = mapped_column(nullable=False, default=0)
-    # Department is introduced in Slice 3, so this cannot be a foreign key yet.
+    last_assigned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    # Department is introduced in Slice 4, so this cannot be a foreign key yet.
     department_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
