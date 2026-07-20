@@ -220,6 +220,21 @@ For background jobs, the learning boundary is:
 router -> jobs service -> RQ queue/Redis -> worker task
 ```
 
+Automatic ticket routing uses its own `ticket_routing` queue. Routing is a
+short, user-visible workflow and should not wait behind slower ticket inspection
+or future LLM jobs on `ticket_jobs`. Start a routing worker with:
+
+```bash
+myvenv/bin/rq worker ticket_routing --url "$REDIS_URL"
+```
+
+To let one local worker serve both queues while developing, list routing first
+so it has priority:
+
+```bash
+myvenv/bin/rq worker ticket_routing ticket_jobs --url "$REDIS_URL"
+```
+
 Routers receive HTTP requests and convert errors to HTTP responses.
 Dependencies identify the current user.
 Services decide whether an action is allowed and what business rule should run.

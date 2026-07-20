@@ -17,7 +17,12 @@ from src.exceptions.domain import (
     UserNotFoundError,
 )
 from src.cache import check_ticket as check_cached_ticket, cache_ticket, delete_ticket as delete_cached_ticket
-from src.jobs import start_ticket_inspection_job, get_job as jobs_get_job
+from src.jobs import (
+    enqueue_ticket_routing_job,
+    get_job as jobs_get_job,
+    start_ticket_inspection_job,
+)
+from src.constants import logger
 import json
 
 def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
@@ -79,8 +84,21 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
     )
 
     ticket = operations.create_ticket(ticket, event)
+    api_ticket = _to_api_ticket(ticket)
 
-    return _to_api_ticket(ticket)
+    # The database commit above is deliberately the point of durability.
+    # Queue failure must not roll back or hide a successfully created ticket;
+    # Slice 6 reconciliation will find NEW/unassigned tickets and retry later.
+    try:
+        enqueue_ticket_routing_job(ticket.id)
+    except Exception as exc:
+        logger.exception(
+            "Ticket routing enqueue failed after ticket creation",
+            extra={"ticket_id": ticket.id},
+            exc_info=exc,
+        )
+
+    return api_ticket
 
 
 def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im not sure is it a db ticket or api model

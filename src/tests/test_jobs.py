@@ -191,7 +191,11 @@ def test_inspect_ticket_logs_missing_ticket_without_ticket_contents(monkeypatch,
 
 def test_worker_task_imports_in_a_fresh_process():
     completed = subprocess.run(
-        [sys.executable, "-c", "from src.jobs.tasks import inspect_ticket"],
+        [
+            sys.executable,
+            "-c",
+            "from src.jobs.tasks import inspect_ticket, route_ticket",
+        ],
         capture_output=True,
         text=True,
         check=False,
