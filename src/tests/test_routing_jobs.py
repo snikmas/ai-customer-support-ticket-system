@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from rq.job import validate_job_id
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src import constants
@@ -13,7 +14,7 @@ from src.services import tickets as ticket_service
 
 class FakeRoutingJob:
     def __init__(self, status="queued"):
-        self.id = "route-ticket:ticket-1"
+        self.id = "route-ticket-ticket-1"
         self.status = status
         self.deleted = False
 
@@ -55,11 +56,11 @@ def test_enqueue_routing_job_uses_bounded_settings_retry_and_logging(
 
     retry = captured["settings"].pop("retry")
     assert captured == {
-        "fetched_job_id": "route-ticket:ticket-1",
+        "fetched_job_id": "route-ticket-ticket-1",
         "function": job_tasks.route_ticket,
         "ticket_id": "ticket-1",
         "settings": {
-            "job_id": "route-ticket:ticket-1",
+            "job_id": "route-ticket-ticket-1",
             "unique": True,
             "job_timeout": 60,
             "result_ttl": 600,
@@ -70,6 +71,16 @@ def test_enqueue_routing_job_uses_bounded_settings_retry_and_logging(
     assert retry.intervals == [10, 30]
     assert result is job
     assert "Ticket routing job enqueued" in caplog.text
+
+
+def test_routing_job_id_is_accepted_by_real_rq_validator():
+    job_id = jobs_service._routing_job_id(
+        "e349ea85-51ef-4928-904d-0d8c93a22720"
+    )
+
+    validate_job_id(job_id)
+
+    assert job_id == "route-ticket-e349ea85-51ef-4928-904d-0d8c93a22720"
 
 
 @pytest.mark.parametrize(
@@ -311,7 +322,7 @@ def test_create_ticket_enqueues_only_after_database_create_returns(
 
     def fake_enqueue(ticket_id):
         call_order.append(("enqueued", ticket_id))
-        return SimpleNamespace(id=f"route-ticket:{ticket_id}")
+        return SimpleNamespace(id=f"route-ticket-{ticket_id}")
 
     monkeypatch.setattr(
         ticket_service.operations,

@@ -24,7 +24,10 @@ ACTIVE_ROUTING_JOB_STATUSES = {
 
 
 def _routing_job_id(ticket_id: str) -> str:
-    return f"route-ticket:{ticket_id}"
+    # RQ 2.10 accepts only letters, numbers, underscores, and dashes in a
+    # custom job ID. Keeping the ticket ID in the value still gives us one
+    # stable routing-job identity per ticket without using a forbidden colon.
+    return f"route-ticket-{ticket_id}"
 
 
 def enqueue_ticket_routing_job(ticket_id: str):

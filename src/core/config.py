@@ -6,7 +6,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 DATABASE_FILE = PROJECT_ROOT / "tickets_system.db"
-DATABASE_URL = f'sqlite+pysqlite:///{DATABASE_FILE}'
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"sqlite+pysqlite:///{DATABASE_FILE}",
+)
 
 DEBUG = None
 LOG_LEVEL = 'INFO'

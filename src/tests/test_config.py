@@ -1,6 +1,23 @@
+import importlib
+
 import pytest
 
 from src.core import config
+
+
+def test_database_url_can_be_overridden_for_isolated_runtime_checks(
+    monkeypatch,
+    tmp_path,
+):
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'slice9.db'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    reloaded_config = importlib.reload(config)
+
+    assert reloaded_config.DATABASE_URL == database_url
+
+    monkeypatch.delenv("DATABASE_URL")
+    importlib.reload(config)
 
 
 def test_redis_settings_allow_disabled_redis_without_url(monkeypatch):

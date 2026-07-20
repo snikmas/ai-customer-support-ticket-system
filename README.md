@@ -197,6 +197,15 @@ Use the existing local virtual environment:
 myvenv/bin/python -m uvicorn main:app --reload
 ```
 
+By default, the application uses `tickets_system.db` in the repository root.
+For an isolated smoke check or another deployment environment, override it
+without changing source code:
+
+```bash
+DATABASE_URL=sqlite+pysqlite:////tmp/tickets-smoke.db \
+  myvenv/bin/python -m uvicorn main:app
+```
+
 Open the interactive API docs:
 
 ```text

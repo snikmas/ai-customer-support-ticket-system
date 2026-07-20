@@ -154,7 +154,7 @@ def test_dispatcher_enqueues_each_selected_ticket_independently(monkeypatch):
         attempted.append(ticket_id)
         if ticket_id == "ticket-2":
             raise ConnectionError("Redis unavailable")
-        return SimpleNamespace(id=f"route-ticket:{ticket_id}")
+        return SimpleNamespace(id=f"route-ticket-{ticket_id}")
 
     monkeypatch.setattr(
         jobs_service,
@@ -191,7 +191,7 @@ def test_later_reconciliation_recovers_a_previously_unassigned_ticket(
         if attempts == 1:
             raise ConnectionError("first Redis attempt failed")
         enqueued.append(ticket_id)
-        return SimpleNamespace(id=f"route-ticket:{ticket_id}")
+        return SimpleNamespace(id=f"route-ticket-{ticket_id}")
 
     monkeypatch.setattr(
         jobs_service,
