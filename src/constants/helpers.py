@@ -3,7 +3,7 @@ from uuid import uuid4
 from .enums import Role, Status, Tag, JobStatus
 from src.models.jobs import JobResponse, JobStatusResponse, Job
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import asc, desc
 
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +24,21 @@ SLA_HOURS = {
     Status.IN_PROGRESS: 12,
     Status.REOPENED: 4
 }
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def calculate_sla_due_at(status: Status, now: datetime) -> datetime | None:
+    """Return the UTC deadline for one ticket status stage."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("SLA calculation requires a timezone-aware timestamp")
+
+    hours = SLA_HOURS.get(status)
+    if hours is None:
+        return None
+    return now.astimezone(timezone.utc) + timedelta(hours=hours)
+
 
 ROLE_LEVELS = {
     Role.GUEST: 0,          # almost no access

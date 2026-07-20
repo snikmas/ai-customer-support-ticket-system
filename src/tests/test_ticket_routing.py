@@ -156,10 +156,12 @@ def test_try_route_ticket_assigns_and_audits_atomically(
         assert json.loads(event.old_value) == {
             "status": constants.Status.NEW.value,
             "assigned_agent_id": None,
+            "due_at": None,
         }
         assert json.loads(event.new_value) == {
             "status": constants.Status.OPEN.value,
             "assigned_agent_id": "agent-a",
+            "due_at": ticket.due_at.isoformat(),
         }
 
 

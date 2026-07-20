@@ -1,7 +1,8 @@
 from typing import List, Optional
 from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime, Text
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from src.constants import (
     Role, 
     Category, 
@@ -22,6 +23,28 @@ from sqlalchemy.dialects.postgresql import ARRAY
 class Base(DeclarativeBase):
     pass
 
+
+class UTCDateTime(TypeDecorator):
+    """Keep timezone-aware UTC datetimes when SQLite drops the offset."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("UTCDateTime requires a timezone-aware datetime")
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
 class Ticket(Base):
     __tablename__ = 'tickets'
     id:                 Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -41,10 +64,12 @@ class Ticket(Base):
     priority:           Mapped[Priority] = mapped_column(Enum(Priority))
     updated_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_at:             Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
 
     deleted_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    # due_at: Mapped[Optonal[timedelta]] = mapped_column(Interval)
 
     def __repr__(self):
         desc_short = self.description[:50]

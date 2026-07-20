@@ -1,6 +1,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Barrier
 
 import pytest
@@ -111,10 +111,15 @@ def test_database_start_work_changes_status_and_audits_atomically(
         assert event.actor_user_id == "agent-a"
         assert event.event_type is constants.EventType.TICKET_STATUS_CHANGED
         assert json.loads(event.old_value) == {
-            "status": constants.Status.OPEN.value
+            "status": constants.Status.OPEN.value,
+            "due_at": None,
         }
         assert json.loads(event.new_value) == {
-            "status": constants.Status.IN_PROGRESS.value
+            "status": constants.Status.IN_PROGRESS.value,
+            "due_at": (
+                event.created_at.replace(tzinfo=timezone.utc)
+                + timedelta(hours=12)
+            ).isoformat(),
         }
 
 

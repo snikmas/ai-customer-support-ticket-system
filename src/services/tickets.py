@@ -53,7 +53,7 @@ def _can_read_ticket(ticket: db_models.Ticket, requester: api_models.User) -> bo
     return False
 
 def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.User) -> api_models.Ticket:
-    now = datetime.now(timezone.utc)
+    now = constants.utc_now()
 
     if (check_for_access(requester.role, constants.Role.USER)) is False:
         raise AuthorizationError()
@@ -70,6 +70,7 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         priority=constants.Priority.NORMAL,
         updated_at=now,
         created_at=now,
+        due_at=constants.calculate_sla_due_at(constants.Status.NEW, now),
         deleted_at=None
     )
     
@@ -80,7 +81,11 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         actor_user_id=requester.id,
         event_type=constants.EventType.TICKET_CREATED,
         old_value=None,
-        new_value=json.dumps({"ticket_id": ticket.id}), #?
+        new_value=constants._audit_json({
+            "ticket_id": ticket.id,
+            "status": ticket.status,
+            "due_at": ticket.due_at,
+        }),
         metadata=None,
         created_at=now
     )
@@ -248,18 +253,28 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             )
         if constants.is_valid_status_transition(ticket.status, updated_info['status']) is False:
             raise TicketStatusConflictError()
+
+    transition_at = constants.utc_now()
+    if "status" in updated_info:
+        updated_info["due_at"] = constants.calculate_sla_due_at(
+            updated_info["status"],
+            transition_at,
+        )
+        audit_new_info["due_at"] = constants._audit_value(
+            updated_info["due_at"]
+        )
         
     
     old_info = {}
     for field in updated_info:
-        old_value = getattr(ticket, field)
+        old_value = getattr(ticket, field, None)
 
         if field == 'tags':
             old_info[field] = [tag.value for tag in constants.deserialize_tags(old_value)]
         elif hasattr(old_value, 'value'):
             old_info[field] = old_value.value
         else:
-            old_info[field] = old_value
+            old_info[field] = constants._audit_value(old_value)
 
     event = api_models.Event(
         id=constants.generate_id(),
@@ -270,7 +285,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         old_value=json.dumps(old_info),
         new_value=json.dumps(audit_new_info),
         metadata=None,
-        created_at=datetime.now(timezone.utc)
+        created_at=transition_at,
     )
 
     # if status in updates (even with a few fields) -> still status changed
@@ -421,6 +436,11 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
         raise TicketStatusConflictError("ticket_not_new")
     
 
+    transition_at = constants.utc_now()
+    new_due_at = constants.calculate_sla_due_at(
+        constants.Status.OPEN,
+        transition_at,
+    )
     event = api_models.Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.TICKET,
@@ -430,13 +450,15 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
         old_value=constants._audit_json({
             "status": constants.Status.NEW,
             "assigned_agent_id": None,
+            "due_at": getattr(ticket, "due_at", None),
         }),
         new_value=constants._audit_json({
             "status": constants.Status.OPEN,
             "assigned_agent_id": requester.id,
+            "due_at": new_due_at,
         }),
         metadata=None,
-        created_at=datetime.now(timezone.utc)
+        created_at=transition_at,
     )
     
     res = operations.claim_ticket(ticket_id, requester.id, event)
@@ -470,6 +492,11 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
     if agent.role != constants.Role.AGENT:
         raise InvalidAssigneeError("assignee_must_be_agent")
 
+    transition_at = constants.utc_now()
+    new_due_at = constants.calculate_sla_due_at(
+        constants.Status.OPEN,
+        transition_at,
+    )
     event = api_models.Event(
        id=constants.generate_id(),
        entity_type=constants.EntityType.TICKET,
@@ -479,13 +506,15 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
        old_value=constants._audit_json({
            "status": ticket.status,
            "assigned_agent_id": ticket.assigned_agent_id,
+           "due_at": getattr(ticket, "due_at", None),
        }),
        new_value=constants._audit_json({
            "status": constants.Status.OPEN,
            "assigned_agent_id": agent_id,
+           "due_at": new_due_at,
        }),
        metadata=None,
-       created_at=datetime.now(timezone.utc)
+       created_at=transition_at,
     )   
 
     if is_reassign:

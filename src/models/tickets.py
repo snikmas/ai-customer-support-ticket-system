@@ -17,7 +17,7 @@ class Ticket(BaseModel):
 
     updated_at: datetime
     created_at: datetime
-    # due_at: datetime
+    due_at: datetime | None = None
 
     deleted_at: datetime | None = None
 

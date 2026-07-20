@@ -12,6 +12,8 @@ from src.constants import (
     StartWorkOutcome,
     Status,
     TicketRoutingOutcome,
+    calculate_sla_due_at,
+    utc_now,
     DEFAULT_SORT_ORDER,
     DEFAULT_PAGE_LIMIT,
     DEFAULT_SORT_BY,
@@ -429,7 +431,11 @@ def create_ticket(ticket_data: Ticket, event_data: Event | None = None) -> Ticke
                 status=ticket_data.status,
                 priority=ticket_data.priority,
                 updated_at=ticket_data.updated_at,
-                created_at=ticket_data.created_at
+                created_at=ticket_data.created_at,
+                due_at=calculate_sla_due_at(
+                    ticket_data.status,
+                    ticket_data.created_at,
+                ),
             )
 
             session.add(ticket)
@@ -511,9 +517,14 @@ def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> T
                 return None
 
             old_assignee_id = ticket.assigned_agent_id
+            now = event_data.created_at if event_data is not None else utc_now()
+            if "status" in new_info:
+                new_info = {
+                    **new_info,
+                    "due_at": calculate_sla_due_at(new_info["status"], now),
+                }
             for field, value in new_info.items():
                 setattr(ticket, field, value)
-            now = datetime.now(timezone.utc)
             ticket.updated_at = now
             new_assignee_id = ticket.assigned_agent_id
             if new_assignee_id is not None and new_assignee_id != old_assignee_id:
@@ -560,7 +571,8 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
             agent = session.get(User, assigned_id)
             if agent is None: return None
 
-            now = datetime.now(timezone.utc)
+            now = event_data.created_at if event_data is not None else utc_now()
+            new_due_at = calculate_sla_due_at(Status.OPEN, now)
             result = session.execute(
                 update(Ticket)
                 .where(
@@ -572,6 +584,7 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
                 .values(
                     assigned_agent_id=assigned_id,
                     status=Status.OPEN,
+                    due_at=new_due_at,
                     updated_at=now,
                 )
             )
@@ -629,9 +642,12 @@ def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
                     ticket_id=ticket_id,
                 )
 
-            now = datetime.now(timezone.utc)
+            now = utc_now()
+            old_due_at = ticket.due_at
+            new_due_at = calculate_sla_due_at(Status.OPEN, now)
             ticket.assigned_agent_id = agent.id
             ticket.status = Status.OPEN
+            ticket.due_at = new_due_at
             ticket.updated_at = now
             _record_agent_received_ticket(session, agent.id, now)
             session.add(
@@ -647,12 +663,14 @@ def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
                         {
                             "status": Status.NEW,
                             "assigned_agent_id": None,
+                            "due_at": old_due_at,
                         }
                     ),
                     new_value=_audit_json(
                         {
                             "status": Status.OPEN,
                             "assigned_agent_id": agent.id,
+                            "due_at": new_due_at,
                         }
                     ),
                     metadata_="source=automatic_router",
@@ -681,7 +699,8 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | Non
             if user is None: return None
 
             old_assignee_id = ticket.assigned_agent_id
-            now = datetime.now(timezone.utc)
+            now = event_data.created_at if event_data is not None else utc_now()
+            ticket.due_at = calculate_sla_due_at(Status.OPEN, now)
             ticket.assigned_agent_id = user.id
             ticket.status = Status.OPEN
             ticket.updated_at = now
@@ -734,8 +753,11 @@ def start_ticket_work(ticket_id: str, requester_id: str) -> StartWorkResult:
                 session.commit()
                 return StartWorkResult(StartWorkOutcome.TICKET_NOT_OPEN)
 
-            now = datetime.now(timezone.utc)
+            now = utc_now()
+            old_due_at = ticket.due_at
+            new_due_at = calculate_sla_due_at(Status.IN_PROGRESS, now)
             ticket.status = Status.IN_PROGRESS
+            ticket.due_at = new_due_at
             ticket.updated_at = now
             session.add(
                 Event(
@@ -744,8 +766,14 @@ def start_ticket_work(ticket_id: str, requester_id: str) -> StartWorkResult:
                     entity_id=ticket.id,
                     actor_user_id=requester_id,
                     event_type=EventType.TICKET_STATUS_CHANGED,
-                    old_value=_audit_json({"status": Status.OPEN}),
-                    new_value=_audit_json({"status": Status.IN_PROGRESS}),
+                    old_value=_audit_json({
+                        "status": Status.OPEN,
+                        "due_at": old_due_at,
+                    }),
+                    new_value=_audit_json({
+                        "status": Status.IN_PROGRESS,
+                        "due_at": new_due_at,
+                    }),
                     metadata_=None,
                     created_at=now,
                 )

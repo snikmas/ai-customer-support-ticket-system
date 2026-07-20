@@ -36,6 +36,7 @@ def make_user():
             password="hashed-password",
             updated_at=now,
             created_at=now,
+            due_at=None,
             deleted_at=None,
             user_status=user_status,
         )
