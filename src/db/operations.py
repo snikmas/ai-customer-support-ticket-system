@@ -9,6 +9,7 @@ from src.constants import (
     EntityType,
     EventType,
     Role,
+    StartWorkOutcome,
     Status,
     TicketRoutingOutcome,
     DEFAULT_SORT_ORDER,
@@ -36,6 +37,12 @@ class TicketRoutingResult:
     outcome: TicketRoutingOutcome
     ticket_id: str
     assigned_agent_id: str | None = None
+
+
+@dataclass(frozen=True)
+class StartWorkResult:
+    outcome: StartWorkOutcome
+    ticket: Ticket | None = None
 
 
 # ==============================================================
@@ -564,7 +571,7 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
                 )
                 .values(
                     assigned_agent_id=assigned_id,
-                    status=Status.IN_PROGRESS,
+                    status=Status.OPEN,
                     updated_at=now,
                 )
             )
@@ -676,7 +683,7 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | Non
             old_assignee_id = ticket.assigned_agent_id
             now = datetime.now(timezone.utc)
             ticket.assigned_agent_id = user.id
-            ticket.status = Status.IN_PROGRESS
+            ticket.status = Status.OPEN
             ticket.updated_at = now
             if user.id != old_assignee_id:
                 _record_agent_received_ticket(session, user.id, now)
@@ -685,6 +692,70 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | Non
 
         session.refresh(ticket)
         return ticket
+
+
+def start_ticket_work(ticket_id: str, requester_id: str) -> StartWorkResult:
+    """Atomically move the requester's assigned OPEN ticket to IN_PROGRESS."""
+    with Session(engine) as session:
+        try:
+            # SQLite has no effective SELECT ... FOR UPDATE support. Acquiring
+            # the write lock before reading gives the read/check/write sequence
+            # the same single-writer boundary used by the routing operation.
+            if session.get_bind().dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            else:
+                session.begin()
+
+            ticket = session.scalar(
+                select(Ticket)
+                .where(Ticket.id == ticket_id)
+                .with_for_update()
+            )
+            if ticket is None:
+                session.commit()
+                return StartWorkResult(StartWorkOutcome.TICKET_NOT_FOUND)
+            if ticket.deleted_at is not None:
+                session.commit()
+                return StartWorkResult(StartWorkOutcome.TICKET_DELETED)
+            if ticket.assigned_agent_id is None:
+                session.commit()
+                return StartWorkResult(StartWorkOutcome.TICKET_UNASSIGNED)
+            if ticket.assigned_agent_id != requester_id:
+                session.commit()
+                return StartWorkResult(
+                    StartWorkOutcome.ASSIGNED_TO_ANOTHER_AGENT
+                )
+            if ticket.status == Status.IN_PROGRESS:
+                session.commit()
+                return StartWorkResult(
+                    StartWorkOutcome.TICKET_ALREADY_STARTED
+                )
+            if ticket.status != Status.OPEN:
+                session.commit()
+                return StartWorkResult(StartWorkOutcome.TICKET_NOT_OPEN)
+
+            now = datetime.now(timezone.utc)
+            ticket.status = Status.IN_PROGRESS
+            ticket.updated_at = now
+            session.add(
+                Event(
+                    id=generate_id(),
+                    entity_type=EntityType.TICKET,
+                    entity_id=ticket.id,
+                    actor_user_id=requester_id,
+                    event_type=EventType.TICKET_STATUS_CHANGED,
+                    old_value=_audit_json({"status": Status.OPEN}),
+                    new_value=_audit_json({"status": Status.IN_PROGRESS}),
+                    metadata_=None,
+                    created_at=now,
+                )
+            )
+            session.commit()
+            session.refresh(ticket)
+            return StartWorkResult(StartWorkOutcome.STARTED, ticket)
+        except Exception:
+            session.rollback()
+            raise
 
 
 def _record_agent_received_ticket(

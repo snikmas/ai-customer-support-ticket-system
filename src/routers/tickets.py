@@ -120,6 +120,14 @@ def assign_ticket(ticket_id: str, assign_ticket_req: models.AssignTicketRequest,
     return {'data': data}
 
 
+@router.post("/{ticket_id}/start-work", status_code=200)
+def start_ticket_work(
+    ticket_id: str,
+    requester: models.User = Depends(get_current_user),
+):
+    return {"data": s_tickets.start_ticket_work(ticket_id, requester)}
+
+
 @router.get("/{ticket_id}/comments", status_code=200)
 def get_ticket_comments(
             ticket_id: str, 

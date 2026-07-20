@@ -13,6 +13,7 @@ from src.exceptions.domain import (
     TicketAlreadyAssignedError,
     TicketDeletedError,
     TicketNotFoundError,
+    TicketStartWorkConflictError,
     TicketStatusConflictError,
     UserNotFoundError,
 )
@@ -179,6 +180,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     # ================= ACCESS PROCCESS ===============================
     
     requested_fields = set(updated_info.keys())
+    status_was_requested = "status" in requested_fields
 
     if requester.role == constants.Role.USER:
         if ticket.creator_user_id != requester.id:
@@ -220,8 +222,30 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         if agent.role is not constants.Role.AGENT:
             raise InvalidAssigneeError("assignee_must_be_agent")
 
+        # The generic manager PATCH is also the current transfer/reassignment
+        # path. Receiving an assignment means waiting in OPEN; starting the
+        # work is a separate action owned by the assigned agent.
+        if (
+            status_was_requested
+            and updated_info["status"] != constants.Status.OPEN
+        ):
+            raise TicketStatusConflictError(
+                "assignment_requires_open_status"
+            )
+        updated_info["status"] = constants.Status.OPEN
+        audit_new_info["status"] = constants.Status.OPEN.value
 
-    if "status" in requested_fields:
+    if (
+        "assigned_agent_id" not in requested_fields
+        and status_was_requested
+    ):
+        if (
+            ticket.status == constants.Status.OPEN
+            and updated_info["status"] == constants.Status.IN_PROGRESS
+        ):
+            raise TicketStartWorkConflictError(
+                "use_start_work_endpoint"
+            )
         if constants.is_valid_status_transition(ticket.status, updated_info['status']) is False:
             raise TicketStatusConflictError()
         
@@ -403,8 +427,14 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
         entity_id=ticket.id,
         actor_user_id=requester.id,
         event_type=constants.EventType.TICKET_CLAIMED,
-        old_value=json.dumps({"ticket_status": constants.Status.NEW.value}),
-        new_value=json.dumps({"ticket_status": constants.Status.IN_PROGRESS.value}),
+        old_value=constants._audit_json({
+            "status": constants.Status.NEW,
+            "assigned_agent_id": None,
+        }),
+        new_value=constants._audit_json({
+            "status": constants.Status.OPEN,
+            "assigned_agent_id": requester.id,
+        }),
         metadata=None,
         created_at=datetime.now(timezone.utc)
     )
@@ -446,8 +476,14 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
        entity_id=ticket.id,
        actor_user_id=requester.id,
        event_type=constants.EventType.TICKET_ASSIGNED,
-       old_value=json.dumps({"ticket.status": constants.Status.NEW.value, "assigned_agent_id": None}),
-       new_value=json.dumps({"ticket.status": constants.Status.IN_PROGRESS.value, "assigned_agent_id": agent_id}),
+       old_value=constants._audit_json({
+           "status": ticket.status,
+           "assigned_agent_id": ticket.assigned_agent_id,
+       }),
+       new_value=constants._audit_json({
+           "status": constants.Status.OPEN,
+           "assigned_agent_id": agent_id,
+       }),
        metadata=None,
        created_at=datetime.now(timezone.utc)
     )   
@@ -462,6 +498,37 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
     delete_cached_ticket(ticket_id)
 
     return _to_api_ticket(res)
+
+
+def start_ticket_work(
+    ticket_id: str,
+    requester: api_models.User,
+) -> api_models.Ticket:
+    if requester.role != constants.Role.AGENT:
+        raise AuthorizationError("only_assigned_agent_can_start_work")
+
+    result = operations.start_ticket_work(ticket_id, requester.id)
+    match result.outcome:
+        case constants.StartWorkOutcome.STARTED:
+            if result.ticket is None:
+                raise InternalOperationError("start_work_missing_ticket")
+        case constants.StartWorkOutcome.TICKET_NOT_FOUND:
+            raise TicketNotFoundError()
+        case constants.StartWorkOutcome.TICKET_DELETED:
+            raise TicketDeletedError()
+        case constants.StartWorkOutcome.ASSIGNED_TO_ANOTHER_AGENT:
+            raise AuthorizationError("ticket_assigned_to_another_agent")
+        case constants.StartWorkOutcome.TICKET_UNASSIGNED:
+            raise TicketStartWorkConflictError("ticket_is_unassigned")
+        case constants.StartWorkOutcome.TICKET_ALREADY_STARTED:
+            raise TicketStartWorkConflictError("ticket_is_already_started")
+        case constants.StartWorkOutcome.TICKET_NOT_OPEN:
+            raise TicketStartWorkConflictError("ticket_is_not_open")
+        case _:
+            raise InternalOperationError("unknown_start_work_outcome")
+
+    delete_cached_ticket(ticket_id)
+    return _to_api_ticket(result.ticket)
 
 
 def analysis_job(ticket_id: str, requester: api_models.User) -> api_models.JobResponse | None:

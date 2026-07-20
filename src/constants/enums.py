@@ -151,6 +151,16 @@ class TicketRoutingOutcome(str, Enum):
     TICKET_NOT_ROUTABLE = "ticket_not_routable"
 
 
+class StartWorkOutcome(str, Enum):
+    STARTED = "started"
+    TICKET_NOT_FOUND = "ticket_not_found"
+    TICKET_DELETED = "ticket_deleted"
+    TICKET_UNASSIGNED = "ticket_unassigned"
+    ASSIGNED_TO_ANOTHER_AGENT = "assigned_to_another_agent"
+    TICKET_ALREADY_STARTED = "ticket_already_started"
+    TICKET_NOT_OPEN = "ticket_not_open"
+
+
 class AnalysisStatus(str, Enum):
     PENDING = 'pending'
     RUNNING = 'running'

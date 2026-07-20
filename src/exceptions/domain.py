@@ -132,6 +132,11 @@ class TicketStatusConflictError(ConflictError):
     message = "Ticket status does not allow this operation"
 
 
+class TicketStartWorkConflictError(ConflictError):
+    code = "ticket_start_work_conflict"
+    message = "Ticket cannot be started from its current state"
+
+
 class InvalidAssigneeError(BadRequestError):
     status_code = 400  # HTTP 400: chosen assignee is missing or not an agent
     code = "invalid_assignee"
