@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from sqlalchemy.orm import Session
 from .engine import engine
 from .models import AgentProfile, Ticket, User, RefreshSession, UserStatus, Event, Comment, AnalysisResult
@@ -5,12 +6,17 @@ from sqlalchemy import Row, func, select, delete, update
 from datetime import datetime, timezone
 from src.constants import (
     AvailabilityStatus,
+    EntityType,
+    EventType,
     Role,
     Status,
+    TicketRoutingOutcome,
     DEFAULT_SORT_ORDER,
     DEFAULT_PAGE_LIMIT,
     DEFAULT_SORT_BY,
+    _audit_json,
     apply_sort_order,
+    generate_id,
     Priority,
 )
 from src.exceptions.domain import AgentHasActiveTicketsError, AgentProfileNotFoundError
@@ -23,6 +29,14 @@ ACTIVE_TICKET_STATUSES = (
     Status.ON_HOLD,
     Status.REOPENED,
 )
+
+
+@dataclass(frozen=True)
+class TicketRoutingResult:
+    outcome: TicketRoutingOutcome
+    ticket_id: str
+    assigned_agent_id: str | None = None
+
 
 # ==============================================================
 # ======================= SYSTEM ===============================
@@ -200,10 +214,12 @@ def count_active_assigned_tickets(agent_user_id: str) -> int:
         return _count_active_assigned_tickets(session, agent_user_id)
 
 
-def get_least_loaded_eligible_agent() -> User | None:
+def _get_least_loaded_eligible_agent(
+    session: Session,
+    *,
+    lock_for_update: bool = False,
+) -> User | None:
     #Department, skill, tag, and performance ranking deliberately do not belong in this first routing query.
-
-
     active_ticket_count = (
         select(func.count(Ticket.id))
         .where(
@@ -231,8 +247,16 @@ def get_least_loaded_eligible_agent() -> User | None:
         )
         .limit(1)
     )
+
+    if lock_for_update:
+        statement = statement.with_for_update()
+
+    return session.scalar(statement)
+
+
+def get_least_loaded_eligible_agent() -> User | None:
     with Session(engine) as session:
-        return session.scalar(statement)
+        return _get_least_loaded_eligible_agent(session)
 
 
 def update_agent_profile(
@@ -532,6 +556,88 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
 
         session.refresh(ticket)
         return ticket
+
+
+def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
+ 
+    with Session(engine) as session:
+        try:
+            # SQLite ignores SELECT ... FOR UPDATE. BEGIN IMMEDIATE makes
+            # competing routing writers wait before either one reads the
+            # ticket. Databases with row-lock support use FOR UPDATE below.
+            if session.get_bind().dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            else:
+                session.begin()
+
+            ticket = session.scalar(
+                select(Ticket)
+                .where(Ticket.id == ticket_id)
+                .with_for_update()
+            )
+            if (
+                ticket is None
+                or ticket.deleted_at is not None
+                or ticket.status != Status.NEW
+                or ticket.assigned_agent_id is not None
+            ):
+                session.commit()
+                return TicketRoutingResult(
+                    outcome=TicketRoutingOutcome.TICKET_NOT_ROUTABLE,
+                    ticket_id=ticket_id,
+                )
+
+            agent = _get_least_loaded_eligible_agent(
+                session,
+                lock_for_update=True,
+            )
+            if agent is None:
+                session.commit()
+                return TicketRoutingResult(
+                    outcome=TicketRoutingOutcome.NO_ELIGIBLE_AGENT,
+                    ticket_id=ticket_id,
+                )
+
+            now = datetime.now(timezone.utc)
+            ticket.assigned_agent_id = agent.id
+            ticket.status = Status.OPEN
+            ticket.updated_at = now
+            _record_agent_received_ticket(session, agent.id, now)
+            session.add(
+                Event(
+                    id=generate_id(),
+                    entity_type=EntityType.TICKET,
+                    entity_id=ticket.id,
+                    # The ticket creator initiated the workflow. Metadata makes
+                    # clear that the assignment itself was performed by routing.
+                    actor_user_id=ticket.creator_user_id,
+                    event_type=EventType.TICKET_ASSIGNED,
+                    old_value=_audit_json(
+                        {
+                            "status": Status.NEW,
+                            "assigned_agent_id": None,
+                        }
+                    ),
+                    new_value=_audit_json(
+                        {
+                            "status": Status.OPEN,
+                            "assigned_agent_id": agent.id,
+                        }
+                    ),
+                    metadata_="source=automatic_router",
+                    created_at=now,
+                )
+            )
+            session.commit()
+            return TicketRoutingResult(
+                outcome=TicketRoutingOutcome.ASSIGNED,
+                ticket_id=ticket.id,
+                assigned_agent_id=agent.id,
+            )
+        except Exception:
+            session.rollback()
+            raise
+
 
 def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:

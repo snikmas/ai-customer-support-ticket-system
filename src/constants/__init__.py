@@ -11,6 +11,7 @@ from .enums import (
     Source,
     Status,
     Tag,
+    TicketRoutingOutcome,
     UserStatus,
     Visibility,
     JobStatus

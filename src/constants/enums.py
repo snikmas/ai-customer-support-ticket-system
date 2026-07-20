@@ -144,6 +144,13 @@ class JobStatus(str, Enum):
     READY_TO_ENQUEUE = 'ready_to_enqueue'
     UNKNOWN = 'unknown'
 
+
+class TicketRoutingOutcome(str, Enum):
+    ASSIGNED = "assigned"
+    NO_ELIGIBLE_AGENT = "no_eligible_agent"
+    TICKET_NOT_ROUTABLE = "ticket_not_routable"
+
+
 class AnalysisStatus(str, Enum):
     PENDING = 'pending'
     RUNNING = 'running'
