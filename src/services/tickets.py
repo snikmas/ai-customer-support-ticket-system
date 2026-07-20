@@ -22,6 +22,7 @@ from src.jobs import (
     get_job as jobs_get_job,
     start_ticket_inspection_job,
 )
+from src.services.routing import dispatch_waiting_tickets_after_capacity_event
 from src.constants import logger
 import json
 
@@ -159,6 +160,9 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     if ticket.deleted_at is not None:
         raise TicketDeletedError()
 
+    old_status = ticket.status
+    old_assigned_agent_id = ticket.assigned_agent_id
+
     # ================= STANDARTIZATION PROCESS ========================
     #for audit logs, json friendly
     audit_new_info = updated_info.model_dump(exclude_unset=True, mode="json")
@@ -257,6 +261,15 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
 
     delete_cached_ticket(ticket.id)
 
+    if (
+        old_assigned_agent_id is not None
+        and old_status in operations.ACTIVE_TICKET_STATUSES
+        and ticket.status not in operations.ACTIVE_TICKET_STATUSES
+    ):
+        dispatch_waiting_tickets_after_capacity_event(
+            "ticket_left_active_workload",
+            ticket.id,
+        )
 
     return _to_api_ticket(ticket)
 
@@ -297,6 +310,14 @@ def delete_ticket(id: str, requester: api_models.User, batch_info: str | None = 
         raise InternalOperationError("ticket_delete_failed")
 
     delete_cached_ticket(id)
+    if (
+        ticket.assigned_agent_id is not None
+        and ticket.status in operations.ACTIVE_TICKET_STATUSES
+    ):
+        dispatch_waiting_tickets_after_capacity_event(
+            "active_ticket_deleted",
+            ticket.id,
+        )
     
 
 def delete_all_tickets(requester: api_models.User) -> int:
@@ -340,9 +361,20 @@ def delete_all_tickets(requester: api_models.User) -> int:
                 )
                 events.append(event_ticket)
 
+    released_active_capacity = any(
+        ticket.deleted_at is None
+        and ticket.assigned_agent_id is not None
+        and ticket.status in operations.ACTIVE_TICKET_STATUSES
+        for ticket in all_tickets
+    )
     deleted_count = operations.delete_all_tickets(events)
     for ticket in all_tickets:
         delete_cached_ticket(ticket.id)
+    if released_active_capacity:
+        dispatch_waiting_tickets_after_capacity_event(
+            "active_tickets_bulk_deleted",
+            event.batch_id,
+        )
     return deleted_count
 
 

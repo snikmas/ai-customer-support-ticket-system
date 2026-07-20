@@ -21,6 +21,7 @@ from .operations import (
     get_refresh_session_by_id,
     get_ticket,
     get_tickets,
+    get_waiting_ticket_ids,
     get_user,
     get_user_by_email,
     get_user_by_nickname,

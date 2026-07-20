@@ -235,6 +235,24 @@ so it has priority:
 myvenv/bin/rq worker ticket_routing ticket_jobs --url "$REDIS_URL"
 ```
 
+Waiting-ticket reconciliation uses RQ's cron scheduler. Configure the bounded
+page size and run interval in `.env` when the defaults are not suitable:
+
+```text
+ROUTING_RECONCILIATION_BATCH_SIZE=100
+ROUTING_RECONCILIATION_INTERVAL_SECONDS=60
+```
+
+Start the scheduler in a separate process:
+
+```bash
+myvenv/bin/rq cron src/jobs/cron.py --url "$REDIS_URL"
+```
+
+Each scheduled reconciliation reads at most one configured page of
+`NEW`/unassigned tickets and enqueues independent jobs on `ticket_routing`, so a
+routing worker must also be running.
+
 Routers receive HTTP requests and convert errors to HTTP responses.
 Dependencies identify the current user.
 Services decide whether an action is allowed and what business rule should run.

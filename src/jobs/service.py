@@ -2,6 +2,8 @@
 from rq import Retry
 from rq.exceptions import DuplicateJobError
 
+from src.core import ROUTING_RECONCILIATION_BATCH_SIZE
+from src.db import get_waiting_ticket_ids
 from src.jobs.queue import get_ticket_jobs_queue, get_ticket_routing_queue
 from src.jobs.tasks import inspect_ticket, route_ticket
 from src.models import JobResponse, JobStatusResponse, User, Job 
@@ -77,6 +79,45 @@ def enqueue_ticket_routing_job(ticket_id: str):
         extra={"job_id": job.id, "ticket_id": ticket_id},
     )
     return job
+
+
+def route_waiting_tickets(
+    batch_size: int = ROUTING_RECONCILIATION_BATCH_SIZE,
+) -> dict:
+    """Enqueue one bounded oldest-first page of waiting tickets.
+
+    Each enqueue is independent. A Redis failure for one ticket is reported and
+    does not roll back the database read or prevent later tickets in the same
+    page from being attempted.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero")
+
+    ticket_ids = get_waiting_ticket_ids(batch_size)
+    enqueued_ticket_ids = []
+    failed_ticket_ids = []
+
+    for ticket_id in ticket_ids:
+        try:
+            enqueue_ticket_routing_job(ticket_id)
+        except Exception:
+            failed_ticket_ids.append(ticket_id)
+            logger.exception(
+                "Waiting ticket routing enqueue failed",
+                extra={"ticket_id": ticket_id},
+            )
+        else:
+            enqueued_ticket_ids.append(ticket_id)
+
+    result = {
+        "selected_count": len(ticket_ids),
+        "enqueued_count": len(enqueued_ticket_ids),
+        "failed_count": len(failed_ticket_ids),
+        "enqueued_ticket_ids": enqueued_ticket_ids,
+        "failed_ticket_ids": failed_ticket_ids,
+    }
+    logger.info("Waiting ticket routing dispatch completed", extra=result)
+    return result
 
 
 def _get_ticket_for_requester(ticket_id: str, requester: User):

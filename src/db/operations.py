@@ -471,6 +471,30 @@ def get_tickets(
 
         return session.scalars(query).all()
 
+
+def get_waiting_ticket_ids(limit: int) -> list[str]:
+    """Return one bounded, deterministic reconciliation page.
+
+    The session is closed before callers enqueue work, so Redis operations never
+    extend the lifetime of this database read transaction.
+    """
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+
+    statement = (
+        select(Ticket.id)
+        .where(
+            Ticket.deleted_at.is_(None),
+            Ticket.status == Status.NEW,
+            Ticket.assigned_agent_id.is_(None),
+        )
+        .order_by(Ticket.created_at.asc(), Ticket.id.asc())
+        .limit(limit)
+    )
+    with Session(engine) as session:
+        return list(session.scalars(statement).all())
+
+
 def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():

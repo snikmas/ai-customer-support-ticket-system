@@ -13,6 +13,7 @@ from src.exceptions.domain import (
     UserAlreadyExistsError,
     UserNotFoundError,
 )
+from src.services.routing import dispatch_waiting_tickets_after_capacity_event
 from sqlalchemy.exc import IntegrityError
 import json
 
@@ -48,12 +49,10 @@ def _agent_profile_response(
     profile: db_models.AgentProfile,
 ) -> api_models.AgentProfileResponse:
     current_workload = operations.count_active_assigned_tickets(agent.id)
-    can_receive_new_tickets = (
-        agent.role is constants.Role.AGENT
-        and agent.user_status is constants.UserStatus.ACTIVE
-        and agent.deleted_at is None
-        and profile.availability_status is constants.AvailabilityStatus.AVAILABLE
-        and current_workload < profile.max_active_tickets
+    can_receive_new_tickets = _can_agent_receive_new_tickets(
+        agent,
+        profile,
+        current_workload,
     )
     return api_models.AgentProfileResponse(
         user_id=profile.user_id,
@@ -71,6 +70,20 @@ def _agent_profile_response(
     )
 
 
+def _can_agent_receive_new_tickets(
+    agent: db_models.User,
+    profile: db_models.AgentProfile,
+    current_workload: int,
+) -> bool:
+    return (
+        agent.role is constants.Role.AGENT
+        and agent.user_status is constants.UserStatus.ACTIVE
+        and agent.deleted_at is None
+        and profile.availability_status is constants.AvailabilityStatus.AVAILABLE
+        and current_workload < profile.max_active_tickets
+    )
+
+
 def update_agent_availability(
     agent_id: str,
     update_data: api_models.AgentAvailabilityUpdate,
@@ -80,6 +93,13 @@ def update_agent_availability(
     if stored_requester.id != agent_id and stored_requester.role not in PROFILE_MANAGER_ROLES:
         raise AuthorizationError()
 
+    old_availability_status = profile.availability_status
+    current_workload = operations.count_active_assigned_tickets(agent.id)
+    was_eligible = _can_agent_receive_new_tickets(
+        agent,
+        profile,
+        current_workload,
+    )
     now = datetime.now(timezone.utc)
     new_info = {
         "availability_status": update_data.availability_status,
@@ -117,7 +137,20 @@ def update_agent_availability(
     updated_profile = operations.update_agent_profile(agent_id, new_info, event)
     if updated_profile is None:
         raise AgentProfileNotFoundError()
-    return _agent_profile_response(agent, updated_profile)
+    response = _agent_profile_response(agent, updated_profile)
+    became_available = (
+        old_availability_status is not constants.AvailabilityStatus.AVAILABLE
+        and updated_profile.availability_status
+        is constants.AvailabilityStatus.AVAILABLE
+    )
+    if became_available or (
+        not was_eligible and response.can_receive_new_tickets
+    ):
+        dispatch_waiting_tickets_after_capacity_event(
+            "agent_became_available",
+            agent_id,
+        )
+    return response
 
 
 def update_agent_profile_settings(
@@ -129,6 +162,13 @@ def update_agent_profile_settings(
     if stored_requester.role not in PROFILE_MANAGER_ROLES:
         raise AuthorizationError()
 
+    current_workload = operations.count_active_assigned_tickets(agent.id)
+    was_eligible = _can_agent_receive_new_tickets(
+        agent,
+        profile,
+        current_workload,
+    )
+    old_max_active_tickets = profile.max_active_tickets
     new_info = update_data.model_dump(exclude_unset=True)
     if not new_info:
         raise EmptyUpdateError()
@@ -153,7 +193,18 @@ def update_agent_profile_settings(
     updated_profile = operations.update_agent_profile(agent_id, new_info, event)
     if updated_profile is None:
         raise AgentProfileNotFoundError()
-    return _agent_profile_response(agent, updated_profile)
+    response = _agent_profile_response(agent, updated_profile)
+    capacity_increased = (
+        updated_profile.max_active_tickets > old_max_active_tickets
+    )
+    if capacity_increased or (
+        not was_eligible and response.can_receive_new_tickets
+    ):
+        dispatch_waiting_tickets_after_capacity_event(
+            "agent_capacity_increased",
+            agent_id,
+        )
+    return response
 
 
 
@@ -268,6 +319,23 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
     updated_info = updated_info.model_dump(exclude_unset=True)
     if not updated_info:
         raise EmptyUpdateError()
+    routing_eligibility_may_change = bool(
+        {"role", "user_status"} & updated_info.keys()
+    )
+    old_role = user.role
+    old_profile = (
+        operations.get_agent_profile(user.id)
+        if routing_eligibility_may_change
+        else None
+    )
+    was_eligible = (
+        old_profile is not None
+        and _can_agent_receive_new_tickets(
+            user,
+            old_profile,
+            operations.count_active_assigned_tickets(user.id),
+        )
+    )
 
     if any(key in updated_info for key in ['updated_at', 'created_at']): return None #no one can change it
     if requester.id != updated_info_id:
@@ -305,6 +373,26 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
     user = operations.update_user(updated_info_id, updated_info, event)
     if user is None:
         raise InternalOperationError("user_update_failed")
+
+    if routing_eligibility_may_change:
+        updated_profile = operations.get_agent_profile(user.id)
+        is_eligible = (
+            updated_profile is not None
+            and _can_agent_receive_new_tickets(
+                user,
+                updated_profile,
+                operations.count_active_assigned_tickets(user.id),
+            )
+        )
+        is_user_to_agent_promotion = (
+            old_role is constants.Role.USER
+            and user.role is constants.Role.AGENT
+        )
+        if not was_eligible and is_eligible and not is_user_to_agent_promotion:
+            dispatch_waiting_tickets_after_capacity_event(
+                "agent_became_eligible",
+                user.id,
+            )
 
     return user
 

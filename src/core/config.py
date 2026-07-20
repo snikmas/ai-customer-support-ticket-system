@@ -19,6 +19,12 @@ REDIS_URL = os.getenv("REDIS_URL")
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
+ROUTING_RECONCILIATION_BATCH_SIZE = int(
+    os.getenv("ROUTING_RECONCILIATION_BATCH_SIZE", "100")
+)
+ROUTING_RECONCILIATION_INTERVAL_SECONDS = int(
+    os.getenv("ROUTING_RECONCILIATION_INTERVAL_SECONDS", "60")
+)
 LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = 900
 
@@ -38,4 +44,16 @@ def validate_redis_settings() -> None:
         )
 
 
+def validate_routing_reconciliation_settings() -> None:
+    if ROUTING_RECONCILIATION_BATCH_SIZE <= 0:
+        raise RuntimeError(
+            "ROUTING_RECONCILIATION_BATCH_SIZE must be greater than zero"
+        )
+    if ROUTING_RECONCILIATION_INTERVAL_SECONDS <= 0:
+        raise RuntimeError(
+            "ROUTING_RECONCILIATION_INTERVAL_SECONDS must be greater than zero"
+        )
+
+
 validate_redis_settings()
+validate_routing_reconciliation_settings()
