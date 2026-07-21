@@ -12,36 +12,44 @@ system yet.
 
 ## Current Status
 
-Implemented or started:
+Implemented:
 
-- FastAPI application with router-based structure
-- SQLAlchemy models and local SQLite database setup
-- User registration, lookup, update, listing, and soft deletion
-- Explicit environment-driven command for initial `SUPER_ADMIN` bootstrap
-- Password hashing for user creation and password updates
-- JWT access-token login with `Authorization: Bearer <access_token>`
-- Refresh-token session model and token rotation flow
-- Logout endpoint that revokes a refresh token
-- Role-based permission checks in the service layer
-- Ticket creation, lookup, update, assignment, claiming, listing, and soft deletion
-- Ticket comments with create, read, update, delete, visibility, source, and soft-delete fields
-- Pagination and sorting support on user, ticket, and comment listing routes
-- Basic custom domain exception handling for some comment flows
-- Redis helper modules started for future caching/rate-limiting work
-- RQ background-job structure started with a temporary ticket-analysis job name
-- Job API endpoints started for creating an analysis job and checking job status
-- Pytest test modules for users, auth, tickets, and comments
+- FastAPI routers, service-layer business rules, Pydantic schemas, and SQLAlchemy
+  persistence
+- User registration, lookup, update, listing, soft deletion, password hashing,
+  and explicit initial `SUPER_ADMIN` bootstrap
+- JWT access tokens, refresh-session rotation, logout, and Bearer authentication
+- Role-based authorization and agent role-transition safeguards
+- Ticket CRUD, filtering, pagination, comments, assignment, claiming, and
+  explicit start-work behavior
+- Agent profiles with availability, capacity, and eligibility rules
+- Deterministic least-loaded routing using workload, `last_assigned_at`, and
+  user ID
+- Atomic and idempotent automatic assignment with concurrency protection
+- A dedicated RQ routing queue and periodic reconciliation of waiting tickets
+- Ticket-stage SLA deadlines stored in `due_at`
+- Redis login rate limiting and ticket-detail caching
+- Audit-event writes for important mutations
+- Automated tests for the main backend, cache, routing, reconciliation,
+  start-work, concurrency, and SLA behavior
+- A verified live development flow using FastAPI, Redis, an RQ worker, and RQ
+  cron for automatic routing
 
-Not finished yet:
+In progress or not finished:
 
-- Consistent error response shape across all routers
-- Complete ticket history/event log
-- Stronger ticket workflow validation
-- Full Redis integration for caching and rate limiting
-- Running and verifying an RQ worker process end-to-end
-- A complete, non-AI background-job workflow
-- Docker / Docker Compose setup
-- Small frontend demo
+- Some routers still translate raw `PermissionError` and `ValueError` instead of
+  using the shared domain exceptions
+- The application still initializes the database at import time and does not
+  have meaningful health endpoints
+- Ticket history is recorded internally, but a complete permission-aware
+  history API is not implemented
+- The placeholder ticket-inspection job has incomplete persistent-result logic
+- LLM ticket summarization is not implemented
+- Docker / Docker Compose, a frontend demo, and final portfolio documentation
+  are not implemented
+
+The detailed checked roadmap is in
+[`notes/template.txt`](notes/template.txt).
 
 ## Project Idea
 
@@ -52,10 +60,18 @@ questions, API errors, model-output problems, or retrieval/RAG problems.
 Support agents and admins can:
 
 - view and filter tickets
-- claim or assign tickets
+- receive automatically routed tickets or claim/assign tickets manually
+- control agent availability and routing capacity
+- explicitly start work on an assigned ticket
 - update status, priority, tags, and assignee fields
 - add comments to the ticket conversation
 - manage users according to role permissions
+
+The first routing policy intentionally stays simple. A new ticket is committed
+before an RQ routing job is enqueued. An eligible agent must be active,
+available, below capacity, and have the `AGENT` role. The database chooses the
+least-loaded agent, then the agent with the oldest assignment timestamp, then
+the lowest user ID for a deterministic tie-break.
 
 ## Future Extension: AI Assistance
 
@@ -108,6 +124,11 @@ This project is designed to practice and explain:
 - error handling
 - testing backend behavior
 - environment-based configuration
+- cache TTL, invalidation, stale-data risk, and outage policy
+- background queues, workers, retries, and reconciliation
+- idempotency and concurrency-safe database updates
+- application lifecycle and dependency health
+- SLA deadline calculation
 
 ## API Overview
 
@@ -119,6 +140,8 @@ The current API is organized around these route groups:
 - `GET /users/` - list users with pagination and sorting
 - `GET /users/{id}` - get one user
 - `PATCH /users/{updated_user_id}` - update user fields
+- `PATCH /users/{agent_id}/availability` - update an agent's own availability
+- `PATCH /users/{agent_id}/agent-profile` - manager-level profile/capacity update
 - `DELETE /users/{id}` - soft-delete one user
 - `DELETE /users/` - admin-level bulk delete behavior
 
@@ -147,7 +170,13 @@ database, and blocks deleted or banned users.
 - `DELETE /tickets/` - admin-level bulk delete behavior
 - `POST /tickets/{ticket_id}/claim` - claim an unassigned ticket
 - `POST /tickets/{ticket_id}/assign` - assign a ticket to an agent
+- `POST /tickets/{ticket_id}/start-work` - move the assigned agent's ticket from
+  `OPEN` to `IN_PROGRESS`
 - `POST /tickets/{ticket_id}/analysis-jobs` - enqueue a background analysis job
+
+Creating a ticket also attempts to enqueue automatic routing after the database
+commit. If Redis or enqueueing fails, the ticket remains durable as
+`NEW`/unassigned and periodic reconciliation can retry it later.
 
 ### Ticket Comments
 
@@ -160,16 +189,77 @@ database, and blocks deleted or banned users.
 ### Jobs
 
 - `GET /jobs/{job_id}` - check the status of a background job
+- `GET /jobs/` - admin-level job listing
 
-The current job flow is intentionally minimal:
+There are two different job flows:
 
 ```text
-API request -> RQ queue in Redis -> worker task -> temporary job status
+Ticket creation -> ticket_routing queue -> route_ticket() -> database assignment
+
+Analysis request -> ticket_jobs queue -> inspect_ticket() -> temporary RQ result
 ```
 
-The current job uses placeholder output to verify RQ mechanics. It is not AI
-assistance. Any future AI result should be stored in the database, not only in
-Redis.
+Automatic routing is implemented and database-owned: the queue delivers work,
+but the database transaction decides whether assignment is still valid.
+
+The analysis job is still a placeholder, not AI assistance. Its persistent
+`AnalysisResult` path and read endpoint are incomplete and should not yet be
+treated as a finished feature.
+
+## Error Response Shape
+
+Application, HTTP, and request-validation errors are returned in a shared
+envelope:
+
+```json
+{
+  "error": {
+    "code": "ticket_not_found",
+    "message": "Ticket not found"
+  }
+}
+```
+
+Some older ticket and job routes still need to migrate from broad built-in
+exceptions to precise domain exceptions, so not every error code is final.
+
+## Architecture and Data Flow
+
+The synchronous request path is:
+
+```text
+HTTP request
+    -> FastAPI router
+    -> authentication dependency
+    -> service-layer permissions and business rules
+    -> SQLAlchemy database operation
+    -> response schema
+```
+
+Automatic routing crosses a process boundary:
+
+```text
+Create and commit NEW ticket
+    -> enqueue stable routing job in Redis
+    -> ticket_routing worker
+    -> one database transaction:
+         verify ticket is still routable
+         select eligible least-loaded agent
+         assign ticket and set OPEN
+         update last_assigned_at and due_at
+         write audit event
+```
+
+If enqueueing fails, the committed ticket is not deleted or rolled back.
+RQ cron later finds bounded pages of waiting `NEW`/unassigned tickets and
+enqueues them again. Duplicate delivery is expected, so database idempotency and
+transactional locking remain the final correctness boundary.
+
+Ticket details use Redis as a short-lived cache, while SQL remains the source of
+truth. Reads fall back to SQL during cache failure, and successful mutations
+invalidate the ticket key. Login rate limiting has a different policy: Redis
+failure returns a service-unavailable error because the security check cannot be
+enforced safely.
 
 ## Repository Structure
 
@@ -191,29 +281,103 @@ keys/                   Local JWT key files
 
 ## Running Locally
 
-Use the existing local virtual environment:
+The current development stack needs four separate processes:
+
+```text
+Redis server
+FastAPI API
+RQ worker
+RQ cron scheduler
+```
+
+Create a `.env` file with local values. Do not commit real secrets:
+
+```dotenv
+DATABASE_URL=sqlite+pysqlite:///./tickets_system.db
+REDIS_ENABLED=true
+REDIS_URL=redis://localhost:6379/0
+JWT_ALGORITHM=RS256
+JWT_PRIVATE_KEY_PATH=keys/private.pem
+JWT_PUBLIC_KEY_PATH=keys/public.pem
+REFRESH_TOKEN_SECRET=replace-with-a-local-secret
+ROUTING_RECONCILIATION_BATCH_SIZE=100
+ROUTING_RECONCILIATION_INTERVAL_SECONDS=60
+```
+
+Start Redis and verify it responds:
+
+```bash
+redis-server
+redis-cli ping
+```
+
+Start the API:
 
 ```bash
 myvenv/bin/python -m uvicorn main:app --reload
 ```
 
+Start one worker for both queues. Queue order gives routing jobs priority:
+
+```bash
+myvenv/bin/rq worker ticket_routing ticket_jobs \
+  --url redis://localhost:6379/0
+```
+
+Start periodic waiting-ticket reconciliation:
+
+```bash
+myvenv/bin/rq cron src/jobs/cron.py \
+  --url redis://localhost:6379/0
+```
+
+Open the interactive API documentation:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
 By default, the application uses `tickets_system.db` in the repository root.
-For an isolated smoke check or another deployment environment, override it
-without changing source code:
+For an isolated smoke check, override it without editing source:
 
 ```bash
 DATABASE_URL=sqlite+pysqlite:////tmp/tickets-smoke.db \
   myvenv/bin/python -m uvicorn main:app
 ```
 
-Open the interactive API docs:
+The current application creates or upgrades its local schema while `main.py` is
+imported. Moving this work to an explicit migration/startup boundary is still a
+roadmap item.
 
-```text
-http://127.0.0.1:8000/docs
+### Initial superadmin
+
+The bootstrap command refuses to run after the database already contains a
+user. Provide the required `SUPERADMIN_*` environment values, then run:
+
+```bash
+myvenv/bin/python bootstrap_superadmin.py
 ```
 
-The app loads environment configuration from `.env`. The local database file is
-created automatically by the current startup code.
+### Tests
+
+Run tests through the project virtual environment so imports and dependencies
+match the application:
+
+```bash
+myvenv/bin/python -m pytest -q
+```
+
+For the automatic-routing slice:
+
+```bash
+myvenv/bin/python -m pytest -q \
+  src/tests/test_agent_profiles.py \
+  src/tests/test_ticket_routing.py \
+  src/tests/test_routing_jobs.py \
+  src/tests/test_routing_reconciliation.py \
+  src/tests/test_start_work.py \
+  src/tests/test_sla_deadlines.py
+```
 
 ## Learning Notes
 
@@ -234,14 +398,15 @@ short, user-visible workflow and should not wait behind slower ticket inspection
 or future LLM jobs on `ticket_jobs`. Start a routing worker with:
 
 ```bash
-myvenv/bin/rq worker ticket_routing --url "$REDIS_URL"
+myvenv/bin/rq worker ticket_routing --url redis://localhost:6379/0
 ```
 
 To let one local worker serve both queues while developing, list routing first
 so it has priority:
 
 ```bash
-myvenv/bin/rq worker ticket_routing ticket_jobs --url "$REDIS_URL"
+myvenv/bin/rq worker ticket_routing ticket_jobs \
+  --url redis://localhost:6379/0
 ```
 
 Waiting-ticket reconciliation uses RQ's cron scheduler. Configure the bounded
@@ -255,7 +420,7 @@ ROUTING_RECONCILIATION_INTERVAL_SECONDS=60
 Start the scheduler in a separate process:
 
 ```bash
-myvenv/bin/rq cron src/jobs/cron.py --url "$REDIS_URL"
+myvenv/bin/rq cron src/jobs/cron.py --url redis://localhost:6379/0
 ```
 
 Each scheduled reconciliation reads at most one configured page of
@@ -268,17 +433,20 @@ Services decide whether an action is allowed and what business rule should run.
 Database operations read and write SQLAlchemy models.
 
 In larger production systems, the same separation is common, but the project
-would usually add migrations, stronger observability, background queues,
-centralized error responses, stricter security controls, and deployment
-configuration.
+would usually add a real migration tool, structured observability, managed queue
+infrastructure, stricter security controls, health/readiness endpoints, and
+reproducible deployment configuration.
 
 ## Interview Summary
 
 This project demonstrates a backend system with real application logic:
 users, authentication, JWTs, refresh sessions, roles, database relationships,
-ticket workflows, comments, service-layer authorization, Redis, and background
-job processing. AI assistance is a future extension after this core project is
-complete.
+ticket workflows, comments, service-layer authorization, Redis caching and rate
+limiting, background jobs, automatic routing, reconciliation, concurrency
+control, and SLA deadlines. AI assistance remains a future extension after the
+core project is stable.
 
 It is useful for interview discussion because it shows both implemented backend
-behavior and clear next steps toward a more production-like system.
+behavior and honest next steps toward a more production-like system: lifecycle
+management, ticket-history APIs, durable analysis results, migrations,
+deployment, and observability.
