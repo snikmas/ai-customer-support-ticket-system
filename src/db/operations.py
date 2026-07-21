@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 from .engine import engine
 from .models import AgentProfile, Ticket, User, RefreshSession, UserStatus, Event, Comment, AnalysisResult
-from sqlalchemy import Row, func, select, delete, update
+from sqlalchemy import Row, and_, func, or_, select, delete, update
 from datetime import datetime, timezone
 from src.constants import (
     AvailabilityStatus,
@@ -971,6 +971,45 @@ def create_event(event: Event) -> bool:
             if event is None: return False
             session.add(_event_from_data(event))
     return True
+
+
+def get_ticket_history_events(
+    ticket_id: str,
+    limit: int,
+    offset: int,
+    comment_visibilities: tuple | None,
+) -> list[Event]:
+    """Return one chronological page of ticket and related comment events."""
+    ticket_event = and_(
+        Event.entity_type == EntityType.TICKET,
+        Event.entity_id == ticket_id,
+    )
+    comment_event = and_(
+        Event.entity_type == EntityType.COMMENT,
+        Comment.ticket_id == ticket_id,
+    )
+    if comment_visibilities is not None:
+        comment_event = and_(
+            comment_event,
+            Comment.visibility.in_(comment_visibilities),
+        )
+
+    statement = (
+        select(Event)
+        .outerjoin(
+            Comment,
+            and_(
+                Event.entity_type == EntityType.COMMENT,
+                Event.entity_id == Comment.id,
+            ),
+        )
+        .where(or_(ticket_event, comment_event))
+        .order_by(Event.created_at.asc(), Event.id.asc())
+        .offset(offset)
+        .limit(limit)
+    )
+    with Session(engine) as session:
+        return list(session.scalars(statement).all())
 
 
 # ================================================================

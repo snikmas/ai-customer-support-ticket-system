@@ -1,5 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, model_validator
+from typing import Any
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EntityType, EventType
 from .validation import EmailAddress, LoginPassword, Nickname, RefreshToken
 
@@ -49,5 +50,17 @@ class Event(BaseModel):
     old_value: str | None = None
     new_value: str
     batch_id: str | None = None
+    metadata: str | None = None
+    created_at: datetime
+
+
+class TicketHistoryEvent(BaseModel):
+    id: str
+    entity_type: EntityType
+    entity_id: str | None = None
+    actor_user_id: str | None = None
+    event_type: EventType
+    old_value: dict[str, Any] | None = None
+    new_value: dict[str, Any]
     metadata: str | None = None
     created_at: datetime

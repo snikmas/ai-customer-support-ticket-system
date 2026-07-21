@@ -53,26 +53,62 @@ ROLE_LEVELS = {
     Role.API: 5,            # trusted integration role, similair to admin depending on endpoint
 }
 
+TICKET_STATUS_TRANSITIONS = {
+    Status.NEW: frozenset({Status.OPEN}),
+    Status.OPEN: frozenset({Status.IN_PROGRESS}),
+    Status.IN_PROGRESS: frozenset({Status.PENDING, Status.ON_HOLD, Status.RESOLVED}),
+    Status.PENDING: frozenset({Status.IN_PROGRESS, Status.RESOLVED}),
+    Status.ON_HOLD: frozenset({Status.IN_PROGRESS}),
+    Status.RESOLVED: frozenset({Status.CLOSED, Status.IN_PROGRESS}),
+    Status.CLOSED: frozenset({Status.REOPENED}),
+    Status.REOPENED: frozenset({Status.IN_PROGRESS}),
+}
+
+# Assignment is an action-specific exception to the normal status graph. A
+# transfer sends active work back to OPEN for the receiving agent, but terminal
+# tickets must be reopened before they can be assigned again.
+TICKET_ASSIGNABLE_STATUSES = frozenset({
+    Status.NEW,
+    Status.OPEN,
+    Status.IN_PROGRESS,
+    Status.PENDING,
+    Status.ON_HOLD,
+    Status.REOPENED,
+})
+
+STAFF_TRANSITION_ROLES = frozenset({
+    Role.AGENT,
+    Role.MANAGER,
+    Role.ADMIN,
+    Role.SUPER_ADMIN,
+})
+
+TICKET_TRANSITION_ROLES = {
+    (old_status, new_status): STAFF_TRANSITION_ROLES
+    for old_status, next_statuses in TICKET_STATUS_TRANSITIONS.items()
+    for new_status in next_statuses
+}
+# Customers may accept a resolution or reopen their own closed ticket. The
+# service still checks ticket ownership; this mapping only answers the role
+# part of the rule.
+TICKET_TRANSITION_ROLES[(Status.RESOLVED, Status.CLOSED)] = (
+    STAFF_TRANSITION_ROLES | {Role.USER}
+)
+TICKET_TRANSITION_ROLES[(Status.CLOSED, Status.REOPENED)] = (
+    STAFF_TRANSITION_ROLES | {Role.USER}
+)
+
+
 def is_valid_status_transition(old_status: Status, new_status: Status) -> bool:
-    match(old_status):
-        case Status.NEW:
-            if new_status == Status.OPEN: return True
-        case Status.OPEN:
-            if new_status == Status.IN_PROGRESS: return True
-        case Status.IN_PROGRESS:
-            if new_status in [Status.PENDING, Status.ON_HOLD, Status.RESOLVED]: return True
-            return False
-        case Status.PENDING:
-            if new_status in [Status.IN_PROGRESS, Status.RESOLVED]: return True
-        case Status.ON_HOLD:
-            if new_status == Status.IN_PROGRESS: return True
-        case Status.RESOLVED:
-            if new_status in [Status.CLOSED, Status.IN_PROGRESS]: return True
-        case Status.CLOSED:
-            if new_status == Status.REOPENED: return True
-        case Status.REOPENED:
-            if new_status == Status.IN_PROGRESS: return True
-    return False
+    return new_status in TICKET_STATUS_TRANSITIONS.get(old_status, frozenset())
+
+
+def can_role_transition_ticket(
+    role: Role,
+    old_status: Status,
+    new_status: Status,
+) -> bool:
+    return role in TICKET_TRANSITION_ROLES.get((old_status, new_status), frozenset())
 
 
 def serialize_tags(tags: list[Tag]) -> str:

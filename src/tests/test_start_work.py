@@ -287,17 +287,17 @@ def test_start_work_service_invalidates_cache_only_after_success(
         (
             constants.StartWorkOutcome.TICKET_UNASSIGNED,
             TicketStartWorkConflictError,
-            "ticket_is_unassigned",
+            "ticket_status_conflict",
         ),
         (
             constants.StartWorkOutcome.TICKET_ALREADY_STARTED,
             TicketStartWorkConflictError,
-            "ticket_is_already_started",
+            "ticket_status_conflict",
         ),
         (
             constants.StartWorkOutcome.TICKET_NOT_OPEN,
             TicketStartWorkConflictError,
-            "ticket_is_not_open",
+            "ticket_status_conflict",
         ),
         (
             constants.StartWorkOutcome.ASSIGNED_TO_ANOTHER_AGENT,
@@ -385,7 +385,7 @@ def test_start_work_endpoint_uses_authenticated_requester(
         (
             TicketStartWorkConflictError("ticket_is_already_started"),
             409,
-            "ticket_start_work_conflict",
+            "ticket_status_conflict",
         ),
         (
             AuthorizationError("ticket_assigned_to_another_agent"),
@@ -587,4 +587,4 @@ def test_generic_patch_cannot_replace_start_work_endpoint(
             requester,
         )
 
-    assert exc_info.value.code == "use_start_work_endpoint"
+    assert exc_info.value.code == "ticket_status_conflict"

@@ -82,6 +82,23 @@ def start_ticket_work(
     return {"data": s_tickets.start_ticket_work(ticket_id, requester)}
 
 
+@router.get("/{ticket_id}/history", status_code=200)
+def get_ticket_history(
+    ticket_id: str,
+    requester: models.User = Depends(get_current_user),
+    limit: int = Query(constants.DEFAULT_PAGE_LIMIT, ge=1, le=constants.MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+):
+    return {
+        "data": s_tickets.get_ticket_history(
+            ticket_id,
+            requester,
+            limit,
+            offset,
+        )
+    }
+
+
 @router.get("/{ticket_id}/comments", status_code=200)
 def get_ticket_comments(
             ticket_id: str, 

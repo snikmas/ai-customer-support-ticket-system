@@ -19,6 +19,7 @@ from .users import (
 from .session import (
     CreatedRefreshSession,
     Event,
+    TicketHistoryEvent,
     LoginRequest,
     LogoutRequest,
     RefreshSession,

@@ -146,9 +146,12 @@ class TicketStatusConflictError(ConflictError):
     message = "Ticket status does not allow this operation"
 
 
-class TicketStartWorkConflictError(ConflictError):
-    code = "ticket_start_work_conflict"
-    message = "Ticket cannot be started from its current state"
+class TicketStartWorkConflictError(TicketStatusConflictError):
+    """Backward-compatible name for a status-transition conflict.
+
+    All invalid ticket transitions intentionally share the same public error
+    code so API clients do not need endpoint-specific conflict handling.
+    """
 
 
 class InvalidAssigneeError(BadRequestError):

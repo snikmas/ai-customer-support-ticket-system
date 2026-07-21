@@ -159,6 +159,91 @@ def get_all_tickets(
     page = visible_tickets[offset:offset + limit]
     return [_to_api_ticket(ticket) for ticket in page]
 
+
+_CUSTOMER_HISTORY_FIELDS = frozenset({
+    "status",
+    "tags",
+    "body",
+    "visibility",
+    "deleted_at",
+})
+
+
+def _history_json(raw_value: str | None) -> dict | None:
+    if raw_value is None:
+        return None
+    try:
+        value = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return {"value": raw_value}
+    return value if isinstance(value, dict) else {"value": value}
+
+
+def _customer_history_value(raw_value: str | None) -> dict | None:
+    value = _history_json(raw_value)
+    if value is None:
+        return None
+    return {
+        key: field_value
+        for key, field_value in value.items()
+        if key in _CUSTOMER_HISTORY_FIELDS
+    }
+
+
+def get_ticket_history(
+    ticket_id: str,
+    requester: api_models.User,
+    limit: int,
+    offset: int,
+) -> list[api_models.TicketHistoryEvent]:
+    ticket = operations.get_ticket(ticket_id)
+    if ticket is None:
+        raise TicketNotFoundError()
+    if _can_read_ticket(ticket, requester) is False:
+        raise AuthorizationError()
+
+    is_customer = requester.role == constants.Role.USER
+    if requester.role in [constants.Role.MANAGER, constants.Role.ADMIN, constants.Role.SUPER_ADMIN]:
+        comment_visibilities = None
+    elif is_customer:
+        comment_visibilities = (constants.Visibility.PUBLIC,)
+    else:
+        comment_visibilities = (
+            constants.Visibility.PUBLIC,
+            constants.Visibility.INTERNAL,
+        )
+
+    events = operations.get_ticket_history_events(
+        ticket_id,
+        limit,
+        offset,
+        comment_visibilities,
+    )
+    result = []
+    for event in events:
+        old_value = (
+            _customer_history_value(event.old_value)
+            if is_customer
+            else _history_json(event.old_value)
+        )
+        new_value = (
+            _customer_history_value(event.new_value)
+            if is_customer
+            else _history_json(event.new_value)
+        )
+        result.append(api_models.TicketHistoryEvent(
+            id=event.id,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+            actor_user_id=None if is_customer else event.actor_user_id,
+            event_type=event.event_type,
+            old_value=old_value,
+            new_value=new_value or {},
+            metadata=None if is_customer else event.metadata_,
+            created_at=event.created_at,
+        ))
+    return result
+
 def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, requester: api_models.User) -> api_models.Ticket:
     ticket = operations.get_ticket(updated_info_id)
     if ticket is None:
@@ -193,8 +278,6 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         allowed_fields = {"status", "tags"}
         if requested_fields - allowed_fields:
             raise AuthorizationError("You cannot update these ticket fields", code="ticket_fields_not_allowed")
-        if "status" in requested_fields and updated_info["status"] not in [constants.Status.OPEN, constants.Status.CLOSED]:
-            raise AuthorizationError("You cannot set this ticket status", code="ticket_status_not_allowed")
         if "tags" in requested_fields and ticket.status != constants.Status.NEW:
             raise AuthorizationError("Ticket tags cannot be changed after triage", code="ticket_tags_locked_after_triage")
             
@@ -208,7 +291,11 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             raise AuthorizationError("The ticket is not assigned to you", code="ticket_not_assigned_to_requester")
 
 
-    elif check_for_access(requester.role, constants.Role.MANAGER):
+    elif requester.role in [
+        constants.Role.MANAGER,
+        constants.Role.ADMIN,
+        constants.Role.SUPER_ADMIN,
+    ]:
         allowed_fields = {
             "status",
             "assigned_agent_id",
@@ -221,6 +308,10 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         raise AuthorizationError()
     
     if 'assigned_agent_id' in updated_info:
+        if ticket.status not in constants.TICKET_ASSIGNABLE_STATUSES:
+            raise TicketStatusConflictError(
+                "Terminal tickets must be reopened before assignment",
+            )
         agent = operations.get_user(updated_info['assigned_agent_id'])
         if agent is None:
             raise InvalidAssigneeError("Assignee not found", code="assignee_not_found")
@@ -236,7 +327,6 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         ):
             raise TicketStatusConflictError(
                 "Assignment requires open status",
-                code="assignment_requires_open_status",
             )
         updated_info["status"] = constants.Status.OPEN
         audit_new_info["status"] = constants.Status.OPEN.value
@@ -246,15 +336,28 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         and status_was_requested
     ):
         if (
+            ticket.status == constants.Status.NEW
+            and updated_info["status"] == constants.Status.OPEN
+        ):
+            raise TicketStatusConflictError(
+                "Use claim or assignment to open a new ticket",
+            )
+        if (
             ticket.status == constants.Status.OPEN
             and updated_info["status"] == constants.Status.IN_PROGRESS
         ):
-            raise TicketStartWorkConflictError(
-                "Use the start-work endpoint for this transition",
-                code="use_start_work_endpoint",
-            )
+            raise TicketStartWorkConflictError("Use the start-work endpoint for this transition")
         if constants.is_valid_status_transition(ticket.status, updated_info['status']) is False:
             raise TicketStatusConflictError()
+        if constants.can_role_transition_ticket(
+            requester.role,
+            ticket.status,
+            updated_info["status"],
+        ) is False:
+            raise AuthorizationError(
+                "Your role cannot perform this ticket transition",
+                code="ticket_transition_not_allowed",
+            )
 
     transition_at = constants.utc_now()
     if "status" in updated_info:
@@ -425,7 +528,7 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     if ticket is None:
         raise TicketNotFoundError()
     
-    if check_for_access(requester.role, constants.Role.AGENT) is False:
+    if requester.role != constants.Role.AGENT:
         raise AuthorizationError("Only agents can claim tickets", code="only_agents_can_claim")
     
     if ticket.deleted_at is not None:
@@ -435,7 +538,7 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
         raise TicketAlreadyAssignedError()
     
     if ticket.status != constants.Status.NEW:
-        raise TicketStatusConflictError("Only new tickets can be claimed", code="ticket_not_new")
+        raise TicketStatusConflictError("Only new tickets can be claimed")
     
 
     transition_at = constants.utc_now()
@@ -480,6 +583,10 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
         raise TicketNotFoundError()
     if ticket.deleted_at is not None:
         raise TicketDeletedError()
+    if ticket.status not in constants.TICKET_ASSIGNABLE_STATUSES:
+        raise TicketStatusConflictError(
+            "Terminal tickets must be reopened before assignment",
+        )
     is_reassign = False
     if ticket.assigned_agent_id is not None:
         is_reassign = True
@@ -488,7 +595,11 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
     if agent is None:
         raise InvalidAssigneeError("Assignee not found", code="assignee_not_found")
     
-    if check_for_access(requester.role, constants.Role.MANAGER) is False:
+    if requester.role not in [
+        constants.Role.MANAGER,
+        constants.Role.ADMIN,
+        constants.Role.SUPER_ADMIN,
+    ]:
         raise AuthorizationError()
 
     if agent.role != constants.Role.AGENT:
@@ -550,11 +661,11 @@ def start_ticket_work(
         case constants.StartWorkOutcome.ASSIGNED_TO_ANOTHER_AGENT:
             raise AuthorizationError("The ticket is assigned to another agent", code="ticket_assigned_to_another_agent")
         case constants.StartWorkOutcome.TICKET_UNASSIGNED:
-            raise TicketStartWorkConflictError("The ticket is not assigned", code="ticket_is_unassigned")
+            raise TicketStartWorkConflictError("The ticket is not assigned")
         case constants.StartWorkOutcome.TICKET_ALREADY_STARTED:
-            raise TicketStartWorkConflictError("Work has already started", code="ticket_is_already_started")
+            raise TicketStartWorkConflictError("Work has already started")
         case constants.StartWorkOutcome.TICKET_NOT_OPEN:
-            raise TicketStartWorkConflictError("Only open tickets can be started", code="ticket_is_not_open")
+            raise TicketStartWorkConflictError("Only open tickets can be started")
         case _:
             raise InternalOperationError("Ticket work could not be started", code="unknown_start_work_outcome")
 
