@@ -5,6 +5,12 @@ from .permissions import check_for_access
 from src.db import operations
 from src.constants.helpers import generate_id
 from datetime import datetime, timedelta, timezone
+from src.exceptions import (
+    InternalOperationError,
+    RefreshSessionExpiredError,
+    RefreshSessionNotFoundError,
+    RefreshSessionRevokedError,
+)
 
 
 def _refresh_session_audit_data(refresh_session) -> dict:
@@ -106,19 +112,22 @@ def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | Non
 
 
 def verify_refresh_session(raw_refresh_token: str) -> RefreshSession | None:
-    # get a session -
     try:
         refresh_hash_token = hash_token(raw_refresh_token)
-        if refresh_hash_token is None: return None
-        
-        session = operations.get_refresh_session_by_hash_refresh_token(refresh_hash_token)
-        # check if user exist?
-        if session and session.revoked_at is None and session.expires_at > datetime.now(timezone.utc):
-            return session #even if its none, its ok
-        return None
+    except RuntimeError as exc:
+        raise InternalOperationError(
+            "Token service is unavailable",
+            code="token_service_unavailable",
+        ) from exc
 
-    except RuntimeError:
-        return None
+    session = operations.get_refresh_session_by_hash_refresh_token(refresh_hash_token)
+    if session is None:
+        raise RefreshSessionNotFoundError()
+    if session.revoked_at is not None:
+        raise RefreshSessionRevokedError()
+    if session.expires_at <= datetime.now(timezone.utc):
+        raise RefreshSessionExpiredError()
+    return session
     
 def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     new_raw_refresh_token = generate_refresh_token()

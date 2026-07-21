@@ -372,7 +372,7 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
 
     user = operations.update_user(updated_info_id, updated_info, event)
     if user is None:
-        raise InternalOperationError("user_update_failed")
+        raise InternalOperationError("User could not be updated", code="user_update_failed")
 
     if routing_eligibility_may_change:
         updated_profile = operations.get_agent_profile(user.id)
@@ -426,7 +426,7 @@ def delete_user(id: str, reqiester_user: api_models.User) -> None:
     )
 
     if operations.delete_user(id, delete_info, event) is not True:
-        raise InternalOperationError("user_delete_failed")
+        raise InternalOperationError("User could not be deleted", code="user_delete_failed")
 
 
 def delete_all_users(requester: api_models.User) -> int:

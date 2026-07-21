@@ -282,7 +282,7 @@ def test_start_work_service_invalidates_cache_only_after_success(
 
 
 @pytest.mark.parametrize(
-    ("outcome", "expected_error", "expected_message"),
+        ("outcome", "expected_error", "expected_code"),
     [
         (
             constants.StartWorkOutcome.TICKET_UNASSIGNED,
@@ -311,7 +311,7 @@ def test_start_work_service_maps_state_to_clear_domain_error(
     make_user,
     outcome,
     expected_error,
-    expected_message,
+    expected_code,
 ):
     requester = make_user(id="agent-a", role=constants.Role.AGENT)
     monkeypatch.setattr(
@@ -323,7 +323,7 @@ def test_start_work_service_maps_state_to_clear_domain_error(
     with pytest.raises(expected_error) as exc_info:
         tickets_service.start_ticket_work("ticket", requester)
 
-    assert exc_info.value.message == expected_message
+    assert exc_info.value.code == expected_code
 
 
 def test_non_agent_cannot_call_start_work_service(
@@ -340,7 +340,7 @@ def test_non_agent_cannot_call_start_work_service(
     with pytest.raises(AuthorizationError) as exc_info:
         tickets_service.start_ticket_work("ticket", requester)
 
-    assert exc_info.value.message == "only_assigned_agent_can_start_work"
+    assert exc_info.value.code == "only_assigned_agent_can_start_work"
 
 
 def test_start_work_endpoint_uses_authenticated_requester(
@@ -587,4 +587,4 @@ def test_generic_patch_cannot_replace_start_work_endpoint(
             requester,
         )
 
-    assert exc_info.value.message == "use_start_work_endpoint"
+    assert exc_info.value.code == "use_start_work_endpoint"

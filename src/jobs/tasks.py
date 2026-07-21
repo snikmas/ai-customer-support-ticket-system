@@ -6,7 +6,6 @@ from sqlalchemy.exc import OperationalError
 
 from src.cache import delete_ticket as delete_cached_ticket
 from src.db import (
-    create_analysis_result,
     get_ticket,
     try_route_ticket,
 )
@@ -37,8 +36,6 @@ def inspect_ticket(ticket_id: str) -> dict:
         "priority": ticket.priority.value,
         "deleted": ticket.deleted_at is not None,
     }
-    res = create_analysis_result(result)
-    if res is False: raise ValueError
     logger.info("Ticket inspection completed", extra={"ticket_id": ticket_id})
     return result
 

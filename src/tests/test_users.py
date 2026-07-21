@@ -12,7 +12,7 @@ from src.exceptions.domain import AuthorizationError
 from src.services import users as users_service
 from src.exceptions.domain import UserAlreadyExistsError
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
 import pytest
 
@@ -177,6 +177,48 @@ def test_public_registration_always_creates_an_ordinary_user(monkeypatch):
     users_service.create_user(user_create)
 
     assert captured["role"] is constants.Role.USER
+
+
+def test_create_user_persists_self_referencing_audit_event(monkeypatch, tmp_path):
+    test_engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'registration.db'}")
+
+    @event.listens_for(test_engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _connection_record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    db_models.Base.metadata.create_all(test_engine)
+    monkeypatch.setattr(operations, "engine", test_engine)
+    now = datetime.now(timezone.utc)
+    user = db_models.User(
+        id="new-user",
+        nickname="new-user",
+        avatar_url=None,
+        first_name="New",
+        last_name="User",
+        phone="+15550199",
+        email="new-user@example.com",
+        password="already-hashed",
+        role=constants.Role.USER,
+        updated_at=now,
+        created_at=now,
+    )
+    audit_event = api_models.Event(
+        id="new-user-event",
+        entity_type=constants.EntityType.USER,
+        entity_id=user.id,
+        actor_user_id=user.id,
+        event_type=constants.EventType.USER_CREATED,
+        old_value=None,
+        new_value="{}",
+        metadata=None,
+        created_at=now,
+    )
+
+    operations.create_user(user, audit_event)
+
+    with Session(test_engine) as session:
+        assert session.get(db_models.User, user.id) is not None
+        assert session.get(db_models.Event, audit_event.id) is not None
 
 
 def test_delete_all_users_is_temporarily_unavailable(monkeypatch, make_user):

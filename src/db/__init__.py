@@ -1,4 +1,4 @@
-from .utils import create_db, drop_db, reset_database
+from .utils import create_db, drop_db, ping_database, reset_database
 from .operations import (
     TicketRoutingResult,
     assign_ticket,

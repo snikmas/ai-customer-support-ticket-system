@@ -134,7 +134,7 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
     )
     res = operations.create_comment_with_event(comment, event)
     if res is None:
-        raise AuditLogError("comment_create_failed")
+        raise AuditLogError("Comment could not be created", code="comment_create_failed")
 
     return _to_api_comment(res)
 
@@ -197,7 +197,7 @@ def update_comment(ticket_id: str, comment_id: str, new_info: api_models.Comment
 
     updated_comment = operations.update_comment_with_event(comment_id, updated_info, event)
     if updated_comment is None:
-        raise AuditLogError("comment_update_failed")
+        raise AuditLogError("Comment could not be updated", code="comment_update_failed")
 
     return _to_api_comment(updated_comment)
 
@@ -236,6 +236,6 @@ def delete_comment(ticket_id: str, comment_id: str, requester: api_models.User) 
     )
 
     if operations.delete_comment_with_event(comment_id, delete_info, event) is False:
-        raise AuditLogError("comment_delete_failed")
+        raise AuditLogError("Comment could not be deleted", code="comment_delete_failed")
 
     return True

@@ -10,6 +10,9 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     f"sqlite+pysqlite:///{DATABASE_FILE}",
 )
+DATABASE_ECHO = os.getenv("DATABASE_ECHO", "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 DEBUG = None
 LOG_LEVEL = 'INFO'
@@ -22,6 +25,12 @@ REDIS_URL = os.getenv("REDIS_URL")
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
+REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS", "1")
+)
+REDIS_SOCKET_TIMEOUT_SECONDS = float(
+    os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "1")
+)
 ROUTING_RECONCILIATION_BATCH_SIZE = int(
     os.getenv("ROUTING_RECONCILIATION_BATCH_SIZE", "100")
 )
@@ -45,6 +54,10 @@ def validate_redis_settings() -> None:
         raise RuntimeError(
             "REDIS_URL must start with redis://, rediss://, or unix://"
         )
+    if REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS <= 0:
+        raise RuntimeError("REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS must be greater than zero")
+    if REDIS_SOCKET_TIMEOUT_SECONDS <= 0:
+        raise RuntimeError("REDIS_SOCKET_TIMEOUT_SECONDS must be greater than zero")
 
 
 def validate_routing_reconciliation_settings() -> None:

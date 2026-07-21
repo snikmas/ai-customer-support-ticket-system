@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, event
-from src.core.config import DATABASE_URL
+from src.core.config import DATABASE_ECHO, DATABASE_URL
 
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL, echo=DATABASE_ECHO)
 
 if engine.dialect.name == "sqlite":
     @event.listens_for(engine, "connect")

@@ -22,13 +22,13 @@ import json
 
 
 def get_all_analysis_results(ticket_id: str, requester: api_models.User) -> list[api_models.AnalysisResult] | None:
-    if check_for_access(requester.role, constants.Role.AGENT) is False: raise AuthorizationError
+    if check_for_access(requester.role, constants.Role.AGENT) is False: raise AuthorizationError()
 
     ticket = operations.get_ticket(ticket_id)
-    if ticket is None: raise ValueError
+    if ticket is None: raise TicketNotFoundError()
 
     if requester.role == constants.Role.AGENT:
-        if ticket.assigned_agent_id != requester.id: raise AuthorizationError
+        if ticket.assigned_agent_id != requester.id: raise AuthorizationError()
 
     res = operations.get_analysis_results_by_ticket(ticket_id)
     return res

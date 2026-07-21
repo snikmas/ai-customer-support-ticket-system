@@ -3,7 +3,9 @@ class AppException(Exception):
     code = "app_error"
     message = "Application error"
 
-    def __init__(self, message: str | None = None):
+    def __init__(self, message: str | None = None, *, code: str | None = None):
+        if code is not None:
+            self.code = code
         self.message = message or self.message
         super().__init__(self.message)
 
@@ -65,6 +67,18 @@ class CacheUnavailableError(InternalOperationError):
     status_code = 503  # HTTP 503: a required cache service is temporarily unavailable
     code = "cache_unavailable"
     message = "Cache service is unavailable"
+
+
+class ServiceUnavailableError(AppException):
+    status_code = 503
+    code = "service_unavailable"
+    message = "Service is temporarily unavailable"
+
+
+class RateLimitExceededError(AppException):
+    status_code = 429
+    code = "rate_limit_exceeded"
+    message = "Too many requests"
 
 
 class EmptyUpdateError(BadRequestError):
@@ -147,6 +161,11 @@ class CommentNotFoundError(NotFoundError):
     status_code = 404  # HTTP 404: comment id was not found
     code = "comment_not_found"
     message = "Comment not found"
+
+
+class JobNotFoundError(NotFoundError):
+    code = "job_not_found"
+    message = "Job not found"
 
 
 class RefreshSessionNotFoundError(InvalidCredentialsError):

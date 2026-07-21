@@ -136,6 +136,10 @@ def create_user(user_data: User, event_data: Event | None = None) -> User:
             )
 
             session.add(user)
+            # The creation event references this same new user as its actor.
+            # Flush the parent row first because no ORM relationship tells
+            # SQLAlchemy how to order these otherwise independent objects.
+            session.flush()
             if event_data is not None:
                 session.add(_event_from_data(event_data))
     return user # it error -> it throws exception

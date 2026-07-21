@@ -1,23 +1,41 @@
-from fastapi import FastAPI, APIRouter, Request
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from datetime import datetime, timedelta
-from src.constants import helpers
 from src.routers import users, tickets, auth, jobs
-from src.db.utils import create_db
-from src.core import setup_logging
+from src.cache import close_redis_client, initialize_redis_client, ping_redis
+from src.core import REDIS_ENABLED, setup_logging
+from src.constants import logger
+from src.db.engine import engine
+from src.db.utils import create_db, ping_database
 from src.exceptions.domain import AppException
 
-# later convert to startup/lifespan
-create_db()
-setup_logging()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    setup_logging()
+    create_db()
+    initialize_redis_client()
+    logger.info(
+        "Application resources initialized",
+        extra={
+            "database_available": ping_database(),
+            "redis_enabled": REDIS_ENABLED,
+            "redis_available": ping_redis() if REDIS_ENABLED else False,
+        },
+    )
+    try:
+        yield
+    finally:
+        close_redis_client()
+        engine.dispose()
+        logger.info("Application resources released")
 
 
-#i guess.. we should put all configuration to the oncfig file later
-
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 
 @app.exception_handler(AppException)
@@ -60,6 +78,24 @@ async def handle_validation_exception(request: Request, exc: RequestValidationEr
         },
     )
 
+
+@app.exception_handler(Exception)
+async def handle_unexpected_exception(request: Request, exc: Exception):
+    logger.exception(
+        "Unhandled request error",
+        extra={"method": request.method, "path": request.url.path},
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "internal_server_error",
+                "message": "Internal server error",
+            }
+        },
+    )
+
 app.include_router(users.router)
 app.include_router(tickets.router)
 app.include_router(auth.router)
@@ -67,4 +103,26 @@ app.include_router(jobs.router)
 
 @app.get("/")
 async def root():
-    return {"res": "hiiii"}
+    return {"data": {"service": "ticket-system-api"}}
+
+
+@app.get("/health")
+def health():
+    database_available = ping_database()
+    redis_available = ping_redis() if REDIS_ENABLED else False
+    healthy = database_available and (not REDIS_ENABLED or redis_available)
+
+    content = {
+        "status": "healthy" if healthy else "unhealthy",
+        "checks": {
+            "database": "up" if database_available else "down",
+            "redis": (
+                "up"
+                if redis_available
+                else "disabled"
+                if not REDIS_ENABLED
+                else "down"
+            ),
+        },
+    }
+    return JSONResponse(status_code=200 if healthy else 503, content=content)

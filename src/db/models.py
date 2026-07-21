@@ -208,9 +208,9 @@ class RefreshSession(Base):
                                         ForeignKey('users.id', ondelete='CASCADE')
                                         )
     refresh_token_hash: Mapped[str] = mapped_column(String(255)) 
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    revoked_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
 
 
 # =================================================================

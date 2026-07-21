@@ -59,7 +59,7 @@ def test_ticket_owner_cannot_update_tags_after_new(monkeypatch, make_user, make_
             requester,
         )
     except AuthorizationError as error:
-        assert error.message == "ticket_tags_locked_after_triage"
+        assert error.code == "ticket_tags_locked_after_triage"
     else:
         raise AssertionError("customers must not change tags after triage starts")
 
@@ -99,7 +99,7 @@ def test_unassigned_agent_cannot_update_tags(monkeypatch, make_user, make_ticket
             requester,
         )
     except AuthorizationError as error:
-        assert error.message == "ticket_not_assigned_to_requester"
+        assert error.code == "ticket_not_assigned_to_requester"
     else:
         raise AssertionError("an agent must claim or receive the ticket before changing tags")
 
@@ -301,19 +301,20 @@ def test_update_ticket_uses_body_and_authenticated_requester(
     assert captured["requester"] is requester
 
 
-def test_claim_ticket_converts_permission_error_to_403(monkeypatch, make_user):
+def test_claim_ticket_returns_domain_authorization_error(monkeypatch, make_user):
     requester = make_user(role=constants.Role.USER)
 
     app.dependency_overrides[tickets_router.get_current_user] = lambda: requester
 
     def fake_claim_ticket(ticket_id, current_user):
-        raise PermissionError("only_agents_can_claim")
+        raise AuthorizationError("Only agents can claim tickets", code="only_agents_can_claim")
 
     monkeypatch.setattr(tickets_router.s_tickets, "claim_ticket", fake_claim_ticket)
 
     response = client.post("/tickets/ticket-1/claim")
 
     assert response.status_code == 403
+    assert response.json()["error"]["code"] == "only_agents_can_claim"
 
 
 def test_assign_ticket_uses_agent_id_body(monkeypatch, make_user, make_ticket):
@@ -369,7 +370,7 @@ def test_manager_cannot_be_ticket_assignee(monkeypatch, make_user, make_ticket):
     with pytest.raises(InvalidAssigneeError) as exc_info:
         tickets_service.assign_ticket(ticket.id, manager.id, requester)
 
-    assert exc_info.value.message == "assignee_must_be_agent"
+    assert exc_info.value.code == "assignee_must_be_agent"
 
 
 def test_repeated_ticket_delete_is_rejected_before_new_event(monkeypatch, make_user, make_ticket):

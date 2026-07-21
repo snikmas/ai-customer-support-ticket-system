@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from src import models, constants
 from src.services import users as s_users
 from src.dependencies.auth import get_current_user
 from typing import Literal
+from src.exceptions import ServiceUnavailableError
 
 router = APIRouter(
     prefix='/users',
@@ -83,8 +84,8 @@ def delete_user(id: str, requester = Depends(get_current_user)):
 
 @router.delete("/", status_code=200)
 def delete_all_users(requester = Depends(get_current_user)):
-    raise HTTPException(
-        status_code=503,
-        detail="Bulk user deletion is temporarily unavailable",
+    raise ServiceUnavailableError(
+        "Bulk user deletion is temporarily unavailable",
+        code="bulk_user_deletion_unavailable",
     )
     

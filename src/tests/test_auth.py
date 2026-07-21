@@ -3,14 +3,17 @@ from types import SimpleNamespace
 
 import bcrypt
 import pytest
-from fastapi import HTTPException
-
 from src import constants
 from src.core import security
 from src.dependencies import auth as auth_dependency
 from src.services import auth as auth_service
 from src.models import LoginRequest
 from pydantic import ValidationError
+from src.exceptions import AuthenticationError, InactiveUserError, InvalidCredentialsError, RefreshSessionRevokedError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from src.db import models as db_models
+from src.db import operations
 
 
 def test_hash_password_returns_verifiable_text_hash():
@@ -123,7 +126,7 @@ def test_get_current_user_rejects_missing_claims_and_wrong_token_type(monkeypatc
         lambda _: pytest.fail("invalid payload must be rejected before a database lookup"),
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(InvalidCredentialsError) as exc_info:
         auth_dependency.get_current_user("Bearer token")
 
     assert exc_info.value.status_code == 401
@@ -143,7 +146,7 @@ def test_login_request_requires_exactly_one_identifier(data):
 
 @pytest.mark.parametrize("header", [None, "abc.def.ghi", "Basic abc.def.ghi"])
 def test_get_current_user_rejects_missing_or_invalid_authorization_header(header):
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(AuthenticationError) as exc_info:
         auth_dependency.get_current_user(header)
 
     assert exc_info.value.status_code == 401
@@ -159,7 +162,7 @@ def test_get_current_user_rejects_deleted_user(monkeypatch, make_user):
     )
     monkeypatch.setattr(auth_dependency.operations, "get_user", lambda _: user)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(InactiveUserError) as exc_info:
         auth_dependency.get_current_user("Bearer token")
 
     assert exc_info.value.status_code == 403
@@ -196,7 +199,8 @@ def test_verify_refresh_session_rejects_revoked_session(monkeypatch):
         lambda _: session,
     )
 
-    assert auth_service.verify_refresh_session("raw-token") is None
+    with pytest.raises(RefreshSessionRevokedError):
+        auth_service.verify_refresh_session("raw-token")
 
 
 def test_refresh_rotation_rejects_a_second_use_of_the_same_session_snapshot(monkeypatch, make_user):
@@ -223,3 +227,47 @@ def test_refresh_rotation_rejects_a_second_use_of_the_same_session_snapshot(monk
 
     assert first_response.refresh_token == "first-new-token"
     assert second_response is None
+
+
+def test_refresh_session_expiry_remains_utc_aware_after_sqlite_round_trip(
+    monkeypatch,
+    tmp_path,
+):
+    test_engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'refresh.db'}")
+    db_models.Base.metadata.create_all(test_engine)
+    monkeypatch.setattr(operations, "engine", test_engine)
+    now = datetime.now(timezone.utc)
+
+    with Session(test_engine) as session, session.begin():
+        session.add(
+            db_models.User(
+                id="refresh-user",
+                nickname="refresh-user",
+                avatar_url=None,
+                first_name="Refresh",
+                last_name="User",
+                phone="+15550200",
+                email="refresh-user@example.com",
+                password="already-hashed",
+                role=constants.Role.USER,
+                user_status=constants.UserStatus.ACTIVE,
+                updated_at=now,
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            db_models.RefreshSession(
+                id="refresh-session",
+                user_id="refresh-user",
+                refresh_token_hash="stored-hash",
+                expires_at=now + timedelta(days=1),
+                revoked_at=None,
+                created_at=now,
+            )
+        )
+
+    loaded = operations.get_refresh_session_by_id("refresh-session")
+
+    assert loaded.expires_at.tzinfo is not None
+    assert loaded.expires_at.utcoffset() == timedelta(0)

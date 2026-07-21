@@ -8,7 +8,7 @@ from src.jobs.queue import get_ticket_jobs_queue, get_ticket_routing_queue
 from src.jobs.tasks import inspect_ticket, route_ticket
 from src.models import JobResponse, JobStatusResponse, User, Job 
 from src.constants import JobStatus, logger, translate_rq_status, Role, raw_job_to_job_response
-from src.exceptions import AuthorizationError
+from src.exceptions import AuthorizationError, BadRequestError
 
 ROUTING_JOB_TIMEOUT_SECONDS = 60
 ROUTING_RESULT_TTL_SECONDS = 600
@@ -94,7 +94,10 @@ def route_waiting_tickets(
     page from being attempted.
     """
     if batch_size <= 0:
-        raise ValueError("batch_size must be greater than zero")
+        raise BadRequestError(
+            "Batch size must be greater than zero",
+            code="invalid_batch_size",
+        )
 
     ticket_ids = get_waiting_ticket_ids(batch_size)
     enqueued_ticket_ids = []
@@ -153,7 +156,7 @@ def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
     from src.services.permissions import check_for_access
 
     if check_for_access(requester.role, Role.AGENT) is False:
-        raise AuthorizationError("only_agents_can_view_jobs")
+        raise AuthorizationError("Only agents can view jobs", code="only_agents_can_view_jobs")
 
     queue = get_ticket_jobs_queue()
     raw_job = queue.fetch_job(job_id)
@@ -175,7 +178,7 @@ def get_all_jobs(requester: User) -> list[Job] | None:
     from src.services.permissions import check_for_access
 
     if check_for_access(requester.role, Role.ADMIN) is False:
-        raise AuthorizationError("only_admins_can_view_all_jobs")
+        raise AuthorizationError("Only administrators can view all jobs", code="only_admins_can_view_all_jobs")
 
     queue = get_ticket_jobs_queue()
     
