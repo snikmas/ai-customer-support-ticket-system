@@ -78,7 +78,12 @@ def test_ticket_creation_sets_fixed_new_deadline(monkeypatch, make_user):
     monkeypatch.setattr(
         ticket_service.operations,
         "create_ticket",
-        lambda ticket, event: captured.update(event=event) or ticket,
+        lambda ticket, event, skill_ids: captured.update(event=event) or ticket,
+    )
+    monkeypatch.setattr(
+        ticket_service,
+        "_validate_routing_catalog_selection",
+        lambda *_: None,
     )
     monkeypatch.setattr(
         ticket_service,
@@ -91,6 +96,7 @@ def test_ticket_creation_sets_fixed_new_deadline(monkeypatch, make_user):
             title="SLA boundary",
             description="Check the initial stage deadline",
             category=constants.Category.ACCOUNT_ACCESS,
+            department_id="support",
         ),
         requester,
     )
@@ -191,6 +197,7 @@ def _db_ticket(status, due_at, assigned_agent_id=None):
         description="SLA transition",
         category=constants.Category.ACCOUNT_ACCESS,
         tags=None,
+        department_id="support",
         assigned_agent_id=assigned_agent_id,
         creator_user_id="customer",
         status=status,
@@ -208,6 +215,18 @@ def _sla_engine(monkeypatch, tmp_path):
         connect_args={"timeout": 10},
     )
     db_models.Base.metadata.create_all(engine)
+    with Session(engine) as session, session.begin():
+        session.add(
+            db_models.Department(
+                id="support",
+                name="Support",
+                normalized_name="support",
+                description=None,
+                created_at=FIXED_UTC,
+                updated_at=FIXED_UTC,
+                deleted_at=None,
+            )
+        )
     monkeypatch.setattr(operations, "engine", engine)
     monkeypatch.setattr(operations, "utc_now", lambda: FIXED_UTC)
     return engine
@@ -231,7 +250,7 @@ def test_automatic_assignment_sets_open_deadline_in_its_transaction(
                     unavailable_until=None,
                     max_active_tickets=1,
                     last_assigned_at=None,
-                    department_id=None,
+                    department_id="support",
                     created_at=FIXED_UTC,
                     updated_at=FIXED_UTC,
                 ),

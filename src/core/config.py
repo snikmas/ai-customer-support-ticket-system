@@ -37,6 +37,8 @@ ROUTING_RECONCILIATION_BATCH_SIZE = int(
 ROUTING_RECONCILIATION_INTERVAL_SECONDS = int(
     os.getenv("ROUTING_RECONCILIATION_INTERVAL_SECONDS", "60")
 )
+OVERDUE_SCAN_BATCH_SIZE = int(os.getenv("OVERDUE_SCAN_BATCH_SIZE", "100"))
+OVERDUE_SCAN_INTERVAL_SECONDS = int(os.getenv("OVERDUE_SCAN_INTERVAL_SECONDS", "60"))
 LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = 900
 
@@ -69,6 +71,10 @@ def validate_routing_reconciliation_settings() -> None:
         raise RuntimeError(
             "ROUTING_RECONCILIATION_INTERVAL_SECONDS must be greater than zero"
         )
+    if OVERDUE_SCAN_BATCH_SIZE <= 0:
+        raise RuntimeError("OVERDUE_SCAN_BATCH_SIZE must be greater than zero")
+    if OVERDUE_SCAN_INTERVAL_SECONDS <= 0:
+        raise RuntimeError("OVERDUE_SCAN_INTERVAL_SECONDS must be greater than zero")
 
 
 validate_redis_settings()

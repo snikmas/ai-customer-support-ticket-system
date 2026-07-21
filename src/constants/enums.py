@@ -105,6 +105,13 @@ class EventType(Enum):
     USER_DELETED = 'User Deleted'
     AGENT_AVAILABILITY_CHANGED = 'Agent Availability Changed'
     AGENT_PROFILE_UPDATED = 'Agent Profile Updated'
+    DEPARTMENT_CREATED = 'Department Created'
+    DEPARTMENT_UPDATED = 'Department Updated'
+    DEPARTMENT_ARCHIVED = 'Department Archived'
+    SKILL_CREATED = 'Skill Created'
+    SKILL_UPDATED = 'Skill Updated'
+    SKILL_ARCHIVED = 'Skill Archived'
+    TICKET_OVERDUE = 'Ticket Overdue'
     REFRESH_SESSION_CREATED = 'Refresh Session Created'
     REFRESH_SESSION_REVOKED = 'Refresh Session Revoked'
     REFRESH_SESSION_ROTATED = 'Refresh Session Rotated'
@@ -116,8 +123,15 @@ class EntityType(Enum):
     TICKET = 'Ticket'
     USER = 'User'
     AGENT_PROFILE = 'Agent Profile'
+    DEPARTMENT = 'Department'
+    SKILL = 'Skill'
     REFRESH_SESSION = 'Refresh Session'
     COMMENT = 'Comment'
+
+
+class ActorType(str, Enum):
+    HUMAN = "human"
+    SYSTEM = "system"
 
 class Visibility(Enum):
     PUBLIC = 'Public'

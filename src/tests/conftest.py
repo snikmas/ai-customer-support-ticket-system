@@ -62,12 +62,15 @@ def make_ticket():
             description="Test description",
             category=constants.Category.ACCOUNT_ACCESS,
             tags=tags if tags is not None else [constants.Tag.API_KEY],
+            department_id="support",
+            skill_ids=[],
             assigned_agent_id=assigned_agent_id,
             creator_user_id=creator_user_id,
             status=status,
             priority=priority,
             updated_at=now,
             created_at=now,
+            due_at=None,
             deleted_at=None,
         )
 

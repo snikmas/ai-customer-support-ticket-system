@@ -182,7 +182,7 @@ def test_required_history_references_do_not_use_set_null():
     assert Ticket.__table__.columns.creator_user_id.nullable is False
     assert _ondelete(Ticket, "creator_user_id") == "RESTRICT"
 
-    assert Event.__table__.columns.actor_user_id.nullable is False
+    assert Event.__table__.columns.actor_user_id.nullable is True
     assert _ondelete(Event, "actor_user_id") == "RESTRICT"
 
     assert Comment.__table__.columns.author_user_id.nullable is False
@@ -202,7 +202,16 @@ def test_get_tickets_returns_current_service_shape(monkeypatch, make_user, make_
     app.dependency_overrides[tickets_router.get_current_user] = lambda: requester
     captured = {}
 
-    def fake_get_all_tickets(current_user, limit, offset, sort_by, sort_order, priority, status):
+    def fake_get_all_tickets(
+        current_user,
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        priority,
+        status,
+        overdue,
+    ):
         captured.update(
             {
                 "current_user": current_user,
@@ -212,6 +221,7 @@ def test_get_tickets_returns_current_service_shape(monkeypatch, make_user, make_
                 "sort_order": sort_order,
                 "priority": priority,
                 "status": status,
+                "overdue": overdue,
             }
         )
         return [ticket] if current_user is requester else []
@@ -233,6 +243,7 @@ def test_get_tickets_returns_current_service_shape(monkeypatch, make_user, make_
         "sort_order": constants.DEFAULT_SORT_ORDER,
         "priority": None,
         "status": None,
+        "overdue": None,
     }
 
 
@@ -257,6 +268,7 @@ def test_create_ticket_uses_authenticated_requester(monkeypatch, make_user, make
             "description": "Cannot use the API key",
             "category": constants.Category.ACCOUNT_ACCESS.value,
             "tags": [constants.Tag.API_KEY.value],
+            "department_id": "support",
         },
     )
 
@@ -355,6 +367,7 @@ def test_manager_can_assign_ticket_to_agent(monkeypatch, make_user, make_ticket)
     monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(tickets_service.operations, "get_user", lambda _: agent)
     monkeypatch.setattr(tickets_service.operations, "assign_ticket", lambda *_: ticket)
+    monkeypatch.setattr(tickets_service, "_require_same_active_department", lambda *_: None)
 
     tickets_service.assign_ticket(ticket.id, agent.id, requester)
 

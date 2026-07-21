@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy import ForeignKey, String, Time, Interval, Enum, DateTime, Text
+from sqlalchemy import CheckConstraint, Column, ForeignKey, String, Time, Interval, Enum, DateTime, Table, Text
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from datetime import datetime, timedelta, timezone
@@ -15,6 +15,7 @@ from src.constants import (
     Visibility, 
     Source,
     AnalysisStatus,
+    ActorType,
     AvailabilityStatus,
     )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -45,6 +46,66 @@ class UTCDateTime(TypeDecorator):
         return value.astimezone(timezone.utc)
 
 
+agent_skills = Table(
+    "agent_skills",
+    Base.metadata,
+    Column(
+        "agent_user_id",
+        String(36),
+        ForeignKey("agent_profiles.user_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "skill_id",
+        String(36),
+        ForeignKey("skills.id", ondelete="RESTRICT"),
+        primary_key=True,
+    ),
+)
+
+
+ticket_skills = Table(
+    "ticket_skills",
+    Base.metadata,
+    Column(
+        "ticket_id",
+        String(36),
+        ForeignKey("tickets.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "skill_id",
+        String(36),
+        ForeignKey("skills.id", ondelete="RESTRICT"),
+        primary_key=True,
+    ),
+)
+
+
+class Department(Base):
+    __tablename__ = "departments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class Skill(Base):
+    __tablename__ = "skills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+
 class Ticket(Base):
     __tablename__ = 'tickets'
     id:                 Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -52,6 +113,11 @@ class Ticket(Base):
     description:        Mapped[str] = mapped_column(String(32000))
     category:           Mapped[Category] = mapped_column(Enum(Category))
     tags:               Mapped[str] = mapped_column(String(200), nullable=True)
+    department_id:      Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("departments.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     assigned_agent_id:  Mapped[Optional[str]] = mapped_column(
                 String(36), 
                 ForeignKey('users.id', ondelete='SET NULL'),
@@ -70,6 +136,14 @@ class Ticket(Base):
     )
 
     deleted_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_skills: Mapped[List["Skill"]] = relationship(
+        secondary=ticket_skills,
+        lazy="selectin",
+    )
+
+    @property
+    def skill_ids(self) -> list[str]:
+        return [skill.id for skill in self.requested_skills]
 
     def __repr__(self):
         desc_short = self.description[:50]
@@ -142,24 +216,46 @@ class AgentProfile(Base):
         DateTime(timezone=True),
         nullable=True,
     )
-    # Department is introduced in Slice 4, so this cannot be a foreign key yet.
-    department_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    department_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("departments.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="agent_profile")
+    skills: Mapped[List["Skill"]] = relationship(
+        secondary=agent_skills,
+        lazy="selectin",
+    )
+
+    @property
+    def skill_ids(self) -> list[str]:
+        return [skill.id for skill in self.skills]
     
 
 class Event(Base):
     __tablename__ = 'events'
+    __table_args__ = (
+        CheckConstraint(
+            "(actor_type = 'HUMAN' AND actor_user_id IS NOT NULL) OR "
+            "(actor_type = 'SYSTEM' AND actor_user_id IS NULL)",
+            name="ck_events_actor_contract",
+        ),
+    )
     id:             Mapped[str] = mapped_column(String(36), primary_key=True)
 
     entity_type:    Mapped[EntityType] = mapped_column(Enum(EntityType), nullable=False)
     entity_id:      Mapped[str] = mapped_column(String(36), nullable=True) #whcih exact object changed
-    actor_user_id:  Mapped[str] = mapped_column(
+    actor_type:     Mapped[ActorType] = mapped_column(
+                        Enum(ActorType),
+                        nullable=False,
+                        default=ActorType.HUMAN)
+    actor_user_id:  Mapped[Optional[str]] = mapped_column(
                         String(36),
                         ForeignKey('users.id', ondelete='RESTRICT'),
-                        nullable=False)
+                        nullable=True)
     event_type:     Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
     # Audit snapshots can include a short note plus several routing fields, so a
     # 255-character column is too small even when every individual field is bounded.
@@ -167,6 +263,7 @@ class Event(Base):
     batch_id:       Mapped[str] = mapped_column(String(36), nullable=True, default=None)
     new_value:      Mapped[str] = mapped_column(Text, nullable=False)
     metadata_:      Mapped[str] = mapped_column("metadata", String(200), nullable=True) #additional info
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, unique=True)
     created_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

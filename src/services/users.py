@@ -6,9 +6,11 @@ from src.db import models as db_models
 from src.db import operations
 from src.core import hash_password
 from src.exceptions.domain import (
+    AgentDepartmentChangeConflictError,
     AuthorizationError,
     AgentProfileNotFoundError,
     EmptyUpdateError,
+    InactiveRoutingCatalogError,
     InternalOperationError,
     UserAlreadyExistsError,
     UserNotFoundError,
@@ -63,6 +65,7 @@ def _agent_profile_response(
         max_active_tickets=profile.max_active_tickets,
         last_assigned_at=profile.last_assigned_at,
         department_id=profile.department_id,
+        skill_ids=profile.skill_ids,
         current_active_tickets=current_workload,
         can_receive_new_tickets=can_receive_new_tickets,
         created_at=profile.created_at,
@@ -80,6 +83,11 @@ def _can_agent_receive_new_tickets(
         and agent.user_status is constants.UserStatus.ACTIVE
         and agent.deleted_at is None
         and profile.availability_status is constants.AvailabilityStatus.AVAILABLE
+        and profile.department_id is not None
+        and operations.get_routing_catalog_record(
+            db_models.Department,
+            profile.department_id,
+        ) is not None
         and current_workload < profile.max_active_tickets
     )
 
@@ -173,10 +181,36 @@ def update_agent_profile_settings(
     if not new_info:
         raise EmptyUpdateError()
 
-    old_info = {
-        field: constants._audit_value(getattr(profile, field))
-        for field in new_info
-    }
+    routing_metadata_changed = bool({"department_id", "skill_ids"} & new_info.keys())
+    if "skill_ids" in new_info and new_info["skill_ids"] is None:
+        raise InactiveRoutingCatalogError("Agent skill IDs must be a list")
+    if "department_id" in new_info:
+        if new_info["department_id"] is None:
+            raise InactiveRoutingCatalogError("An agent department must be active")
+        if (
+            new_info["department_id"] != profile.department_id
+            and current_workload > 0
+        ):
+            raise AgentDepartmentChangeConflictError()
+
+    requested_skill_ids = new_info.get("skill_ids", profile.skill_ids)
+    requested_department_id = new_info.get("department_id", profile.department_id)
+    department, active_skills = operations.active_routing_catalog_selection(
+        requested_department_id,
+        requested_skill_ids,
+    )
+    if requested_department_id is not None and department is None:
+        raise InactiveRoutingCatalogError("Agent department is missing or archived")
+    if len(active_skills) != len(requested_skill_ids):
+        raise InactiveRoutingCatalogError("One or more agent skills are missing or archived")
+
+    old_info = {}
+    for field in new_info:
+        old_info[field] = (
+            list(profile.skill_ids)
+            if field == "skill_ids"
+            else constants._audit_value(getattr(profile, field))
+        )
     now = datetime.now(timezone.utc)
     new_info["updated_at"] = now
     event = api_models.Event(
@@ -197,7 +231,7 @@ def update_agent_profile_settings(
     capacity_increased = (
         updated_profile.max_active_tickets > old_max_active_tickets
     )
-    if capacity_increased or (
+    if routing_metadata_changed or capacity_increased or (
         not was_eligible and response.can_receive_new_tickets
     ):
         dispatch_waiting_tickets_after_capacity_event(

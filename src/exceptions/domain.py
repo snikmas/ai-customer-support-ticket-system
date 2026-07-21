@@ -116,6 +116,26 @@ class AgentProfileNotFoundError(NotFoundError):
     message = "Agent profile not found"
 
 
+class RoutingCatalogNotFoundError(NotFoundError):
+    code = "routing_catalog_not_found"
+    message = "Routing catalog record not found"
+
+
+class RoutingCatalogConflictError(ConflictError):
+    code = "routing_catalog_conflict"
+    message = "Routing catalog record conflicts with existing data"
+
+
+class InactiveRoutingCatalogError(BadRequestError):
+    code = "inactive_routing_catalog"
+    message = "Department or skill is missing or archived"
+
+
+class AgentDepartmentChangeConflictError(ConflictError):
+    code = "agent_department_change_conflict"
+    message = "Agent department cannot change while active tickets are assigned"
+
+
 class InactiveUserError(AuthorizationError):
     status_code = 403  # HTTP 403: deleted/banned user cannot use the system
     code = "inactive_user"

@@ -27,9 +27,10 @@ Implemented:
   user ID
 - Atomic and idempotent automatic assignment with concurrency protection
 - A dedicated RQ routing queue and periodic reconciliation of waiting tickets
-- Ticket-stage SLA deadlines stored in `due_at`
+- Priority-adjusted ticket-stage SLA deadlines, overdue filtering, and an
+  idempotent periodic overdue scanner
 - Redis login rate limiting and ticket-detail caching
-- Audit-event writes for important mutations
+- Human/system audit actors and audit-event writes for important mutations
 - Automated tests for the main backend, cache, routing, reconciliation,
   start-work, concurrency, and SLA behavior
 - A verified live development flow using FastAPI, Redis, an RQ worker, and RQ
@@ -67,11 +68,13 @@ Support agents and admins can:
 - add comments to the ticket conversation
 - manage users according to role permissions
 
-The first routing policy intentionally stays simple. A new ticket is committed
-before an RQ routing job is enqueued. An eligible agent must be active,
-available, below capacity, and have the `AGENT` role. The database chooses the
-least-loaded agent, then the agent with the oldest assignment timestamp, then
-the lowest user ID for a deterministic tie-break.
+The routing policy uses managed departments and skills. A new ticket is
+committed before an RQ routing job is enqueued. An eligible agent must have the
+`AGENT` role, be active, available, below capacity, and belong to the ticket's
+active department. More requested-skill matches rank first, but a
+same-department agent with no matching skills remains a fallback. Existing
+tie-breakers are workload, oldest assignment timestamp, then user ID. There is
+no cross-department fallback.
 
 ## Future Extension: AI Assistance
 
@@ -162,7 +165,8 @@ database, and blocks deleted or banned users.
 
 ### Tickets
 
-- `POST /tickets/` - create a ticket
+- `POST /tickets/` - create a ticket with an active `department_id` and optional
+  `skill_ids`
 - `GET /tickets/` - list tickets with pagination, sorting, and filters
 - `GET /tickets/{id}` - get one ticket
 - `PATCH /tickets/{ticket_id}` - update ticket workflow fields
@@ -177,6 +181,17 @@ database, and blocks deleted or banned users.
 Creating a ticket also attempts to enqueue automatic routing after the database
 commit. If Redis or enqueueing fails, the ticket remains durable as
 `NEW`/unassigned and periodic reconciliation can retry it later.
+
+### Routing Catalogs
+
+- `GET /departments/` and `GET /skills/` - list active routing choices for
+  authenticated users
+- `POST /departments/` and `POST /skills/` - create catalog records as Manager+
+- `PATCH /departments/{id}` and `PATCH /skills/{id}` - update catalog records
+- `DELETE /departments/{id}` and `DELETE /skills/{id}` - archive records while
+  preserving historical relationships
+- `PATCH /users/{agent_id}/agent-profile` - configure the agent's department,
+  skills, and capacity as Manager+
 
 ### Ticket Comments
 
@@ -255,6 +270,13 @@ RQ cron later finds bounded pages of waiting `NEW`/unassigned tickets and
 enqueues them again. Duplicate delivery is expected, so database idempotency and
 transactional locking remain the final correctness boundary.
 
+Automatic routing and overdue detection use `SYSTEM` audit actors with no fake
+human user ID. SLA deadlines combine the active status's base hours with the
+priority multiplier: critical `0.25`, high `0.5`, normal `1.0`, and low `2.0`.
+`GET /tickets?overdue=true` returns a bounded visible page and computes
+`is_overdue` without writing. The periodic scanner is the separate write path
+that records one overdue event per ticket.
+
 Ticket details use Redis as a short-lived cache, while SQL remains the source of
 truth. Reads fall back to SQL during cache failure, and successful mutations
 invalidate the ticket key. Login rate limiting has a different policy: Redis
@@ -302,6 +324,8 @@ JWT_PUBLIC_KEY_PATH=keys/public.pem
 REFRESH_TOKEN_SECRET=replace-with-a-local-secret
 ROUTING_RECONCILIATION_BATCH_SIZE=100
 ROUTING_RECONCILIATION_INTERVAL_SECONDS=60
+OVERDUE_SCAN_BATCH_SIZE=100
+OVERDUE_SCAN_INTERVAL_SECONDS=60
 ```
 
 Start Redis and verify it responds:
@@ -425,7 +449,8 @@ myvenv/bin/rq cron src/jobs/cron.py --url redis://localhost:6379/0
 
 Each scheduled reconciliation reads at most one configured page of
 `NEW`/unassigned tickets and enqueues independent jobs on `ticket_routing`, so a
-routing worker must also be running.
+routing worker must also be running. The same scheduler registers a bounded
+overdue scan; repeated or concurrent scans preserve one audit event per ticket.
 
 Routers receive HTTP requests and convert errors to HTTP responses.
 Dependencies identify the current user.

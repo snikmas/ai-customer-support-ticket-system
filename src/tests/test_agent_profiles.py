@@ -63,6 +63,19 @@ def _prepare_database(monkeypatch, tmp_path):
 
     test_engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'profiles.db'}")
     db_models.Base.metadata.create_all(test_engine)
+    now = datetime.now(timezone.utc)
+    with Session(test_engine) as session, session.begin():
+        session.add(
+            db_models.Department(
+                id="support",
+                name="Support",
+                normalized_name="support",
+                description=None,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+        )
     monkeypatch.setattr(operations, "engine", test_engine)
     return test_engine
 
@@ -81,6 +94,7 @@ def _ticket(
         description="Description",
         category=constants.Category.ACCOUNT_ACCESS,
         tags=None,
+        department_id="support",
         assigned_agent_id=assigned_agent_id,
         creator_user_id=creator_id,
         status=status,
@@ -105,6 +119,9 @@ def _seed_routing_pool(
         )
         session.add_all(profiles)
         session.add_all(tickets or [])
+        session.add(
+            _ticket("routing-ticket", "customer", now)
+        )
 
 
 def test_least_loaded_agent_wins_before_tie_breakers(monkeypatch, tmp_path):
@@ -125,7 +142,7 @@ def test_least_loaded_agent_wins_before_tie_breakers(monkeypatch, tmp_path):
     ]
     _seed_routing_pool(test_engine, now, profiles, tickets)
 
-    selected = operations.get_least_loaded_eligible_agent()
+    selected = operations.get_least_loaded_eligible_agent("routing-ticket")
 
     assert selected is not None
     assert selected.id == "agent-free"
@@ -169,8 +186,9 @@ def test_routing_query_uses_only_current_hard_eligibility_pool(
                 _profile("at-capacity", now, capacity=0),
             ]
         )
+        session.add(_ticket("routing-ticket", "customer", now))
 
-    selected = operations.get_least_loaded_eligible_agent()
+    selected = operations.get_least_loaded_eligible_agent("routing-ticket")
 
     assert selected is not None
     assert selected.id == "eligible"
@@ -188,7 +206,7 @@ def test_never_assigned_agent_wins_equal_workload_tie(monkeypatch, tmp_path):
         ],
     )
 
-    selected = operations.get_least_loaded_eligible_agent()
+    selected = operations.get_least_loaded_eligible_agent("routing-ticket")
 
     assert selected is not None
     assert selected.id == "agent-never"
@@ -206,7 +224,7 @@ def test_oldest_last_assignment_wins_next_tie(monkeypatch, tmp_path):
         ],
     )
 
-    selected = operations.get_least_loaded_eligible_agent()
+    selected = operations.get_least_loaded_eligible_agent("routing-ticket")
 
     assert selected is not None
     assert selected.id == "agent-older"
@@ -225,7 +243,7 @@ def test_user_id_breaks_final_routing_tie(monkeypatch, tmp_path):
         ],
     )
 
-    selected = operations.get_least_loaded_eligible_agent()
+    selected = operations.get_least_loaded_eligible_agent("routing-ticket")
 
     assert selected is not None
     assert selected.id == "agent-a"
@@ -439,7 +457,7 @@ def test_capacity_is_manager_only_and_lowering_it_keeps_assignments(
     )
     response = client.patch(
         "/users/agent/agent-profile",
-        json={"max_active_tickets": 1, "department_id": "priority-support"},
+        json={"max_active_tickets": 1},
     )
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -455,7 +473,7 @@ def test_capacity_is_manager_only_and_lowering_it_keeps_assignments(
         profile = session.get(db_models.AgentProfile, "agent")
         event = session.scalar(select(db_models.Event))
         assert assigned_count == 2
-        assert profile.department_id == "priority-support"
+        assert profile.department_id == "support"
         assert event.event_type is constants.EventType.AGENT_PROFILE_UPDATED
         assert event.actor_user_id == "manager"
 

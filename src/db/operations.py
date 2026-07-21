@@ -1,10 +1,24 @@
 from dataclasses import dataclass
 from sqlalchemy.orm import Session
 from .engine import engine
-from .models import AgentProfile, Ticket, User, RefreshSession, UserStatus, Event, Comment, AnalysisResult
+from .models import (
+    AgentProfile,
+    AnalysisResult,
+    Comment,
+    Department,
+    Event,
+    RefreshSession,
+    Skill,
+    Ticket,
+    User,
+    UserStatus,
+    agent_skills,
+    ticket_skills,
+)
 from sqlalchemy import Row, and_, func, or_, select, delete, update
 from datetime import datetime, timezone
 from src.constants import (
+    ActorType,
     AvailabilityStatus,
     EntityType,
     EventType,
@@ -190,6 +204,65 @@ def get_user_by_email(inputted_email: str) -> User | None:
 def get_user_by_nickname(inputted_nickname: str) -> User | None:
     with Session(engine) as session:
         return session.query(User).filter_by(nickname=inputted_nickname).first()
+
+
+def get_routing_catalog_record(model, record_id: str, *, include_archived: bool = False):
+    with Session(engine) as session:
+        record = session.get(model, record_id)
+        if record is None or (record.deleted_at is not None and not include_archived):
+            return None
+        return record
+
+
+def list_routing_catalog_records(model, *, include_archived: bool = False) -> list:
+    statement = select(model)
+    if not include_archived:
+        statement = statement.where(model.deleted_at.is_(None))
+    statement = statement.order_by(model.normalized_name.asc(), model.id.asc())
+    with Session(engine) as session:
+        return list(session.scalars(statement).all())
+
+
+def create_routing_catalog_record(record, event_data: Event):
+    with Session(engine) as session:
+        with session.begin():
+            session.add(record)
+            session.flush()
+            session.add(_event_from_data(event_data))
+        session.refresh(record)
+        return record
+
+
+def update_routing_catalog_record(model, record_id: str, new_info: dict, event_data: Event):
+    with Session(engine) as session:
+        with session.begin():
+            record = session.get(model, record_id)
+            if record is None:
+                return None
+            for field, value in new_info.items():
+                setattr(record, field, value)
+            session.add(_event_from_data(event_data))
+        session.refresh(record)
+        return record
+
+
+def active_routing_catalog_selection(
+    department_id: str | None,
+    skill_ids: list[str],
+) -> tuple[Department | None, list[Skill]]:
+    with Session(engine) as session:
+        department = session.get(Department, department_id) if department_id else None
+        if department is not None and department.deleted_at is not None:
+            department = None
+        skills = []
+        if skill_ids:
+            skills = list(session.scalars(
+                select(Skill).where(
+                    Skill.id.in_(skill_ids),
+                    Skill.deleted_at.is_(None),
+                )
+            ).all())
+        return department, skills
         
 
 def get_users(
@@ -229,10 +302,10 @@ def count_active_assigned_tickets(agent_user_id: str) -> int:
 
 def _get_least_loaded_eligible_agent(
     session: Session,
+    ticket: Ticket,
     *,
     lock_for_update: bool = False,
 ) -> User | None:
-    #Department, skill, tag, and performance ranking deliberately do not belong in this first routing query.
     active_ticket_count = (
         select(func.count(Ticket.id))
         .where(
@@ -243,17 +316,37 @@ def _get_least_loaded_eligible_agent(
         .correlate(User)
         .scalar_subquery()
     )
+    matching_skill_count = (
+        select(func.count(agent_skills.c.skill_id))
+        .select_from(
+            agent_skills.join(
+                ticket_skills,
+                ticket_skills.c.skill_id == agent_skills.c.skill_id,
+            ).join(Skill, Skill.id == agent_skills.c.skill_id)
+        )
+        .where(
+            agent_skills.c.agent_user_id == User.id,
+            ticket_skills.c.ticket_id == ticket.id,
+            Skill.deleted_at.is_(None),
+        )
+        .correlate(User)
+        .scalar_subquery()
+    )
     statement = (
         select(User)
         .join(AgentProfile, AgentProfile.user_id == User.id)
+        .join(Department, Department.id == AgentProfile.department_id)
         .where(
             User.role == Role.AGENT,
             User.user_status == UserStatus.ACTIVE,
             User.deleted_at.is_(None),
             AgentProfile.availability_status == AvailabilityStatus.AVAILABLE,
+            AgentProfile.department_id == ticket.department_id,
+            Department.deleted_at.is_(None),
             active_ticket_count < AgentProfile.max_active_tickets,
         )
         .order_by(
+            matching_skill_count.desc(),
             active_ticket_count.asc(),
             AgentProfile.last_assigned_at.asc().nulls_first(),
             User.id.asc(),
@@ -267,9 +360,12 @@ def _get_least_loaded_eligible_agent(
     return session.scalar(statement)
 
 
-def get_least_loaded_eligible_agent() -> User | None:
+def get_least_loaded_eligible_agent(ticket_id: str) -> User | None:
     with Session(engine) as session:
-        return _get_least_loaded_eligible_agent(session)
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is None:
+            return None
+        return _get_least_loaded_eligible_agent(session, ticket)
 
 
 def update_agent_profile(
@@ -285,8 +381,13 @@ def update_agent_profile(
             if profile is None:
                 return None
 
+            skill_ids = new_info.pop("skill_ids", None)
             for field, value in new_info.items():
                 setattr(profile, field, value)
+            if skill_ids is not None:
+                profile.skills = list(session.scalars(
+                    select(Skill).where(Skill.id.in_(skill_ids))
+                ).all()) if skill_ids else []
             session.add(_event_from_data(event_data))
 
         session.refresh(profile)
@@ -421,7 +522,11 @@ def delete_all_users(event_data: list[Event] | None = None) -> int:
 # ==============================================================
 # ======================= TICKETS ==============================
 
-def create_ticket(ticket_data: Ticket, event_data: Event | None = None) -> Ticket:
+def create_ticket(
+    ticket_data: Ticket,
+    event_data: Event | None = None,
+    skill_ids: list[str] | None = None,
+) -> Ticket:
     with Session(engine) as session:
         with session.begin():
             ticket = Ticket(
@@ -430,6 +535,7 @@ def create_ticket(ticket_data: Ticket, event_data: Event | None = None) -> Ticke
                 description=ticket_data.description,
                 category=ticket_data.category,
                 tags=ticket_data.tags,
+                department_id=ticket_data.department_id,
                 assigned_agent_id=ticket_data.assigned_agent_id,
                 creator_user_id=ticket_data.creator_user_id,
                 status=ticket_data.status,
@@ -439,8 +545,14 @@ def create_ticket(ticket_data: Ticket, event_data: Event | None = None) -> Ticke
                 due_at=calculate_sla_due_at(
                     ticket_data.status,
                     ticket_data.created_at,
+                    ticket_data.priority,
                 ),
             )
+
+            if skill_ids:
+                ticket.requested_skills = list(session.scalars(
+                    select(Skill).where(Skill.id.in_(skill_ids))
+                ).all())
 
             session.add(ticket)
             if event_data is not None:
@@ -464,7 +576,9 @@ def get_tickets(
         sort_by: str = DEFAULT_SORT_BY,
         sort_order: str = DEFAULT_SORT_ORDER,
         priority: Priority | None = None,
-        status: Status | None = None
+        status: Status | None = None,
+        overdue: bool | None = None,
+        now: datetime | None = None,
 ) -> list[Ticket]:
     with Session(engine) as session: 
         sort_columns = {
@@ -481,6 +595,20 @@ def get_tickets(
             query = query.where(Ticket.priority == priority)
         if status:
             query = query.where(Ticket.status == status)
+        if overdue is not None:
+            comparison_time = now or utc_now()
+            if overdue:
+                query = query.where(
+                    Ticket.due_at.is_not(None),
+                    Ticket.due_at < comparison_time,
+                )
+            else:
+                query = query.where(
+                    or_(
+                        Ticket.due_at.is_(None),
+                        Ticket.due_at >= comparison_time,
+                    )
+                )
 
         query = query.order_by(order_exp).offset(offset)
         if limit is not None:
@@ -512,6 +640,71 @@ def get_waiting_ticket_ids(limit: int) -> list[str]:
         return list(session.scalars(statement).all())
 
 
+def record_overdue_ticket_events(limit: int, now: datetime) -> list[str]:
+    """Write one system-authored overdue event per ticket, atomically."""
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Overdue scan requires a timezone-aware timestamp")
+
+    with Session(engine) as session:
+        try:
+            if session.get_bind().dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            else:
+                session.begin()
+
+            overdue_event_exists = (
+                select(Event.id)
+                .where(
+                    Event.entity_type == EntityType.TICKET,
+                    Event.entity_id == Ticket.id,
+                    Event.event_type == EventType.TICKET_OVERDUE,
+                )
+                .correlate(Ticket)
+                .exists()
+            )
+            statement = (
+                select(Ticket)
+                .where(
+                    Ticket.deleted_at.is_(None),
+                    Ticket.due_at.is_not(None),
+                    Ticket.due_at < now,
+                    ~overdue_event_exists,
+                )
+                .order_by(Ticket.due_at.asc(), Ticket.id.asc())
+                .limit(limit)
+            )
+            if session.get_bind().dialect.name != "sqlite":
+                statement = statement.with_for_update(skip_locked=True)
+
+            tickets = list(session.scalars(statement).all())
+            for ticket in tickets:
+                session.add(Event(
+                    id=generate_id(),
+                    entity_type=EntityType.TICKET,
+                    entity_id=ticket.id,
+                    actor_type=ActorType.SYSTEM,
+                    actor_user_id=None,
+                    event_type=EventType.TICKET_OVERDUE,
+                    old_value=None,
+                    new_value=_audit_json({
+                        "status": ticket.status,
+                        "priority": ticket.priority,
+                        "due_at": ticket.due_at,
+                        "is_overdue": True,
+                    }),
+                    metadata_="source=overdue_scanner",
+                    idempotency_key=f"ticket-overdue:{ticket.id}",
+                    created_at=now,
+                ))
+            session.commit()
+            return [ticket.id for ticket in tickets]
+        except Exception:
+            session.rollback()
+            raise
+
+
 def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
@@ -522,13 +715,22 @@ def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> T
 
             old_assignee_id = ticket.assigned_agent_id
             now = event_data.created_at if event_data is not None else utc_now()
-            if "status" in new_info:
+            skill_ids = new_info.pop("skill_ids", None)
+            if "status" in new_info or "priority" in new_info:
                 new_info = {
                     **new_info,
-                    "due_at": calculate_sla_due_at(new_info["status"], now),
+                    "due_at": calculate_sla_due_at(
+                        new_info.get("status", ticket.status),
+                        now,
+                        new_info.get("priority", ticket.priority),
+                    ),
                 }
             for field, value in new_info.items():
                 setattr(ticket, field, value)
+            if skill_ids is not None:
+                ticket.requested_skills = list(session.scalars(
+                    select(Skill).where(Skill.id.in_(skill_ids))
+                ).all()) if skill_ids else []
             ticket.updated_at = now
             new_assignee_id = ticket.assigned_agent_id
             if new_assignee_id is not None and new_assignee_id != old_assignee_id:
@@ -576,7 +778,12 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
             if agent is None: return None
 
             now = event_data.created_at if event_data is not None else utc_now()
-            new_due_at = calculate_sla_due_at(Status.OPEN, now)
+            ticket_priority = session.scalar(
+                select(Ticket.priority).where(Ticket.id == ticket_id)
+            )
+            if ticket_priority is None:
+                return None
+            new_due_at = calculate_sla_due_at(Status.OPEN, now, ticket_priority)
             result = session.execute(
                 update(Ticket)
                 .where(
@@ -637,6 +844,7 @@ def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
 
             agent = _get_least_loaded_eligible_agent(
                 session,
+                ticket,
                 lock_for_update=True,
             )
             if agent is None:
@@ -648,7 +856,7 @@ def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
 
             now = utc_now()
             old_due_at = ticket.due_at
-            new_due_at = calculate_sla_due_at(Status.OPEN, now)
+            new_due_at = calculate_sla_due_at(Status.OPEN, now, ticket.priority)
             ticket.assigned_agent_id = agent.id
             ticket.status = Status.OPEN
             ticket.due_at = new_due_at
@@ -659,9 +867,8 @@ def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
                     id=generate_id(),
                     entity_type=EntityType.TICKET,
                     entity_id=ticket.id,
-                    # The ticket creator initiated the workflow. Metadata makes
-                    # clear that the assignment itself was performed by routing.
-                    actor_user_id=ticket.creator_user_id,
+                    actor_type=ActorType.SYSTEM,
+                    actor_user_id=None,
                     event_type=EventType.TICKET_ASSIGNED,
                     old_value=_audit_json(
                         {
@@ -704,7 +911,7 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | Non
 
             old_assignee_id = ticket.assigned_agent_id
             now = event_data.created_at if event_data is not None else utc_now()
-            ticket.due_at = calculate_sla_due_at(Status.OPEN, now)
+            ticket.due_at = calculate_sla_due_at(Status.OPEN, now, ticket.priority)
             ticket.assigned_agent_id = user.id
             ticket.status = Status.OPEN
             ticket.updated_at = now
@@ -759,7 +966,11 @@ def start_ticket_work(ticket_id: str, requester_id: str) -> StartWorkResult:
 
             now = utc_now()
             old_due_at = ticket.due_at
-            new_due_at = calculate_sla_due_at(Status.IN_PROGRESS, now)
+            new_due_at = calculate_sla_due_at(
+                Status.IN_PROGRESS,
+                now,
+                ticket.priority,
+            )
             ticket.status = Status.IN_PROGRESS
             ticket.due_at = new_due_at
             ticket.updated_at = now
@@ -809,11 +1020,13 @@ def _event_from_data(event_data: Event) -> Event:
         id=event_data.id,
         entity_type=event_data.entity_type,
         entity_id=event_data.entity_id,
+        actor_type=event_data.actor_type,
         actor_user_id=event_data.actor_user_id,
         event_type=event_data.event_type,
         old_value=event_data.old_value,
         new_value=event_data.new_value,
         metadata_=event_data.metadata,
+        idempotency_key=event_data.idempotency_key,
         created_at=event_data.created_at,
         batch_id=event_data.batch_id
     )

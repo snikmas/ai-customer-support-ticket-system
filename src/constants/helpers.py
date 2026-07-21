@@ -1,6 +1,6 @@
 import logging
 from uuid import uuid4
-from .enums import Role, Status, Tag, JobStatus
+from .enums import JobStatus, Priority, Role, Status, Tag
 from src.models.jobs import JobResponse, JobStatusResponse, Job
 import json
 from datetime import datetime, timedelta, timezone
@@ -18,26 +18,50 @@ MAX_PAGE_LIMIT = 100
 DEFAULT_SORT_BY="created_at"
 DEFAULT_SORT_ORDER="desc"
 
-SLA_HOURS = {
+SLA_BASE_HOURS = {
     Status.NEW: 2,
     Status.OPEN: 6,
     Status.IN_PROGRESS: 12,
     Status.REOPENED: 4
+}
+SLA_HOURS = SLA_BASE_HOURS
+
+SLA_PRIORITY_MULTIPLIERS = {
+    Priority.CRITICAL: 0.25,
+    Priority.HIGH: 0.5,
+    Priority.NORMAL: 1.0,
+    Priority.LOW: 2.0,
 }
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def calculate_sla_due_at(status: Status, now: datetime) -> datetime | None:
-    """Return the UTC deadline for one ticket status stage."""
+def calculate_sla_due_at(
+    status: Status,
+    now: datetime,
+    priority: Priority = Priority.NORMAL,
+) -> datetime | None:
+    """Return one priority-adjusted UTC deadline for a ticket stage."""
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("SLA calculation requires a timezone-aware timestamp")
 
-    hours = SLA_HOURS.get(status)
-    if hours is None:
+    base_hours = SLA_BASE_HOURS.get(status)
+    if base_hours is None:
         return None
-    return now.astimezone(timezone.utc) + timedelta(hours=hours)
+    multiplier = SLA_PRIORITY_MULTIPLIERS[priority]
+    return now.astimezone(timezone.utc) + timedelta(hours=base_hours * multiplier)
+
+
+def is_ticket_overdue(due_at: datetime | None, now: datetime) -> bool:
+    """A deadline is overdue only after, not exactly at, its UTC boundary."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Overdue calculation requires a timezone-aware timestamp")
+    if due_at is None:
+        return False
+    if due_at.tzinfo is None or due_at.utcoffset() is None:
+        raise ValueError("Ticket deadline must be timezone-aware")
+    return now.astimezone(timezone.utc) > due_at.astimezone(timezone.utc)
 
 
 ROLE_LEVELS = {

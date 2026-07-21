@@ -70,6 +70,7 @@ def _ticket(
         description="Description",
         category=constants.Category.ACCOUNT_ACCESS,
         tags=None,
+        department_id="support",
         assigned_agent_id=assigned_agent_id,
         creator_user_id="customer",
         status=status,
@@ -100,6 +101,17 @@ def _seed(
     profiles: list[db_models.AgentProfile],
 ) -> None:
     with Session(test_engine) as session, session.begin():
+        session.add(
+            db_models.Department(
+                id="support",
+                name="Support",
+                normalized_name="support",
+                description=None,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+        )
         session.add(_user("customer", constants.Role.USER, now))
         session.add_all(
             _user(profile.user_id, constants.Role.AGENT, now)
@@ -150,7 +162,8 @@ def test_try_route_ticket_assigns_and_audits_atomically(
         assert agent_a.last_assigned_at is not None
         assert agent_b.last_assigned_at == stored_previous_assignment
         assert event.entity_id == "ticket"
-        assert event.actor_user_id == "customer"
+        assert event.actor_type is constants.ActorType.SYSTEM
+        assert event.actor_user_id is None
         assert event.event_type is constants.EventType.TICKET_ASSIGNED
         assert event.metadata_ == "source=automatic_router"
         assert json.loads(event.old_value) == {

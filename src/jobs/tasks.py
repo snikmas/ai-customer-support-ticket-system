@@ -7,10 +7,12 @@ from sqlalchemy.exc import OperationalError
 from src.cache import delete_ticket as delete_cached_ticket
 from src.db import (
     get_ticket,
+    record_overdue_ticket_events,
     try_route_ticket,
 )
 from src.exceptions import TicketNotFoundError
 from src.constants import TicketRoutingOutcome, logger
+from src.constants import utc_now
 
 TEMPORARY_ROUTING_ERRORS = (
     ConnectionError,
@@ -90,3 +92,11 @@ def route_ticket(ticket_id: str) -> dict:
         "ticket_id": result.ticket_id,
         "assigned_agent_id": result.assigned_agent_id,
     }
+
+
+def scan_overdue_tickets(batch_size: int) -> dict:
+    """Record one bounded page of idempotent SLA-overdue events."""
+    ticket_ids = record_overdue_ticket_events(batch_size, utc_now())
+    result = {"scanned": len(ticket_ids), "ticket_ids": ticket_ids}
+    logger.info("Overdue ticket scan completed", extra=result)
+    return result

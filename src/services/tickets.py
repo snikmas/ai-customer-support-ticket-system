@@ -8,6 +8,7 @@ from src.exceptions.domain import (
     AuditLogError,
     AuthorizationError,
     EmptyUpdateError,
+    InactiveRoutingCatalogError,
     InternalOperationError,
     InvalidAssigneeError,
     TicketAlreadyAssignedError,
@@ -27,10 +28,55 @@ from src.services.routing import dispatch_waiting_tickets_after_capacity_event
 from src.constants import logger
 import json
 
-def _to_api_ticket(ticket: db_models.Ticket) -> api_models.Ticket:
+def _to_api_ticket(
+    ticket: db_models.Ticket,
+    *,
+    now: datetime | None = None,
+) -> api_models.Ticket:
     if ticket.tags is None or isinstance(ticket.tags, str):
         ticket.tags = constants.deserialize_tags(ticket.tags)
-    return api_models.Ticket.model_validate(ticket, from_attributes=True)
+    response = api_models.Ticket.model_validate(ticket, from_attributes=True)
+    return response.model_copy(update={
+        "is_overdue": constants.is_ticket_overdue(
+            response.due_at,
+            now or constants.utc_now(),
+        )
+    })
+
+
+def _validate_routing_catalog_selection(
+    department_id: str | None,
+    skill_ids: list[str],
+) -> None:
+    department, active_skills = operations.active_routing_catalog_selection(
+        department_id,
+        skill_ids,
+    )
+    if department is None:
+        raise InactiveRoutingCatalogError("Ticket department is missing or archived")
+    if len(active_skills) != len(skill_ids):
+        raise InactiveRoutingCatalogError("One or more ticket skills are missing or archived")
+
+
+def _require_same_active_department(
+    ticket: db_models.Ticket,
+    agent_id: str,
+) -> None:
+    profile = operations.get_agent_profile(agent_id)
+    if profile is None or profile.department_id != ticket.department_id:
+        raise InvalidAssigneeError(
+            "Assignee must belong to the ticket department",
+            code="assignee_department_mismatch",
+        )
+    department, _ = operations.active_routing_catalog_selection(
+        profile.department_id,
+        [],
+    )
+    if department is None:
+        raise InvalidAssigneeError(
+            "Assignee department is archived",
+            code="assignee_department_inactive",
+        )
 
 
 def _can_read_ticket(ticket: db_models.Ticket, requester: api_models.User) -> bool:
@@ -57,6 +103,7 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
 
     if (check_for_access(requester.role, constants.Role.USER)) is False:
         raise AuthorizationError()
+    _validate_routing_catalog_selection(ticket_data.department_id, ticket_data.skill_ids)
     
     ticket = db_models.Ticket(
         id=constants.generate_id(),
@@ -64,13 +111,18 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         description=ticket_data.description,
         category=ticket_data.category,
         tags=constants.serialize_tags(ticket_data.tags),
+        department_id=ticket_data.department_id,
         assigned_agent_id=None,
         creator_user_id=requester.id,
         status=constants.Status.NEW,
         priority=constants.Priority.NORMAL,
         updated_at=now,
         created_at=now,
-        due_at=constants.calculate_sla_due_at(constants.Status.NEW, now),
+        due_at=constants.calculate_sla_due_at(
+            constants.Status.NEW,
+            now,
+            constants.Priority.NORMAL,
+        ),
         deleted_at=None
     )
     
@@ -84,13 +136,15 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         new_value=constants._audit_json({
             "ticket_id": ticket.id,
             "status": ticket.status,
+            "department_id": ticket.department_id,
+            "skill_ids": ticket_data.skill_ids,
             "due_at": ticket.due_at,
         }),
         metadata=None,
         created_at=now
     )
 
-    ticket = operations.create_ticket(ticket, event)
+    ticket = operations.create_ticket(ticket, event, ticket_data.skill_ids)
     api_ticket = _to_api_ticket(ticket)
 
     # The database commit above is deliberately the point of durability.
@@ -148,16 +202,27 @@ def get_all_tickets(
         sort_by: str,
         sort_order: str,
         priority: constants.Priority | None,
-        status: constants.Status | None
+        status: constants.Status | None,
+        overdue: bool | None = None,
         ) -> list[api_models.Ticket]:
     
     
     # Permission filtering must happen before pagination. Otherwise a page can
     # be short or empty simply because unauthorized rows occupied its DB slice.
-    tickets = operations.get_tickets(None, 0, sort_by, sort_order, priority, status)
+    now = constants.utc_now()
+    tickets = operations.get_tickets(
+        None,
+        0,
+        sort_by,
+        sort_order,
+        priority,
+        status,
+        overdue,
+        now,
+    )
     visible_tickets = [ticket for ticket in tickets if _can_read_ticket(ticket, requester)]
     page = visible_tickets[offset:offset + limit]
-    return [_to_api_ticket(ticket) for ticket in page]
+    return [_to_api_ticket(ticket, now=now) for ticket in page]
 
 
 _CUSTOMER_HISTORY_FIELDS = frozenset({
@@ -166,6 +231,9 @@ _CUSTOMER_HISTORY_FIELDS = frozenset({
     "body",
     "visibility",
     "deleted_at",
+    "due_at",
+    "priority",
+    "is_overdue",
 })
 
 
@@ -235,6 +303,7 @@ def get_ticket_history(
             id=event.id,
             entity_type=event.entity_type,
             entity_id=event.entity_id,
+            actor_type=event.actor_type,
             actor_user_id=None if is_customer else event.actor_user_id,
             event_type=event.event_type,
             old_value=old_value,
@@ -271,6 +340,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     
     requested_fields = set(updated_info.keys())
     status_was_requested = "status" in requested_fields
+    routing_fields = {"department_id", "skill_ids"} & requested_fields
 
     if requester.role == constants.Role.USER:
         if ticket.creator_user_id != requester.id:
@@ -301,11 +371,36 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             "assigned_agent_id",
             "priority",
             "tags",
+            "department_id",
+            "skill_ids",
             }
         if requested_fields - allowed_fields:
             raise AuthorizationError("You cannot update these ticket fields", code="ticket_fields_not_allowed")
     else:
         raise AuthorizationError()
+
+    if routing_fields:
+        if requester.role not in [
+            constants.Role.MANAGER,
+            constants.Role.ADMIN,
+            constants.Role.SUPER_ADMIN,
+        ]:
+            raise AuthorizationError(
+                "Only managers can change ticket routing metadata",
+                code="ticket_routing_metadata_forbidden",
+            )
+        if ticket.status is not constants.Status.NEW or ticket.assigned_agent_id is not None:
+            raise TicketStatusConflictError(
+                "Ticket routing metadata is locked after assignment",
+                code="ticket_routing_metadata_locked",
+            )
+        if "department_id" in routing_fields and updated_info["department_id"] is None:
+            raise InactiveRoutingCatalogError("Ticket department must be active")
+        if "skill_ids" in routing_fields and updated_info["skill_ids"] is None:
+            raise InactiveRoutingCatalogError("Ticket skill IDs must be a list")
+        selected_department_id = updated_info.get("department_id", ticket.department_id)
+        selected_skill_ids = updated_info.get("skill_ids", ticket.skill_ids)
+        _validate_routing_catalog_selection(selected_department_id, selected_skill_ids)
     
     if 'assigned_agent_id' in updated_info:
         if ticket.status not in constants.TICKET_ASSIGNABLE_STATUSES:
@@ -364,10 +459,18 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
         updated_info["due_at"] = constants.calculate_sla_due_at(
             updated_info["status"],
             transition_at,
+            updated_info.get("priority", ticket.priority),
         )
         audit_new_info["due_at"] = constants._audit_value(
             updated_info["due_at"]
         )
+    elif "priority" in updated_info:
+        updated_info["due_at"] = constants.calculate_sla_due_at(
+            ticket.status,
+            transition_at,
+            updated_info["priority"],
+        )
+        audit_new_info["due_at"] = constants._audit_value(updated_info["due_at"])
         
     
     old_info = {}
@@ -376,6 +479,8 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
 
         if field == 'tags':
             old_info[field] = [tag.value for tag in constants.deserialize_tags(old_value)]
+        elif field == "skill_ids":
+            old_info[field] = list(ticket.skill_ids)
         elif hasattr(old_value, 'value'):
             old_info[field] = old_value.value
         else:
@@ -539,12 +644,14 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     
     if ticket.status != constants.Status.NEW:
         raise TicketStatusConflictError("Only new tickets can be claimed")
+    _require_same_active_department(ticket, requester.id)
     
 
     transition_at = constants.utc_now()
     new_due_at = constants.calculate_sla_due_at(
         constants.Status.OPEN,
         transition_at,
+        ticket.priority,
     )
     event = api_models.Event(
         id=constants.generate_id(),
@@ -604,11 +711,13 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
 
     if agent.role != constants.Role.AGENT:
         raise InvalidAssigneeError("Assignee must be an agent", code="assignee_must_be_agent")
+    _require_same_active_department(ticket, agent.id)
 
     transition_at = constants.utc_now()
     new_due_at = constants.calculate_sla_due_at(
         constants.Status.OPEN,
         transition_at,
+        ticket.priority,
     )
     event = api_models.Event(
        id=constants.generate_id(),

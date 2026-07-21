@@ -27,3 +27,11 @@ from .session import (
 )
 from .comments import Comment, CommentCreate, CommentUpdate
 from .jobs import JobResponse, JobStatusResponse, Job
+from .routing_catalogs import (
+    DepartmentCreate,
+    DepartmentResponse,
+    DepartmentUpdate,
+    SkillCreate,
+    SkillResponse,
+    SkillUpdate,
+)

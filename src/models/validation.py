@@ -69,4 +69,14 @@ LongBody = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=32_000),
 ]
 EntityId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+RoutingCatalogName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+    AfterValidator(_reject_control_characters),
+]
+RoutingCatalogDescription = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
+    AfterValidator(_reject_control_characters),
+]
 RefreshToken = Annotated[str, StringConstraints(min_length=1, max_length=4_096)]

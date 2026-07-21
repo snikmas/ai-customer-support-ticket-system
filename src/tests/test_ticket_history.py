@@ -213,7 +213,10 @@ def test_customer_history_hides_internal_comments_and_staff_only_details(
 
     assert "07" not in {event.id for event in history}
     assignment = next(event for event in history if event.id == "03")
-    assert assignment.new_value == {"status": constants.Status.OPEN.value}
+    assert assignment.new_value == {
+        "status": constants.Status.OPEN.value,
+        "due_at": (now + timedelta(hours=6)).isoformat(),
+    }
     assert assignment.actor_user_id is None
     assert assignment.metadata is None
     public_comment = next(event for event in history if event.id == "06")

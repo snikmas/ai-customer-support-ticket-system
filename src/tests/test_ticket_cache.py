@@ -148,6 +148,7 @@ def test_ticket_claim_invalidates_its_cache_entry(monkeypatch, make_user, make_t
 
     monkeypatch.setattr(ticket_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(ticket_service.operations, "claim_ticket", lambda *_: ticket)
+    monkeypatch.setattr(ticket_service, "_require_same_active_department", lambda *_: None)
     monkeypatch.setattr(
         ticket_service, "delete_cached_ticket", lambda ticket_id: invalidated_ids.append(ticket_id) or True
     )
@@ -166,6 +167,7 @@ def test_ticket_assignment_invalidates_its_cache_entry(monkeypatch, make_user, m
     monkeypatch.setattr(ticket_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(ticket_service.operations, "get_user", lambda _: agent)
     monkeypatch.setattr(ticket_service.operations, "assign_ticket", lambda *_: ticket)
+    monkeypatch.setattr(ticket_service, "_require_same_active_department", lambda *_: None)
     monkeypatch.setattr(
         ticket_service, "delete_cached_ticket", lambda ticket_id: invalidated_ids.append(ticket_id) or True
     )

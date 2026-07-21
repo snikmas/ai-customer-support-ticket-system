@@ -1,7 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.constants.enums import AvailabilityReason, AvailabilityStatus, Role, UserStatus
-from .validation import AvatarUrl, EmailAddress, NewPassword, Nickname, PersonName, PhoneNumber
+from .validation import AvatarUrl, EmailAddress, EntityId, NewPassword, Nickname, PersonName, PhoneNumber
 
 
 class User(BaseModel):
@@ -84,7 +84,15 @@ class AgentProfileManagementUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_active_tickets: int | None = Field(default=None, ge=0, le=100)
-    department_id: str | None = Field(default=None, max_length=36)
+    department_id: EntityId | None = None
+    skill_ids: list[EntityId] | None = Field(default=None, max_length=50)
+
+    @field_validator("skill_ids")
+    @classmethod
+    def reject_duplicate_skill_ids(cls, value: list[str] | None):
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("duplicate_skill_ids")
+        return value
 
 
 class AgentProfileResponse(BaseModel):
@@ -96,6 +104,7 @@ class AgentProfileResponse(BaseModel):
     max_active_tickets: int
     last_assigned_at: datetime | None = None
     department_id: str | None = None
+    skill_ids: list[str] = Field(default_factory=list)
     current_active_tickets: int
     can_receive_new_tickets: bool
     created_at: datetime

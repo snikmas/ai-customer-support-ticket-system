@@ -1,7 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, model_validator
 from typing import Any
-from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EntityType, EventType
+from src.constants.enums import ActorType, Status, Category, Tag, Priority, Role, UserStatus, EntityType, EventType
 from .validation import EmailAddress, LoginPassword, Nickname, RefreshToken
 
 
@@ -45,19 +45,30 @@ class Event(BaseModel):
     id: str
     entity_type: EntityType
     entity_id: str | None = None
-    actor_user_id: str
+    actor_type: ActorType = ActorType.HUMAN
+    actor_user_id: str | None
     event_type: EventType
     old_value: str | None = None
     new_value: str
     batch_id: str | None = None
     metadata: str | None = None
+    idempotency_key: str | None = None
     created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_actor_contract(self):
+        if self.actor_type is ActorType.HUMAN and self.actor_user_id is None:
+            raise ValueError("human_actor_requires_user_id")
+        if self.actor_type is ActorType.SYSTEM and self.actor_user_id is not None:
+            raise ValueError("system_actor_cannot_have_user_id")
+        return self
 
 
 class TicketHistoryEvent(BaseModel):
     id: str
     entity_type: EntityType
     entity_id: str | None = None
+    actor_type: ActorType
     actor_user_id: str | None = None
     event_type: EventType
     old_value: dict[str, Any] | None = None

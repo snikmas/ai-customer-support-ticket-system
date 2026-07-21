@@ -53,6 +53,7 @@ def _ticket(
         description="Description",
         category=constants.Category.ACCOUNT_ACCESS,
         tags=None,
+        department_id="support",
         assigned_agent_id=assigned_agent_id,
         creator_user_id=creator_id,
         status=status,
@@ -89,6 +90,19 @@ def _database(monkeypatch, tmp_path):
         f"sqlite+pysqlite:///{tmp_path / 'routing-reconciliation.db'}"
     )
     db_models.Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session, session.begin():
+        session.add(
+            db_models.Department(
+                id="support",
+                name="Support",
+                normalized_name="support",
+                description=None,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+        )
     monkeypatch.setattr(operations, "engine", engine)
     return engine
 

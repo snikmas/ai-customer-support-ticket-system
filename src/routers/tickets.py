@@ -23,9 +23,19 @@ def get_tickets(requester = Depends(get_current_user),
                     sort_by: Literal['created_at', 'updated_at', 'status', 'priority'] = constants.DEFAULT_SORT_BY,
                     sort_order: Literal['asc', 'desc'] = constants.DEFAULT_SORT_ORDER,
                     priority: constants.Priority | None = None,
-                    status: constants.Status | None = None
+                    status: constants.Status | None = None,
+                    overdue: bool | None = None,
                     ):
-    data = s_tickets.get_all_tickets(requester, limit, offset, sort_by, sort_order, priority, status)
+    data = s_tickets.get_all_tickets(
+        requester,
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        priority,
+        status,
+        overdue,
+    )
     return {"data": data}
 
 

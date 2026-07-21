@@ -278,7 +278,12 @@ def test_create_ticket_preserves_committed_ticket_when_enqueue_fails(
     monkeypatch.setattr(
         ticket_service.operations,
         "create_ticket",
-        lambda ticket, event: stored_ticket,
+        lambda ticket, event, skill_ids: stored_ticket,
+    )
+    monkeypatch.setattr(
+        ticket_service,
+        "_validate_routing_catalog_selection",
+        lambda *_: None,
     )
     monkeypatch.setattr(
         ticket_service,
@@ -293,6 +298,7 @@ def test_create_ticket_preserves_committed_ticket_when_enqueue_fails(
             description="My API key is rejected by the service.",
             category=constants.Category.ACCOUNT_ACCESS,
             tags=[constants.Tag.API_KEY],
+            department_id="support",
         ),
         requester,
     )
@@ -316,7 +322,7 @@ def test_create_ticket_enqueues_only_after_database_create_returns(
     )
     call_order = []
 
-    def fake_database_create(ticket, event):
+    def fake_database_create(ticket, event, skill_ids):
         call_order.append(("committed", ticket.status, ticket.assigned_agent_id))
         return stored_ticket
 
@@ -334,6 +340,11 @@ def test_create_ticket_enqueues_only_after_database_create_returns(
         "enqueue_ticket_routing_job",
         fake_enqueue,
     )
+    monkeypatch.setattr(
+        ticket_service,
+        "_validate_routing_catalog_selection",
+        lambda *_: None,
+    )
 
     result = ticket_service.create_ticket(
         TicketCreate(
@@ -341,6 +352,7 @@ def test_create_ticket_enqueues_only_after_database_create_returns(
             description="My API key is rejected by the service.",
             category=constants.Category.ACCOUNT_ACCESS,
             tags=[constants.Tag.API_KEY],
+            department_id="support",
         ),
         requester,
     )

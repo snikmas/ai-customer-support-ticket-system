@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType, AnalysisStatus
 from .validation import EntityId, LongBody, RefreshToken, TicketTitle
 
@@ -9,6 +9,8 @@ class Ticket(BaseModel):
     description: str
     category: Category
     tags: list[Tag]
+    department_id: str | None = None
+    skill_ids: list[str] = Field(default_factory=list)
 
     assigned_agent_id: str | None = None # cor assignee_id
     creator_user_id: str
@@ -18,6 +20,7 @@ class Ticket(BaseModel):
     updated_at: datetime
     created_at: datetime
     due_at: datetime | None = None
+    is_overdue: bool = False
 
     deleted_at: datetime | None = None
 
@@ -28,6 +31,15 @@ class TicketCreate(BaseModel): #ticket that creates a user
     description: LongBody
     category: Category
     tags: list[Tag] = Field(default_factory=list, max_length=10)
+    department_id: EntityId
+    skill_ids: list[EntityId] = Field(default_factory=list, max_length=20)
+
+    @field_validator("skill_ids")
+    @classmethod
+    def reject_duplicate_skill_ids(cls, value: list[str]):
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate_skill_ids")
+        return value
 
 #ticket update only for agents
 class TicketUpdate(BaseModel): 
@@ -38,6 +50,15 @@ class TicketUpdate(BaseModel):
     status: Status | None = None
     priority: Priority | None = None
     deleted_at: datetime | None = None
+    department_id: EntityId | None = None
+    skill_ids: list[EntityId] | None = Field(default=None, max_length=20)
+
+    @field_validator("skill_ids")
+    @classmethod
+    def reject_duplicate_skill_ids(cls, value: list[str] | None):
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("duplicate_skill_ids")
+        return value
 
 
 class RefreshTokenRequest(BaseModel):
