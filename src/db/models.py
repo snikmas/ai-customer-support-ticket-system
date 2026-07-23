@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy import CheckConstraint, Column, ForeignKey, String, Time, Interval, Enum, DateTime, Table, Text
+from sqlalchemy import CheckConstraint, Column, ForeignKey, String, Time, Interval, Enum, DateTime, Table, Text, Index, Integer, text
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from datetime import datetime, timedelta, timezone
@@ -313,18 +313,86 @@ class RefreshSession(Base):
 # =================================================================
 class AnalysisResult(Base):
     __tablename__ = 'analysis_result'
+    __table_args__ = (
+        CheckConstraint(
+            "attempt_count >= 0 AND attempt_count <= 3",
+            name="ck_analysis_result_attempt_count",
+        ),
+        CheckConstraint(
+            """
+            (
+                status = 'PENDING'
+                AND summary IS NULL
+                AND error_code IS NULL
+                AND error_message IS NULL
+                AND completed_at IS NULL
+                AND attempt_count < 3
+            )
+            OR (
+                status = 'RUNNING'
+                AND summary IS NULL
+                AND error_code IS NULL
+                AND error_message IS NULL
+                AND started_at IS NOT NULL
+                AND completed_at IS NULL
+                AND attempt_count BETWEEN 1 AND 3
+            )
+            OR (
+                status = 'COMPLETED'
+                AND summary IS NOT NULL
+                AND error_code IS NULL
+                AND error_message IS NULL
+                AND started_at IS NOT NULL
+                AND completed_at IS NOT NULL
+                AND attempt_count BETWEEN 1 AND 3
+            )
+            OR (
+                status = 'FAILED'
+                AND summary IS NULL
+                AND error_code IS NOT NULL
+                AND error_message IS NOT NULL
+                AND completed_at IS NOT NULL
+            )
+            """,
+            name="ck_analysis_result_lifecycle",
+        ),
+        Index(
+            "uq_analysis_result_active_ticket",
+            "ticket_id",
+            unique=True,
+            sqlite_where=text(
+                "ticket_id IS NOT NULL AND status IN ('PENDING', 'RUNNING')"
+            ),
+            postgresql_where=text(
+                "ticket_id IS NOT NULL AND status IN ('PENDING', 'RUNNING')"
+            ),
+        ),
+    )
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    summary: Mapped[str] = mapped_column(String(300))
-    full_description: Mapped[str] = mapped_column(String(2000))
-    ticket_id: Mapped[str] = mapped_column(
-                                String(36),
-                                ForeignKey('tickets.id', ondelete='SET NULL')
-                                )
-    job_id: Mapped[str] = mapped_column(String(36))
-    requester_id: Mapped[str] = mapped_column(
-                                String(36),
-                                ForeignKey('users.id', ondelete='SET NULL')
-                                )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    status: Mapped[AnalysisStatus] = mapped_column(Enum(AnalysisStatus))
+    input_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ticket_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey('tickets.id', ondelete='SET NULL'),
+        nullable=True,
+    )
+    job_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    requester_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    status: Mapped[AnalysisStatus] = mapped_column(
+        Enum(AnalysisStatus),
+        nullable=False,
+        default=AnalysisStatus.PENDING,
+    )
                                 

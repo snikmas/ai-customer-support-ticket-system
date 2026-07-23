@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from src.routers import users, tickets, auth, jobs, routing_catalogs
+from src.routers import analysis, users, tickets, auth, jobs, routing_catalogs
 from src.cache import close_redis_client, initialize_redis_client, ping_redis
 from src.core import REDIS_ENABLED, setup_logging
 from src.constants import logger
@@ -48,6 +48,7 @@ async def handle_app_exception(request: Request, exc: AppException):
                 "message": exc.message,
             }
         },
+        headers=exc.headers,
     )
 
 
@@ -102,6 +103,7 @@ app.include_router(auth.router)
 app.include_router(jobs.router)
 app.include_router(routing_catalogs.departments_router)
 app.include_router(routing_catalogs.skills_router)
+app.include_router(analysis.router)
 
 @app.get("/")
 async def root():

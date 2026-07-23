@@ -194,3 +194,140 @@ def migrate_event_actor_contract(engine: Engine) -> None:
             )
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         connection.commit()
+
+
+def migrate_analysis_result_contract(engine: Engine) -> None:
+    """Rebuild the unfinished legacy analysis table into its durable contract."""
+    inspector = inspect(engine)
+    if "analysis_result" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"]: column for column in inspector.get_columns("analysis_result")}
+    required_columns = {
+        "input_snapshot",
+        "summary",
+        "error_code",
+        "error_message",
+        "ticket_id",
+        "job_id",
+        "requester_id",
+        "attempt_count",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "updated_at",
+        "status",
+    }
+    already_current = (
+        required_columns.issubset(columns)
+        and columns["ticket_id"]["nullable"]
+        and columns["requester_id"]["nullable"]
+        and columns["job_id"]["nullable"]
+        and columns["summary"]["nullable"]
+    )
+    if already_current:
+        return
+    if engine.dialect.name != "sqlite":
+        raise RuntimeError(
+            "Existing non-SQLite analysis_result tables require a managed migration"
+        )
+
+    legacy_snapshot = (
+        '{"title":"Legacy analysis","description":"Input snapshot unavailable",'
+        '"category":"Account Access","tags":[],"priority":2,"status":"New"}'
+    )
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        connection.commit()
+        with connection.begin():
+            connection.exec_driver_sql(
+                "DROP TABLE IF EXISTS analysis_result__contract_migration"
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TABLE analysis_result__contract_migration (
+                    id VARCHAR(36) NOT NULL PRIMARY KEY,
+                    input_snapshot TEXT NOT NULL,
+                    summary VARCHAR(300),
+                    error_code VARCHAR(50),
+                    error_message VARCHAR(255),
+                    ticket_id VARCHAR(36),
+                    job_id VARCHAR(100),
+                    requester_id VARCHAR(36),
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL,
+                    started_at DATETIME,
+                    completed_at DATETIME,
+                    updated_at DATETIME NOT NULL,
+                    status VARCHAR(9) NOT NULL,
+                    CONSTRAINT ck_analysis_result_attempt_count
+                        CHECK (attempt_count >= 0 AND attempt_count <= 3),
+                    CONSTRAINT ck_analysis_result_lifecycle CHECK (
+                        (
+                            status = 'PENDING'
+                            AND summary IS NULL
+                            AND error_code IS NULL
+                            AND error_message IS NULL
+                            AND completed_at IS NULL
+                            AND attempt_count < 3
+                        )
+                        OR (
+                            status = 'RUNNING'
+                            AND summary IS NULL
+                            AND error_code IS NULL
+                            AND error_message IS NULL
+                            AND started_at IS NOT NULL
+                            AND completed_at IS NULL
+                            AND attempt_count BETWEEN 1 AND 3
+                        )
+                        OR (
+                            status = 'COMPLETED'
+                            AND summary IS NOT NULL
+                            AND error_code IS NULL
+                            AND error_message IS NULL
+                            AND started_at IS NOT NULL
+                            AND completed_at IS NOT NULL
+                            AND attempt_count BETWEEN 1 AND 3
+                        )
+                        OR (
+                            status = 'FAILED'
+                            AND summary IS NULL
+                            AND error_code IS NOT NULL
+                            AND error_message IS NOT NULL
+                            AND completed_at IS NOT NULL
+                        )
+                    ),
+                    FOREIGN KEY(ticket_id) REFERENCES tickets (id) ON DELETE SET NULL,
+                    FOREIGN KEY(requester_id) REFERENCES users (id) ON DELETE SET NULL
+                )
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                INSERT INTO analysis_result__contract_migration (
+                    id, input_snapshot, summary, error_code, error_message,
+                    ticket_id, job_id, requester_id, attempt_count, created_at,
+                    started_at, completed_at, updated_at, status
+                )
+                SELECT
+                    id, ?, NULL, 'legacy_contract_migrated',
+                    'Legacy analysis could not be resumed',
+                    ticket_id, job_id, requester_id, 0, created_at,
+                    NULL, created_at, created_at, 'FAILED'
+                FROM analysis_result
+                """,
+                (legacy_snapshot,),
+            )
+            connection.exec_driver_sql("DROP TABLE analysis_result")
+            connection.exec_driver_sql(
+                "ALTER TABLE analysis_result__contract_migration RENAME TO analysis_result"
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE UNIQUE INDEX uq_analysis_result_active_ticket
+                ON analysis_result (ticket_id)
+                WHERE ticket_id IS NOT NULL AND status IN ('PENDING', 'RUNNING')
+                """
+            )
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        connection.commit()

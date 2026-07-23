@@ -73,13 +73,18 @@ class AssignTicketRequest(BaseModel):
 
 
 class AnalysisResult(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='forbid', from_attributes=True)
 
     id: str
-    summary: str
-    full_description: str
-    ticket_id: str
-    job_id: str
-    requester_id: str
+    summary: str | None
+    error_code: str | None
+    error_message: str | None
+    ticket_id: str | None
+    job_id: str | None
+    requester_id: str | None
+    attempt_count: int
     created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    updated_at: datetime
     status: AnalysisStatus

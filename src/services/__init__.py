@@ -8,7 +8,6 @@ from .tickets import (
     get_all_tickets,
     get_ticket,
     update_ticket,
-    analysis_job
 )
 from .users import (
     create_user,

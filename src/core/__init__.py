@@ -1,6 +1,8 @@
 from .logging import setup_logging
 from .security import hash_password, verify_password
 from .config import (
+    ANALYSIS_RATE_LIMIT_MAX_REQUESTS,
+    ANALYSIS_RATE_LIMIT_WINDOW_SECONDS,
     DATABASE_URL,
     DATABASE_ECHO,
     LOGIN_RATE_LIMIT_MAX_ATTEMPTS,

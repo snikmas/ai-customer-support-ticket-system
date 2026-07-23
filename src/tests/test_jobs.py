@@ -7,9 +7,7 @@ import pytest
 from src import constants
 from src.jobs import service as jobs_service
 from src.jobs import tasks as job_tasks
-from src.exceptions import AuthorizationError, TicketNotFoundError
-from src.models import JobResponse
-from src.services import tickets as ticket_service
+from src.exceptions import AuthorizationError
 
 
 @pytest.mark.parametrize(
@@ -65,7 +63,7 @@ def test_get_job_hides_result_while_job_is_not_finished(monkeypatch, make_user):
     assert response.result is None
 
 
-def test_start_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
+def test_analysis_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
     captured = {}
 
     class FakeJob:
@@ -75,10 +73,10 @@ def test_start_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
             return "queued"
 
     class FakeQueue:
-        def enqueue(self, function, ticket_id, **settings):
+        def enqueue(self, function, analysis_result_id, **settings):
             captured.update(
                 function=function,
-                ticket_id=ticket_id,
+                analysis_result_id=analysis_result_id,
                 settings=settings,
             )
             return FakeJob()
@@ -86,16 +84,23 @@ def test_start_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
     monkeypatch.setattr(jobs_service, "get_ticket_jobs_queue", lambda: FakeQueue())
     caplog.set_level("INFO")
 
-    response = jobs_service.start_ticket_inspection_job("ticket-1")
+    job = jobs_service.enqueue_analysis_result_job("result-1")
 
     assert captured == {
-        "function": job_tasks.inspect_ticket,
-        "ticket_id": "ticket-1",
-        "settings": {"job_timeout": 180, "result_ttl": 600},
+        "function": job_tasks.analyze_analysis_result,
+        "analysis_result_id": "result-1",
+        "settings": {
+            "job_timeout": 180,
+            "result_ttl": 600,
+            "failure_ttl": 86400,
+            "retry": captured["settings"]["retry"],
+            "meta": {"analysis_result_id": "result-1"},
+        },
     }
-    assert response.job_id == "job-1"
-    assert response.status is constants.JobStatus.QUEUED
-    assert "Ticket inspection job enqueued" in caplog.text
+    assert captured["settings"]["retry"].max == 2
+    assert captured["settings"]["retry"].intervals == [5, 15]
+    assert job.id == "job-1"
+    assert "Analysis job enqueued" in caplog.text
 
 
 def test_get_job_rejects_non_agent_before_reading_redis(monkeypatch, make_user):
@@ -109,92 +114,12 @@ def test_get_job_rejects_non_agent_before_reading_redis(monkeypatch, make_user):
         jobs_service.get_job("job-1", make_user(role=constants.Role.USER))
 
 
-def test_job_creation_rejects_customer_before_cache_or_redis(monkeypatch, make_user):
-    monkeypatch.setattr(
-        ticket_service,
-        "check_cached_ticket",
-        lambda _: pytest.fail("unauthorized users must be rejected before cache access"),
-    )
-
-    with pytest.raises(AuthorizationError):
-        ticket_service.analysis_job(
-            "ticket-1",
-            make_user(role=constants.Role.USER),
-        )
-
-
-def test_assigned_agent_can_create_inspection_job(
-    monkeypatch,
-    make_user,
-    make_ticket,
-):
-    agent = make_user(id="agent-1", role=constants.Role.AGENT)
-    ticket = make_ticket(assigned_agent_id=agent.id)
-    expected = JobResponse(job_id="job-1", status=constants.JobStatus.QUEUED)
-    monkeypatch.setattr(ticket_service, "check_cached_ticket", lambda _: ticket)
-    monkeypatch.setattr(
-        ticket_service,
-        "start_ticket_inspection_job",
-        lambda ticket_id: expected,
-    )
-
-    assert ticket_service.analysis_job(ticket.id, agent) == expected
-
-
-def test_agent_cannot_create_job_for_another_agents_ticket(
-    monkeypatch,
-    make_user,
-    make_ticket,
-):
-    agent = make_user(id="agent-1", role=constants.Role.AGENT)
-    ticket = make_ticket(assigned_agent_id="agent-2")
-    monkeypatch.setattr(ticket_service, "check_cached_ticket", lambda _: ticket)
-    monkeypatch.setattr(
-        ticket_service,
-        "start_ticket_inspection_job",
-        lambda _: pytest.fail("unauthorized jobs must not reach Redis"),
-    )
-
-    with pytest.raises(AuthorizationError):
-        ticket_service.analysis_job(ticket.id, agent)
-
-
-def test_inspect_ticket_returns_safe_deterministic_result(monkeypatch, make_ticket, caplog):
-    ticket = make_ticket(
-        status=constants.Status.IN_PROGRESS,
-        priority=constants.Priority.HIGH,
-    )
-    monkeypatch.setattr(job_tasks, "get_ticket", lambda ticket_id: ticket)
-    caplog.set_level("INFO")
-
-    result = job_tasks.inspect_ticket(ticket.id)
-
-    assert result == {
-        "ticket_id": ticket.id,
-        "status": constants.Status.IN_PROGRESS.value,
-        "priority": constants.Priority.HIGH.value,
-        "deleted": False,
-    }
-    assert "Ticket inspection started" in caplog.text
-    assert "Ticket inspection completed" in caplog.text
-
-
-def test_inspect_ticket_logs_missing_ticket_without_ticket_contents(monkeypatch, caplog):
-    monkeypatch.setattr(job_tasks, "get_ticket", lambda ticket_id: None)
-    caplog.set_level("WARNING")
-
-    with pytest.raises(TicketNotFoundError):
-        job_tasks.inspect_ticket("missing-ticket")
-
-    assert "Ticket inspection failed because the ticket was not found" in caplog.text
-
-
 def test_worker_task_imports_in_a_fresh_process():
     completed = subprocess.run(
         [
             sys.executable,
             "-c",
-            "from src.jobs.tasks import inspect_ticket, route_ticket",
+            "from src.jobs.tasks import analyze_analysis_result, route_ticket",
         ],
         capture_output=True,
         text=True,

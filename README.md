@@ -34,21 +34,19 @@ Implemented:
 - Priority-adjusted ticket-stage SLA deadlines, overdue filtering, and an
   idempotent periodic overdue scanner
 - Redis login rate limiting and ticket-detail caching
+- Per-user analysis-request rate limiting with atomic Redis counters
+- Durable deterministic ticket analysis through API, SQL, Redis/RQ, worker, and
+  SQL-backed read endpoints
 - Human/system audit actors and audit-event writes for important mutations
 - Automated tests for the main backend, cache, routing, reconciliation,
   start-work, concurrency, and SLA behavior
-- A verified live development flow using FastAPI, Redis, an RQ worker, and RQ
-  cron for automatic routing
+- Verified live development flows using FastAPI, Redis, RQ workers, SQL
+  persistence, and RQ cron
 
 In progress or not finished:
 
 - Some routers still translate raw `PermissionError` and `ValueError` instead of
   using the shared domain exceptions
-- The application still initializes the database at import time and does not
-  have meaningful health endpoints
-- Ticket history is recorded internally, but a complete permission-aware
-  history API is not implemented
-- The placeholder ticket-inspection job has incomplete persistent-result logic
 - LLM ticket summarization is not implemented
 - Docker / Docker Compose, a frontend demo, and final portfolio documentation
   are not implemented
@@ -180,7 +178,10 @@ database, and blocks deleted or banned users.
 - `POST /tickets/{ticket_id}/assign` - assign a ticket to an agent
 - `POST /tickets/{ticket_id}/start-work` - move the assigned agent's ticket from
   `OPEN` to `IN_PROGRESS`
-- `POST /tickets/{ticket_id}/analysis-jobs` - enqueue a background analysis job
+- `POST /tickets/{ticket_id}/analysis-results` - create or reuse a durable
+  analysis request
+- `GET /tickets/{ticket_id}/analysis-results` - read authorized analysis history
+- `GET /analysis-results/{analysis_result_id}` - read one durable result
 
 Creating a ticket also attempts to enqueue automatic routing after the database
 commit. If Redis or enqueueing fails, the ticket remains durable as
@@ -215,15 +216,16 @@ There are two different job flows:
 ```text
 Ticket creation -> ticket_routing queue -> route_ticket() -> database assignment
 
-Analysis request -> ticket_jobs queue -> inspect_ticket() -> temporary RQ result
+Analysis request -> durable PENDING row -> ticket_jobs queue
+    -> analyze_analysis_result(result_id) -> durable COMPLETED/FAILED row
 ```
 
 Automatic routing is implemented and database-owned: the queue delivers work,
 but the database transaction decides whether assignment is still valid.
 
-The analysis job is still a placeholder, not AI assistance. Its persistent
-`AnalysisResult` path and read endpoint are incomplete and should not yet be
-treated as a finished feature.
+Analysis currently uses a deterministic fake summarizer rather than an LLM.
+The fake and future provider share a narrow validated interface, while SQL—not
+the expiring RQ job—is the permanent source of truth.
 
 ## Error Response Shape
 

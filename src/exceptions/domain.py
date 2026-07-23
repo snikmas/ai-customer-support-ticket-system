@@ -3,10 +3,17 @@ class AppException(Exception):
     code = "app_error"
     message = "Application error"
 
-    def __init__(self, message: str | None = None, *, code: str | None = None):
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        code: str | None = None,
+        headers: dict[str, str] | None = None,
+    ):
         if code is not None:
             self.code = code
         self.message = message or self.message
+        self.headers = headers
         super().__init__(self.message)
 
 
@@ -79,6 +86,32 @@ class RateLimitExceededError(AppException):
     status_code = 429
     code = "rate_limit_exceeded"
     message = "Too many requests"
+
+
+class AnalysisRateLimitExceededError(RateLimitExceededError):
+    code = "analysis_rate_limit_exceeded"
+    message = "Too many analysis requests"
+
+    def __init__(self, retry_after_seconds: int):
+        self.retry_after_seconds = max(1, retry_after_seconds)
+        super().__init__(
+            headers={"Retry-After": str(self.retry_after_seconds)},
+        )
+
+
+class AnalysisRateLimitUnavailableError(ServiceUnavailableError):
+    code = "analysis_rate_limit_unavailable"
+    message = "Analysis requests are temporarily unavailable"
+
+
+class AnalysisResultNotFoundError(NotFoundError):
+    code = "analysis_result_not_found"
+    message = "Analysis result not found"
+
+
+class AnalysisEnqueueUnavailableError(ServiceUnavailableError):
+    code = "analysis_enqueue_unavailable"
+    message = "Analysis could not be queued"
 
 
 class EmptyUpdateError(BadRequestError):

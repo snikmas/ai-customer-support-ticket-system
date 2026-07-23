@@ -5,6 +5,7 @@ from .migrations import (
     add_ticket_department_id,
     add_ticket_due_at,
     backfill_legacy_departments,
+    migrate_analysis_result_contract,
     migrate_event_actor_contract,
 )
 from sqlalchemy import text
@@ -16,6 +17,7 @@ def create_db() -> None:
     add_ticket_department_id(engine)
     backfill_legacy_departments(engine)
     migrate_event_actor_contract(engine)
+    migrate_analysis_result_contract(engine)
 
 
 def ping_database() -> bool:

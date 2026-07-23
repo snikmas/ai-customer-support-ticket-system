@@ -1,5 +1,9 @@
 from .domain import (
     AppException,
+    AnalysisRateLimitExceededError,
+    AnalysisRateLimitUnavailableError,
+    AnalysisEnqueueUnavailableError,
+    AnalysisResultNotFoundError,
     AgentDepartmentChangeConflictError,
     AlreadyDeletedError,
     AuditLogError,
@@ -35,6 +39,10 @@ from .domain import (
 
 __all__ = [
     "AppException",
+    "AnalysisRateLimitExceededError",
+    "AnalysisRateLimitUnavailableError",
+    "AnalysisEnqueueUnavailableError",
+    "AnalysisResultNotFoundError",
     "AgentDepartmentChangeConflictError",
     "AlreadyDeletedError",
     "AuditLogError",

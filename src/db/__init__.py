@@ -23,10 +23,13 @@ from .operations import (
     get_tickets,
     get_waiting_ticket_ids,
     record_overdue_ticket_events,
+    reserve_analysis_result,
     get_user,
     get_user_by_email,
     get_user_by_nickname,
     get_users,
+    get_active_analysis_result,
+    get_analysis_result,
     get_least_loaded_eligible_agent,
     try_route_ticket,
     revoke_refresh_session,
@@ -36,8 +39,13 @@ from .operations import (
     update_agent_profile,
     update_ticket,
     update_user,
+    attach_analysis_job,
+    complete_analysis_result,
+    fail_analysis_result,
     get_analysis_result_by_job,
     get_analysis_results_by_ticket,
-    create_analysis_result
+    create_analysis_result,
+    return_analysis_to_pending,
+    start_analysis_attempt,
 )
 from .engine import engine

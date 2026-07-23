@@ -5,8 +5,8 @@ from rq.exceptions import DuplicateJobError
 from src.core import ROUTING_RECONCILIATION_BATCH_SIZE
 from src.db import get_waiting_ticket_ids
 from src.jobs.queue import get_ticket_jobs_queue, get_ticket_routing_queue
-from src.jobs.tasks import inspect_ticket, route_ticket
-from src.models import JobResponse, JobStatusResponse, User, Job 
+from src.jobs.tasks import analyze_analysis_result, route_ticket
+from src.models import JobStatusResponse, User, Job
 from src.constants import JobStatus, logger, translate_rq_status, Role, raw_job_to_job_response
 from src.exceptions import AuthorizationError, BadRequestError
 
@@ -14,6 +14,10 @@ ROUTING_JOB_TIMEOUT_SECONDS = 60
 ROUTING_RESULT_TTL_SECONDS = 600
 ROUTING_FAILURE_TTL_SECONDS = 3600
 ROUTING_RETRY_INTERVALS_SECONDS = [10, 30]
+ANALYSIS_JOB_TIMEOUT_SECONDS = 180
+ANALYSIS_RESULT_TTL_SECONDS = 600
+ANALYSIS_FAILURE_TTL_SECONDS = 86400
+ANALYSIS_RETRY_INTERVALS_SECONDS = [5, 15]
 ACTIVE_ROUTING_JOB_STATUSES = {
     "created",
     "queued",
@@ -133,23 +137,26 @@ def _get_ticket_for_requester(ticket_id: str, requester: User):
 
     return tickets.get_ticket(ticket_id, requester)
 
-def start_ticket_inspection_job(ticket_id: str) -> JobResponse:
+def enqueue_analysis_result_job(analysis_result_id: str):
     queue = get_ticket_jobs_queue()
 
     job = queue.enqueue(
-        inspect_ticket,
-        ticket_id,
-        job_timeout=180,
-        result_ttl=600,
+        analyze_analysis_result,
+        analysis_result_id,
+        job_timeout=ANALYSIS_JOB_TIMEOUT_SECONDS,
+        result_ttl=ANALYSIS_RESULT_TTL_SECONDS,
+        failure_ttl=ANALYSIS_FAILURE_TTL_SECONDS,
+        retry=Retry(
+            max=len(ANALYSIS_RETRY_INTERVALS_SECONDS),
+            interval=ANALYSIS_RETRY_INTERVALS_SECONDS,
+        ),
+        meta={"analysis_result_id": analysis_result_id},
     )
     logger.info(
-        "Ticket inspection job enqueued",
-        extra={"job_id": job.id, "ticket_id": ticket_id},
+        "Analysis job enqueued",
+        extra={"job_id": job.id, "analysis_result_id": analysis_result_id},
     )
-    return JobResponse(
-        job_id=job.id,
-        status=translate_rq_status(job.get_status())
-    )
+    return job
 
 
 def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
@@ -163,8 +170,14 @@ def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
     if raw_job is None:
         return None
 
-    ticket_id = raw_job.args[0]
-    _get_ticket_for_requester(ticket_id, requester)
+    analysis_result_id = getattr(raw_job, "meta", {}).get("analysis_result_id")
+    if analysis_result_id is not None:
+        from src.services.analysis_results import get_analysis_result
+
+        get_analysis_result(analysis_result_id, requester)
+    else:
+        ticket_id = raw_job.args[0]
+        _get_ticket_for_requester(ticket_id, requester)
 
     status = translate_rq_status(raw_job.get_status())
     return JobStatusResponse(
