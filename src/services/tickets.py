@@ -22,7 +22,6 @@ from src.cache import check_ticket as check_cached_ticket, cache_ticket, delete_
 from src.jobs import (
     enqueue_ticket_routing_job,
     get_job as jobs_get_job,
-    start_ticket_inspection_job,
 )
 from src.services.routing import dispatch_waiting_tickets_after_capacity_event
 from src.constants import logger
@@ -780,39 +779,3 @@ def start_ticket_work(
 
     delete_cached_ticket(ticket_id)
     return _to_api_ticket(result.ticket)
-
-
-def analysis_job(ticket_id: str, requester: api_models.User) -> api_models.JobResponse | None:
-    if check_for_access(requester.role, constants.Role.AGENT) is False:
-        raise AuthorizationError("You cannot start ticket analysis", code="ticket_analysis_forbidden")
- 
-    ticket = check_cached_ticket(ticket_id)
-    if ticket is None:
-        ticket = operations.get_ticket(ticket_id)
-        if ticket is None:
-            raise TicketNotFoundError()
-
-    if requester.role == constants.Role.AGENT:
-        if ticket.assigned_agent_id != requester.id: 
-            raise AuthorizationError("You cannot access this ticket", code="ticket_access_forbidden")
-    
-
-    job_response = start_ticket_inspection_job(ticket_id)
-    return job_response
-
-def get_analysis_job(ticket_id: str, requester: api_models.User) -> api_models.AnalysisResult:
-    #how to get a job?
-    if check_for_access(requester.role, constants.Role.AGENT) is False:
-        raise AuthorizationError("You cannot view ticket analysis", code="ticket_analysis_forbidden")
-    
-    ticket = check_cached_ticket(ticket_id)
-    if ticket is None:
-        ticket = operations.get_ticket(ticket_id)
-        if ticket is None:
-            raise TicketNotFoundError()
-
-    if requester.role == constants.Role.AGENT:
-        if ticket.assigned_agent_id != requester.id: 
-            raise AuthorizationError("You cannot access this ticket", code="ticket_access_forbidden")
-        
-    res = operations.get_analysis_result_by_job()

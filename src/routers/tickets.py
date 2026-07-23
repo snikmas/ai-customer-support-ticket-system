@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from src import models, db, constants
 from src.services import users as s_users, tickets as s_tickets, comments as s_comments
+from src.services import analysis_results as s_analysis_results
 from src.dependencies.auth import get_current_user
 from typing import Literal
 
@@ -145,12 +146,26 @@ def delete_ticket_comment(ticket_id: str, comment_id: str, requester: models.Use
 
 
 
-@router.post("/{ticket_id}/analysis-jobs", status_code=200)
-def analysis_job(ticket_id: str, requester: models.User = Depends(get_current_user)):
-    data = s_tickets.analysis_job(ticket_id, requester)
-    return data
+@router.post("/{ticket_id}/analysis-results", status_code=202)
+def request_ticket_analysis(
+    ticket_id: str,
+    requester: models.User = Depends(get_current_user),
+):
+    return {"data": s_analysis_results.request_analysis(ticket_id, requester)}
 
-@router.get("/{ticket_id}/analyse_ticket", status_code=200)
-def get_analysis_job(ticket_id: str, requester: models.User = Depends(get_current_user)):
-    data = s_tickets.get_analysis_job(ticket_id, requester)
-    return data
+
+@router.get("/{ticket_id}/analysis-results", status_code=200)
+def get_ticket_analysis_results(
+    ticket_id: str,
+    requester: models.User = Depends(get_current_user),
+    limit: int = Query(constants.DEFAULT_PAGE_LIMIT, ge=1, le=constants.MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+):
+    return {
+        "data": s_analysis_results.get_ticket_analysis_results(
+            ticket_id,
+            requester,
+            limit=limit,
+            offset=offset,
+        )
+    }
