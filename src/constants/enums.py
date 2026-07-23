@@ -180,8 +180,6 @@ class AnalysisStatus(str, Enum):
     RUNNING = 'running'
     COMPLETED = 'completed'
     FAILED = 'failed'
-    STOPPED = 'stopped'
-    CANCELED = 'canceled'
 
 #   NEW -> due_at = now + 2 hours
 #   OPEN -> due_at = now + 6 hours

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 from sqlalchemy.orm import Session
 from .engine import engine
 from .models import (
@@ -19,6 +20,7 @@ from sqlalchemy import Row, and_, func, or_, select, delete, update
 from datetime import datetime, timezone
 from src.constants import (
     ActorType,
+    AnalysisStatus,
     AvailabilityStatus,
     EntityType,
     EventType,
@@ -59,6 +61,12 @@ class TicketRoutingResult:
 class StartWorkResult:
     outcome: StartWorkOutcome
     ticket: Ticket | None = None
+
+
+@dataclass(frozen=True)
+class AnalysisReservation:
+    result: AnalysisResult
+    created: bool
 
 
 # ==============================================================
@@ -1227,23 +1235,209 @@ def get_ticket_history_events(
 
 # ================================================================
 # ======================= ANALYSIS ===============================
-def create_analysis_result(analysis: AnalysisResult) -> bool:
-    with Session(engine) as session:
+ACTIVE_ANALYSIS_STATUSES = (
+    AnalysisStatus.PENDING,
+    AnalysisStatus.RUNNING,
+)
+
+
+def reserve_analysis_result(
+    ticket_id: str,
+    *,
+    authorize_ticket: Callable[[Ticket], None],
+    consume_allowance: Callable[[], object],
+    build_result: Callable[[Ticket], AnalysisResult],
+) -> AnalysisReservation | None:
+    """Serialize active-result detection, limiting, and durable creation."""
+    with Session(engine, expire_on_commit=False) as session:
+        try:
+            if session.get_bind().dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            else:
+                session.begin()
+
+            ticket_statement = select(Ticket).where(Ticket.id == ticket_id)
+            if session.get_bind().dialect.name != "sqlite":
+                ticket_statement = ticket_statement.with_for_update()
+            ticket = session.scalar(ticket_statement)
+            if ticket is None:
+                session.commit()
+                return None
+
+            authorize_ticket(ticket)
+            active = session.scalar(
+                select(AnalysisResult).where(
+                    AnalysisResult.ticket_id == ticket_id,
+                    AnalysisResult.status.in_(ACTIVE_ANALYSIS_STATUSES),
+                )
+            )
+            if active is not None:
+                session.commit()
+                return AnalysisReservation(result=active, created=False)
+
+            # This callback is intentionally after active duplicate detection.
+            # Any exception rolls back the SQL reservation.
+            consume_allowance()
+            result = build_result(ticket)
+            session.add(result)
+            session.commit()
+            return AnalysisReservation(result=result, created=True)
+        except Exception:
+            session.rollback()
+            raise
+
+
+def create_analysis_result(analysis: AnalysisResult) -> AnalysisResult:
+    with Session(engine, expire_on_commit=False) as session:
         with session.begin():
-            if analysis is None: return False
             session.add(analysis)
-    return True
+        return analysis
+
+
+def get_analysis_result(analysis_result_id: str) -> AnalysisResult | None:
+    with Session(engine) as session:
+        return session.get(AnalysisResult, analysis_result_id)
+
 
 def get_analysis_result_by_job(job_id: str) -> AnalysisResult | None:
     with Session(engine) as session:
+        statement = select(AnalysisResult).where(AnalysisResult.job_id == job_id)
+        return session.scalar(statement)
+
+
+def get_active_analysis_result(ticket_id: str) -> AnalysisResult | None:
+    with Session(engine) as session:
+        statement = select(AnalysisResult).where(
+            AnalysisResult.ticket_id == ticket_id,
+            AnalysisResult.status.in_(ACTIVE_ANALYSIS_STATUSES),
+        )
+        return session.scalar(statement)
+
+
+def get_analysis_results_by_ticket(
+    ticket_id: str,
+    limit: int = DEFAULT_PAGE_LIMIT,
+    offset: int = 0,
+) -> list[AnalysisResult]:
+    with Session(engine) as session:
+        statement = (
+            select(AnalysisResult)
+            .where(AnalysisResult.ticket_id == ticket_id)
+            .order_by(AnalysisResult.created_at.desc(), AnalysisResult.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(session.scalars(statement).all())
+
+
+def attach_analysis_job(
+    analysis_result_id: str,
+    job_id: str,
+    now: datetime,
+) -> AnalysisResult | None:
+    statement = (
+        update(AnalysisResult)
+        .where(
+            AnalysisResult.id == analysis_result_id,
+            AnalysisResult.job_id.is_(None),
+        )
+        .values(job_id=job_id, updated_at=now)
+        .returning(AnalysisResult)
+    )
+    return _run_analysis_transition(statement)
+
+
+def start_analysis_attempt(
+    analysis_result_id: str,
+    now: datetime,
+) -> AnalysisResult | None:
+    statement = (
+        update(AnalysisResult)
+        .where(
+            AnalysisResult.id == analysis_result_id,
+            AnalysisResult.status == AnalysisStatus.PENDING,
+            AnalysisResult.attempt_count < 3,
+        )
+        .values(
+            status=AnalysisStatus.RUNNING,
+            attempt_count=AnalysisResult.attempt_count + 1,
+            started_at=func.coalesce(AnalysisResult.started_at, now),
+            updated_at=now,
+        )
+        .returning(AnalysisResult)
+    )
+    return _run_analysis_transition(statement)
+
+
+def return_analysis_to_pending(
+    analysis_result_id: str,
+    now: datetime,
+) -> AnalysisResult | None:
+    statement = (
+        update(AnalysisResult)
+        .where(
+            AnalysisResult.id == analysis_result_id,
+            AnalysisResult.status == AnalysisStatus.RUNNING,
+            AnalysisResult.attempt_count < 3,
+        )
+        .values(status=AnalysisStatus.PENDING, updated_at=now)
+        .returning(AnalysisResult)
+    )
+    return _run_analysis_transition(statement)
+
+
+def complete_analysis_result(
+    analysis_result_id: str,
+    summary: str,
+    now: datetime,
+) -> AnalysisResult | None:
+    statement = (
+        update(AnalysisResult)
+        .where(
+            AnalysisResult.id == analysis_result_id,
+            AnalysisResult.status == AnalysisStatus.RUNNING,
+        )
+        .values(
+            status=AnalysisStatus.COMPLETED,
+            summary=summary,
+            error_code=None,
+            error_message=None,
+            completed_at=now,
+            updated_at=now,
+        )
+        .returning(AnalysisResult)
+    )
+    return _run_analysis_transition(statement)
+
+
+def fail_analysis_result(
+    analysis_result_id: str,
+    *,
+    expected_statuses: tuple[AnalysisStatus, ...],
+    error_code: str,
+    error_message: str,
+    now: datetime,
+) -> AnalysisResult | None:
+    statement = (
+        update(AnalysisResult)
+        .where(
+            AnalysisResult.id == analysis_result_id,
+            AnalysisResult.status.in_(expected_statuses),
+        )
+        .values(
+            status=AnalysisStatus.FAILED,
+            summary=None,
+            error_code=error_code,
+            error_message=error_message,
+            completed_at=now,
+            updated_at=now,
+        )
+        .returning(AnalysisResult)
+    )
+    return _run_analysis_transition(statement)
+
+
+def _run_analysis_transition(statement) -> AnalysisResult | None:
+    with Session(engine, expire_on_commit=False) as session:
         with session.begin():
-            if job_id is None: return False
-
-            return session.query(AnalysisResult).filter_by(job_id=job_id).first()
-
-def get_analysis_results_by_ticket(ticket_id: str) -> list[AnalysisResult] | None:
-    with Session(engine) as session: 
-        query = select(AnalysisResult)
-        query = query.where(AnalysisResult.ticket_id == ticket_id)
-
-        return session.scalars(query).all()
+            return session.scalar(statement)
