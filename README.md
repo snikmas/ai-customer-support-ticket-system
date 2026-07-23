@@ -1,14 +1,18 @@
-# Customer Support Ticket System
+# AI-Oriented Customer Support Ticket System
 
-Learning backend project for a customer support ticket system.
+Backend-first FastAPI project for a customer support platform in an AI/dev-tool domain.
 
-This repository is being built to practice real backend engineering concepts with
-FastAPI: users, authentication, role-based permissions, ticket workflows,
-comments, database models, service-layer logic, Redis, background jobs, tests,
-and deployment.
+**What this proves to employers / clients:** real backend engineering — users, JWT auth,
+RBAC, ticket workflows, Redis, background jobs (RQ), routing, SLA, and tests — not only
+prompt demos.
 
-The project is intentionally backend-first. It is not a finished production
-system yet.
+This repository is being built to practice production-shaped backend concepts with
+FastAPI: authentication, role-based permissions, ticket workflows, comments,
+database models, service-layer logic, Redis, background jobs, tests, and deployment
+planning.
+
+The project is intentionally backend-first. It is not a finished production UI/LLM
+product yet. Core backend pieces are implemented and tested locally.
 
 ## Current Status
 
