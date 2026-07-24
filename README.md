@@ -171,8 +171,8 @@ database, and blocks deleted or banned users.
 
 ### Tickets
 
-- `POST /tickets/` - create a ticket with an active `department_id` and optional
-  `skill_ids`
+- `POST /tickets/` - create an unassigned customer ticket without internal
+  routing metadata
 - `GET /tickets/` - list tickets with pagination, sorting, and filters
 - `GET /tickets/{id}` - get one ticket
 - `PATCH /tickets/{ticket_id}` - update ticket workflow fields
@@ -187,9 +187,11 @@ database, and blocks deleted or banned users.
 - `GET /tickets/{ticket_id}/analysis-results` - read authorized analysis history
 - `GET /analysis-results/{analysis_result_id}` - read one durable result
 
-Creating a ticket also attempts to enqueue automatic routing after the database
-commit. If Redis or enqueueing fails, the ticket remains durable as
-`NEW`/unassigned and periodic reconciliation can retry it later.
+New customer tickets remain durable as `NEW`, unassigned, and without a
+department until the support system or a Manager+ user classifies them.
+Manager+ users can set `department_id` and optional `skill_ids` through the
+ticket update endpoint. Saving valid routing metadata attempts to enqueue
+automatic routing; periodic reconciliation can retry if Redis is unavailable.
 
 ### Routing Catalogs
 
@@ -218,7 +220,7 @@ commit. If Redis or enqueueing fails, the ticket remains durable as
 There are two different job flows:
 
 ```text
-Ticket creation -> ticket_routing queue -> route_ticket() -> database assignment
+Routing metadata update -> ticket_routing queue -> route_ticket() -> database assignment
 
 Analysis request -> durable PENDING row -> ticket_jobs queue
     -> analyze_analysis_result(result_id)
@@ -267,7 +269,8 @@ HTTP request
 Automatic routing crosses a process boundary:
 
 ```text
-Create and commit NEW ticket
+Create and commit NEW ticket without internal routing metadata
+    -> system classification or Manager+ triage sets department/skills
     -> enqueue stable routing job in Redis
     -> ticket_routing worker
     -> one database transaction:
@@ -278,10 +281,12 @@ Create and commit NEW ticket
          write audit event
 ```
 
-If enqueueing fails, the committed ticket is not deleted or rolled back.
-RQ cron later finds bounded pages of waiting `NEW`/unassigned tickets and
-enqueues them again. Duplicate delivery is expected, so database idempotency and
-transactional locking remain the final correctness boundary.
+If enqueueing fails, the classified ticket is not deleted and its routing
+metadata is not rolled back. RQ cron later finds bounded pages of
+`NEW`/unassigned tickets that have a department and enqueues them again.
+Unclassified tickets are deliberately excluded. Duplicate delivery is
+expected, so database idempotency and transactional locking remain the final
+correctness boundary.
 
 Automatic routing and overdue detection use `SYSTEM` audit actors with no fake
 human user ID. SLA deadlines combine the active status's base hours with the

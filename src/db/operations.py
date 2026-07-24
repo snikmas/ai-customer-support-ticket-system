@@ -641,6 +641,7 @@ def get_waiting_ticket_ids(limit: int) -> list[str]:
             Ticket.deleted_at.is_(None),
             Ticket.status == Status.NEW,
             Ticket.assigned_agent_id.is_(None),
+            Ticket.department_id.is_not(None),
         )
         .order_by(Ticket.created_at.asc(), Ticket.id.asc())
         .limit(limit)

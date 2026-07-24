@@ -31,15 +31,6 @@ class TicketCreate(BaseModel): #ticket that creates a user
     description: LongBody
     category: Category
     tags: list[Tag] = Field(default_factory=list, max_length=10)
-    department_id: EntityId
-    skill_ids: list[EntityId] = Field(default_factory=list, max_length=20)
-
-    @field_validator("skill_ids")
-    @classmethod
-    def reject_duplicate_skill_ids(cls, value: list[str]):
-        if len(value) != len(set(value)):
-            raise ValueError("duplicate_skill_ids")
-        return value
 
 #ticket update only for agents
 class TicketUpdate(BaseModel): 

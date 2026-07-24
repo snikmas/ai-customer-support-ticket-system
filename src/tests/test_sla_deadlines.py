@@ -80,23 +80,11 @@ def test_ticket_creation_sets_fixed_new_deadline(monkeypatch, make_user):
         "create_ticket",
         lambda ticket, event, skill_ids: captured.update(event=event) or ticket,
     )
-    monkeypatch.setattr(
-        ticket_service,
-        "_validate_routing_catalog_selection",
-        lambda *_: None,
-    )
-    monkeypatch.setattr(
-        ticket_service,
-        "enqueue_ticket_routing_job",
-        lambda *_: None,
-    )
-
     ticket = ticket_service.create_ticket(
         TicketCreate(
             title="SLA boundary",
             description="Check the initial stage deadline",
             category=constants.Category.ACCOUNT_ACCESS,
-            department_id="support",
         ),
         requester,
     )

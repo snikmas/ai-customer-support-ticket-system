@@ -268,7 +268,6 @@ def test_create_ticket_uses_authenticated_requester(monkeypatch, make_user, make
             "description": "Cannot use the API key",
             "category": constants.Category.ACCOUNT_ACCESS.value,
             "tags": [constants.Tag.API_KEY.value],
-            "department_id": "support",
         },
     )
 
@@ -276,6 +275,7 @@ def test_create_ticket_uses_authenticated_requester(monkeypatch, make_user, make
     assert response.json()["data"]["id"] == "created-ticket"
     assert captured["requester"] is requester
     assert captured["ticket_create"].category == constants.Category.ACCOUNT_ACCESS
+    assert not hasattr(captured["ticket_create"], "department_id")
 
 
 def test_update_ticket_uses_body_and_authenticated_requester(

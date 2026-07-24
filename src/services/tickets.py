@@ -102,7 +102,6 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
 
     if (check_for_access(requester.role, constants.Role.USER)) is False:
         raise AuthorizationError()
-    _validate_routing_catalog_selection(ticket_data.department_id, ticket_data.skill_ids)
     
     ticket = db_models.Ticket(
         id=constants.generate_id(),
@@ -110,7 +109,7 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         description=ticket_data.description,
         category=ticket_data.category,
         tags=constants.serialize_tags(ticket_data.tags),
-        department_id=ticket_data.department_id,
+        department_id=None,
         assigned_agent_id=None,
         creator_user_id=requester.id,
         status=constants.Status.NEW,
@@ -135,30 +134,16 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
         new_value=constants._audit_json({
             "ticket_id": ticket.id,
             "status": ticket.status,
-            "department_id": ticket.department_id,
-            "skill_ids": ticket_data.skill_ids,
+            "department_id": None,
+            "skill_ids": [],
             "due_at": ticket.due_at,
         }),
         metadata=None,
         created_at=now
     )
 
-    ticket = operations.create_ticket(ticket, event, ticket_data.skill_ids)
-    api_ticket = _to_api_ticket(ticket)
-
-    # The database commit above is deliberately the point of durability.
-    # Queue failure must not roll back or hide a successfully created ticket;
-    # Slice 6 reconciliation will find NEW/unassigned tickets and retry later.
-    try:
-        enqueue_ticket_routing_job(ticket.id)
-    except Exception as exc:
-        logger.exception(
-            "Ticket routing enqueue failed after ticket creation",
-            extra={"ticket_id": ticket.id},
-            exc_info=exc,
-        )
-
-    return api_ticket
+    ticket = operations.create_ticket(ticket, event, [])
+    return _to_api_ticket(ticket)
 
 
 def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im not sure is it a db ticket or api model
@@ -508,6 +493,24 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
 
 
     delete_cached_ticket(ticket.id)
+
+    if (
+        routing_fields
+        and ticket.department_id is not None
+        and ticket.status is constants.Status.NEW
+        and ticket.assigned_agent_id is None
+    ):
+        # Selecting routing metadata makes the durable ticket eligible for the
+        # routing queue. Queue failure does not roll back the manager's choice;
+        # periodic reconciliation can enqueue it later.
+        try:
+            enqueue_ticket_routing_job(ticket.id)
+        except Exception as exc:
+            logger.exception(
+                "Ticket routing enqueue failed after routing metadata update",
+                extra={"ticket_id": ticket.id},
+                exc_info=exc,
+            )
 
     if (
         old_assigned_agent_id is not None

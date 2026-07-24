@@ -1214,6 +1214,48 @@ label textarea {
   margin-top: 4px;
 }
 
+.routing-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  border-bottom: 1px solid #e7eaf0;
+  padding-bottom: 14px;
+}
+
+.routing-controls > p {
+  margin: -3px 0 1px;
+}
+
+.routing-controls fieldset {
+  border: 0;
+  margin: 2px 0;
+  padding: 0;
+}
+
+.routing-controls legend {
+  margin-bottom: 7px;
+  color: #4d596d;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.routing-controls fieldset div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.routing-controls fieldset label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #dde2ea;
+  border-radius: 999px;
+  margin: 0;
+  padding: 5px 8px;
+  font-size: 0.7rem;
+}
+
 .inline-action {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
