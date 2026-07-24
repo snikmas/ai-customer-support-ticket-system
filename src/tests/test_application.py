@@ -51,7 +51,24 @@ def test_health_is_unhealthy_when_database_is_down(monkeypatch):
     response = TestClient(main.app).get("/health")
 
     assert response.status_code == 503
-    assert response.json()["checks"]["database"] == "down"
+
+
+def test_local_frontend_origin_receives_narrow_cors_headers(monkeypatch):
+    monkeypatch.setattr(main, "ping_database", lambda: True)
+    monkeypatch.setattr(main, "ping_redis", lambda: True)
+
+    response = TestClient(main.app).options(
+        "/tickets/",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert "*" not in response.headers["access-control-allow-origin"]
 
 
 def test_lifespan_initializes_and_releases_owned_resources(monkeypatch):

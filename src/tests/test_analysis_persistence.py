@@ -55,6 +55,11 @@ def pending_result(
         error_message=None,
         ticket_id=ticket_id,
         job_id=None,
+        provider="fake",
+        model="deterministic-fake-v1",
+        prompt_version="ticket_summary_v1",
+        input_tokens=None,
+        output_tokens=None,
         requester_id=requester_id,
         attempt_count=0,
         created_at=now,
@@ -72,6 +77,11 @@ def test_analysis_result_api_model_matches_durable_contract():
 
     assert response.summary is None
     assert response.error_code is None
+    assert response.provider == "fake"
+    assert response.model == "deterministic-fake-v1"
+    assert response.prompt_version == "ticket_summary_v1"
+    assert response.input_tokens is None
+    assert response.output_tokens is None
     assert response.attempt_count == 0
     assert "input_snapshot" not in response.model_dump()
     assert "full_description" not in response.model_dump()
@@ -207,6 +217,11 @@ def test_analysis_contract_migration_is_idempotent_and_preserves_history(tmp_pat
     assert columns["summary"]["nullable"] is True
     assert columns["ticket_id"]["nullable"] is True
     assert columns["requester_id"]["nullable"] is True
+    assert columns["provider"]["nullable"] is True
+    assert columns["model"]["nullable"] is True
+    assert columns["prompt_version"]["nullable"] is True
+    assert columns["input_tokens"]["nullable"] is True
+    assert columns["output_tokens"]["nullable"] is True
     with engine.connect() as connection:
         row = connection.execute(text(
             """
@@ -215,6 +230,47 @@ def test_analysis_contract_migration_is_idempotent_and_preserves_history(tmp_pat
             """
         )).one()
     assert row == ("FAILED", None, "legacy_contract_migrated", 0)
+    engine.dispose()
+
+
+def test_analysis_migration_adds_nullable_provenance_to_stage5_table(tmp_path):
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'stage5-analysis.db'}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            """
+            CREATE TABLE analysis_result (
+                id VARCHAR(36) NOT NULL PRIMARY KEY,
+                input_snapshot TEXT NOT NULL,
+                summary VARCHAR(300),
+                error_code VARCHAR(50),
+                error_message VARCHAR(255),
+                ticket_id VARCHAR(36),
+                job_id VARCHAR(100),
+                requester_id VARCHAR(36),
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL,
+                started_at DATETIME,
+                completed_at DATETIME,
+                updated_at DATETIME NOT NULL,
+                status VARCHAR(9) NOT NULL
+            )
+            """
+        ))
+
+    migrate_analysis_result_contract(engine)
+    migrate_analysis_result_contract(engine)
+
+    columns = {
+        column["name"]: column for column in inspect(engine).get_columns("analysis_result")
+    }
+    for column_name in (
+        "provider",
+        "model",
+        "prompt_version",
+        "input_tokens",
+        "output_tokens",
+    ):
+        assert columns[column_name]["nullable"] is True
     engine.dispose()
 
 

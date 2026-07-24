@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -9,9 +9,15 @@ from sqlalchemy.orm import Session
 
 from main import app
 from src import constants
-from src.analyzers import PermanentAnalysisError, RetryableAnalysisError
+from src.analyzers import (
+    AnalysisInputSnapshot,
+    AnalysisOutput,
+    PermanentAnalysisError,
+    RetryableAnalysisError,
+)
 from src.db import operations
-from src.db.models import Base, Ticket
+from src.db.models import Base, Comment, Ticket
+from src.core import config
 from src.dependencies.auth import get_current_user
 from src.exceptions import (
     AnalysisEnqueueUnavailableError,
@@ -99,6 +105,93 @@ def test_assigned_agent_creates_durable_pending_result(
     assert result.attempt_count == 0
     assert allowance_calls == ["agent-1"]
     assert enqueue_calls == [result.id]
+
+
+def test_request_freezes_only_bounded_latest_public_comments(
+    lifecycle_engine,
+    monkeypatch,
+    make_user,
+):
+    add_ticket(lifecycle_engine)
+    now = datetime.now(timezone.utc)
+    public_bodies = []
+    with Session(lifecycle_engine) as session:
+        for index in range(12):
+            prefix = f"public-{index}-"
+            body = prefix + ("x" * (1000 - len(prefix)))
+            public_bodies.append(body)
+            session.add(Comment(
+                id=f"public-{index}",
+                ticket_id="ticket-1",
+                author_user_id="customer-1",
+                body=body,
+                visibility=constants.Visibility.PUBLIC,
+                edited_at=None,
+                created_at=now + timedelta(seconds=index),
+                updated_at=now + timedelta(seconds=index),
+                deleted_at=None,
+                deleted_by_user_id=None,
+                parent_comment_id=None,
+                attachments_count=9,
+                source=constants.Source.WEB,
+            ))
+        session.add_all([
+            Comment(
+                id="internal-secret",
+                ticket_id="ticket-1",
+                author_user_id="agent-1",
+                body="INTERNAL_SECRET",
+                visibility=constants.Visibility.INTERNAL,
+                edited_at=None,
+                created_at=now + timedelta(seconds=20),
+                updated_at=now + timedelta(seconds=20),
+                deleted_at=None,
+                deleted_by_user_id=None,
+                parent_comment_id=None,
+                attachments_count=0,
+                source=constants.Source.WEB,
+            ),
+            Comment(
+                id="deleted-secret",
+                ticket_id="ticket-1",
+                author_user_id="customer-1",
+                body="DELETED_SECRET",
+                visibility=constants.Visibility.PUBLIC,
+                edited_at=None,
+                created_at=now + timedelta(seconds=21),
+                updated_at=now + timedelta(seconds=21),
+                deleted_at=now + timedelta(seconds=22),
+                deleted_by_user_id="agent-1",
+                parent_comment_id=None,
+                attachments_count=0,
+                source=constants.Source.WEB,
+            ),
+        ])
+        session.commit()
+    configure_successful_request(monkeypatch)
+
+    pending = analysis_results.request_analysis(
+        "ticket-1",
+        make_user(id="agent-1", role=constants.Role.AGENT),
+    )
+    frozen_json = operations.get_analysis_result(pending.id).input_snapshot
+    snapshot = AnalysisInputSnapshot.model_validate_json(frozen_json)
+
+    assert snapshot.public_comments == tuple(public_bodies[4:12])
+    assert sum(map(len, snapshot.public_comments)) == 8_000
+    assert "INTERNAL_SECRET" not in frozen_json
+    assert "DELETED_SECRET" not in frozen_json
+    assert "attachments_count" not in frozen_json
+
+    with Session(lifecycle_engine) as session:
+        session.get(Comment, "public-11").body = "changed after request"
+        session.commit()
+    assert (
+        AnalysisInputSnapshot.model_validate_json(
+            operations.get_analysis_result(pending.id).input_snapshot
+        ).public_comments
+        == snapshot.public_comments
+    )
 
 
 def test_sequential_duplicate_reuses_result_without_rate_limit_or_enqueue(
@@ -282,6 +375,37 @@ def test_worker_completes_same_sql_result(
     assert completed.summary == (
         "Payment failed: Card payment returns error 500"
     )
+    assert completed.provider == "fake"
+    assert completed.model == "deterministic-fake-v1"
+    assert completed.prompt_version == "ticket_summary_v1"
+    assert completed.input_tokens is None
+    assert completed.output_tokens is None
+
+
+def test_worker_persists_successful_provider_tokens(
+    lifecycle_engine,
+    monkeypatch,
+    make_user,
+):
+    pending = create_pending_for_worker(lifecycle_engine, monkeypatch, make_user)
+
+    class TokenAnalyzer:
+        def analyze(self, snapshot):
+            return AnalysisOutput(
+                summary="Payment fails. The card returns an error.",
+                input_tokens=41,
+                output_tokens=9,
+            )
+
+    monkeypatch.setattr(job_tasks, "build_analyzer", lambda **_: TokenAnalyzer())
+
+    job_tasks.analyze_analysis_result(pending.id)
+    completed = operations.get_analysis_result(pending.id)
+
+    assert completed.status is constants.AnalysisStatus.COMPLETED
+    assert completed.summary == "Payment fails. The card returns an error."
+    assert completed.input_tokens == 41
+    assert completed.output_tokens == 9
 
 
 def test_retryable_failure_returns_to_pending_then_fails_after_third_attempt(
@@ -296,7 +420,7 @@ def test_retryable_failure_returns_to_pending_then_fails_after_third_attempt(
             raise RetryableAnalysisError("provider secret must not persist")
 
     current_job = SimpleNamespace(retries_left=2, save=lambda: None)
-    monkeypatch.setattr(job_tasks, "build_fake_analyzer", RetryableAnalyzer)
+    monkeypatch.setattr(job_tasks, "build_analyzer", lambda **_: RetryableAnalyzer())
     monkeypatch.setattr(job_tasks, "get_current_job", lambda: current_job)
 
     for expected_attempt in (1, 2):
@@ -312,7 +436,7 @@ def test_retryable_failure_returns_to_pending_then_fails_after_third_attempt(
     failed = operations.get_analysis_result(pending.id)
     assert failed.status is constants.AnalysisStatus.FAILED
     assert failed.attempt_count == 3
-    assert failed.error_code == "analysis_retry_exhausted"
+    assert failed.error_code == "provider_unavailable"
     assert "secret" not in failed.error_message
     assert current_job.retries_left == 0
 
@@ -337,6 +461,69 @@ def test_deleted_ticket_is_permanent_failure_without_retry(
     failed = operations.get_analysis_result(pending.id)
     assert failed.status is constants.AnalysisStatus.FAILED
     assert failed.error_code == "ticket_deleted"
+    assert failed.attempt_count == 1
+    assert current_job.retries_left == 0
+
+
+def test_permanent_provider_failure_keeps_safe_category_without_retry(
+    lifecycle_engine,
+    monkeypatch,
+    make_user,
+):
+    pending = create_pending_for_worker(lifecycle_engine, monkeypatch, make_user)
+
+    class AuthFailureAnalyzer:
+        def analyze(self, snapshot):
+            raise PermanentAnalysisError(
+                "raw provider response with secret",
+                code="provider_auth_failed",
+                safe_message="OpenRouter authentication failed",
+            )
+
+    current_job = SimpleNamespace(retries_left=2, save=lambda: None)
+    monkeypatch.setattr(job_tasks, "build_analyzer", lambda **_: AuthFailureAnalyzer())
+    monkeypatch.setattr(job_tasks, "get_current_job", lambda: current_job)
+
+    with pytest.raises(PermanentAnalysisError):
+        job_tasks.analyze_analysis_result(pending.id)
+
+    failed = operations.get_analysis_result(pending.id)
+    assert failed.status is constants.AnalysisStatus.FAILED
+    assert failed.error_code == "provider_auth_failed"
+    assert failed.error_message == "OpenRouter authentication failed"
+    assert "secret" not in failed.error_message
+    assert failed.input_tokens is None
+    assert failed.output_tokens is None
+    assert current_job.retries_left == 0
+
+
+def test_missing_openrouter_configuration_fails_row_permanently(
+    lifecycle_engine,
+    monkeypatch,
+    make_user,
+):
+    pending = create_pending_for_worker(lifecycle_engine, monkeypatch, make_user)
+    with Session(lifecycle_engine) as session:
+        session.execute(
+            update(operations.AnalysisResult)
+            .where(operations.AnalysisResult.id == pending.id)
+            .values(provider="openrouter", model="openai/gpt-oss-20b")
+        )
+        session.commit()
+    monkeypatch.setattr(config, "ANALYZER_PROVIDER", "openrouter")
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", None)
+    monkeypatch.setattr(config, "OPENROUTER_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setattr(config, "OPENROUTER_TIMEOUT_SECONDS", 20)
+    current_job = SimpleNamespace(retries_left=2, save=lambda: None)
+    monkeypatch.setattr(job_tasks, "get_current_job", lambda: current_job)
+
+    with pytest.raises(PermanentAnalysisError):
+        job_tasks.analyze_analysis_result(pending.id)
+
+    failed = operations.get_analysis_result(pending.id)
+    assert failed.status is constants.AnalysisStatus.FAILED
+    assert failed.error_code == "provider_config_error"
+    assert failed.error_message == "OpenRouter configuration is invalid"
     assert failed.attempt_count == 1
     assert current_job.retries_left == 0
 
@@ -399,6 +586,11 @@ def test_analysis_routes_are_registered_and_post_returns_202(monkeypatch, make_u
         error_message=None,
         ticket_id="ticket-1",
         job_id="job-1",
+        provider="fake",
+        model="deterministic-fake-v1",
+        prompt_version="ticket_summary_v1",
+        input_tokens=None,
+        output_tokens=None,
         requester_id="agent-1",
         attempt_count=0,
         created_at=datetime.now(timezone.utc),

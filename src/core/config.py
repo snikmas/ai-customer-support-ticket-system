@@ -25,6 +25,14 @@ REDIS_URL = os.getenv("REDIS_URL")
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
+FRONTEND_ORIGINS = tuple(
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "FRONTEND_ORIGINS",
+        "http://127.0.0.1:5173,http://localhost:5173",
+    ).split(",")
+    if origin.strip()
+)
 REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
     os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS", "1")
 )
@@ -43,6 +51,18 @@ LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = 900
 ANALYSIS_RATE_LIMIT_MAX_REQUESTS = 5
 ANALYSIS_RATE_LIMIT_WINDOW_SECONDS = 60
+ANALYZER_PROVIDER = os.getenv("ANALYZER_PROVIDER", "fake").strip().lower()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL",
+    "openai/gpt-oss-20b",
+).strip()
+try:
+    OPENROUTER_TIMEOUT_SECONDS = float(
+        os.getenv("OPENROUTER_TIMEOUT_SECONDS", "20")
+    )
+except ValueError as exc:
+    raise RuntimeError("OPENROUTER_TIMEOUT_SECONDS must be numeric") from exc
 
 
 def validate_redis_settings() -> None:
@@ -77,6 +97,23 @@ def validate_routing_reconciliation_settings() -> None:
         raise RuntimeError("OVERDUE_SCAN_BATCH_SIZE must be greater than zero")
     if OVERDUE_SCAN_INTERVAL_SECONDS <= 0:
         raise RuntimeError("OVERDUE_SCAN_INTERVAL_SECONDS must be greater than zero")
+
+
+def validate_analyzer_settings() -> None:
+    if ANALYZER_PROVIDER not in {"fake", "openrouter"}:
+        raise RuntimeError("ANALYZER_PROVIDER must be fake or openrouter")
+    if OPENROUTER_TIMEOUT_SECONDS <= 0:
+        raise RuntimeError("OPENROUTER_TIMEOUT_SECONDS must be greater than zero")
+    if ANALYZER_PROVIDER == "fake":
+        return
+    if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.strip():
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is required when ANALYZER_PROVIDER=openrouter"
+        )
+    if not OPENROUTER_MODEL:
+        raise RuntimeError(
+            "OPENROUTER_MODEL is required when ANALYZER_PROVIDER=openrouter"
+        )
 
 
 validate_redis_settings()

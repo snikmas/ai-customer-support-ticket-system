@@ -203,7 +203,7 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
         return
 
     columns = {column["name"]: column for column in inspector.get_columns("analysis_result")}
-    required_columns = {
+    lifecycle_columns = {
         "input_snapshot",
         "summary",
         "error_code",
@@ -218,14 +218,32 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
         "updated_at",
         "status",
     }
-    already_current = (
-        required_columns.issubset(columns)
+    provenance_columns = {
+        "provider": "VARCHAR(30)",
+        "model": "VARCHAR(100)",
+        "prompt_version": "VARCHAR(50)",
+        "input_tokens": "INTEGER",
+        "output_tokens": "INTEGER",
+    }
+    lifecycle_current = (
+        lifecycle_columns.issubset(columns)
         and columns["ticket_id"]["nullable"]
         and columns["requester_id"]["nullable"]
         and columns["job_id"]["nullable"]
         and columns["summary"]["nullable"]
     )
-    if already_current:
+    if lifecycle_current:
+        missing_provenance = [
+            (name, sql_type)
+            for name, sql_type in provenance_columns.items()
+            if name not in columns
+        ]
+        if missing_provenance:
+            with engine.begin() as connection:
+                for name, sql_type in missing_provenance:
+                    connection.execute(text(
+                        f"ALTER TABLE analysis_result ADD COLUMN {name} {sql_type}"
+                    ))
         return
     if engine.dialect.name != "sqlite":
         raise RuntimeError(
@@ -254,6 +272,11 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
                     ticket_id VARCHAR(36),
                     job_id VARCHAR(100),
                     requester_id VARCHAR(36),
+                    provider VARCHAR(30),
+                    model VARCHAR(100),
+                    prompt_version VARCHAR(50),
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME NOT NULL,
                     started_at DATETIME,
@@ -306,13 +329,15 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
                 """
                 INSERT INTO analysis_result__contract_migration (
                     id, input_snapshot, summary, error_code, error_message,
-                    ticket_id, job_id, requester_id, attempt_count, created_at,
+                    ticket_id, job_id, requester_id, provider, model,
+                    prompt_version, input_tokens, output_tokens, attempt_count, created_at,
                     started_at, completed_at, updated_at, status
                 )
                 SELECT
                     id, ?, NULL, 'legacy_contract_migrated',
                     'Legacy analysis could not be resumed',
-                    ticket_id, job_id, requester_id, 0, created_at,
+                    ticket_id, job_id, requester_id, NULL, NULL,
+                    NULL, NULL, NULL, 0, created_at,
                     NULL, created_at, created_at, 'FAILED'
                 FROM analysis_result
                 """,

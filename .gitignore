@@ -11,5 +11,8 @@ myvenv/
 keys
 .env
 node_modules/
-package-lock.json
-package.json
+dist/
+*.tsbuildinfo
+/package-lock.json
+/package.json
+.gstack/

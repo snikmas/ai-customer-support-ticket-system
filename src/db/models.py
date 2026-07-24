@@ -128,14 +128,14 @@ class Ticket(Base):
         )
     status:             Mapped[Status] = mapped_column(Enum(Status))
     priority:           Mapped[Priority] = mapped_column(Enum(Priority))
-    updated_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at:         Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at:         Mapped[datetime] = mapped_column(UTCDateTime())
     due_at:             Mapped[Optional[datetime]] = mapped_column(
         UTCDateTime(),
         nullable=True,
     )
 
-    deleted_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at:         Mapped[datetime] = mapped_column(UTCDateTime(), nullable=True)
     requested_skills: Mapped[List["Skill"]] = relationship(
         secondary=ticket_skills,
         lazy="selectin",
@@ -264,7 +264,7 @@ class Event(Base):
     new_value:      Mapped[str] = mapped_column(Text, nullable=False)
     metadata_:      Mapped[str] = mapped_column("metadata", String(200), nullable=True) #additional info
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, unique=True)
-    created_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at:     Mapped[datetime] = mapped_column(UTCDateTime())
 
 
 class Comment(Base):
@@ -279,10 +279,10 @@ class Comment(Base):
                 ForeignKey('users.id', ondelete='RESTRICT'))
     body: Mapped[str] = mapped_column(Text, nullable=False)
     visibility: Mapped[Visibility] = mapped_column(Enum(Visibility), nullable=False)
-    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    edited_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     deleted_by_user_id: Mapped[str | None] = mapped_column(
                 String(36),
                 ForeignKey('users.id', ondelete='SET NULL'),
@@ -380,6 +380,11 @@ class AnalysisResult(Base):
         nullable=True,
     )
     job_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    prompt_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     requester_id: Mapped[Optional[str]] = mapped_column(
         String(36),
         ForeignKey('users.id', ondelete='SET NULL'),

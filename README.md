@@ -35,9 +35,14 @@ Implemented:
   idempotent periodic overdue scanner
 - Redis login rate limiting and ticket-detail caching
 - Per-user analysis-request rate limiting with atomic Redis counters
-- Durable deterministic ticket analysis through API, SQL, Redis/RQ, worker, and
-  SQL-backed read endpoints
+- Durable ticket summarization through API, SQL, Redis/RQ, worker, and
+  SQL-backed read endpoints, with fake and OpenRouter analyzer modes
+- Strict OpenRouter JSON-schema output, ZDR/data-collection routing controls,
+  safe provider error categories, provenance, token accounting, and mocked HTTP
+  tests
 - Human/system audit actors and audit-event writes for important mutations
+- A responsive Vite/React/TypeScript frontend using the real auth, ticket,
+  routing-catalog, comment, history, workflow, and analysis APIs
 - Automated tests for the main backend, cache, routing, reconciliation,
   start-work, concurrency, and SLA behavior
 - Verified live development flows using FastAPI, Redis, RQ workers, SQL
@@ -47,9 +52,9 @@ In progress or not finished:
 
 - Some routers still translate raw `PermissionError` and `ValueError` instead of
   using the shared domain exceptions
-- LLM ticket summarization is not implemented
-- Docker / Docker Compose, a frontend demo, and final portfolio documentation
-  are not implemented
+- One real free-model OpenRouter job still needs the manual acceptance check
+  (or an explicit no-ZDR-endpoint blocker)
+- Docker / Docker Compose and final portfolio documentation are not implemented
 
 The detailed checked roadmap is in
 [`notes/template.txt`](notes/template.txt).
@@ -78,12 +83,11 @@ same-department agent with no matching skills remains a fallback. Existing
 tie-breakers are workload, oldest assignment timestamp, then user ID. There is
 no cross-department fallback.
 
-## Future Extension: AI Assistance
+## AI Assistance Scope
 
-AI assistance is deliberately out of scope until the core support system is
-finished. A later version may help support agents by:
+The first AI feature is intentionally narrow: summarize a frozen ticket and
+bounded public-comment snapshot. Later versions may:
 
-- summarizing long ticket conversations
 - classifying ticket priority
 - suggesting reply drafts
 - detecting similar or duplicate tickets
@@ -102,13 +106,13 @@ Current stack:
 - bcrypt password hashing
 - Redis
 - RQ background jobs
+- OpenRouter Chat Completions through `httpx`
 - Pytest
+- React, TypeScript, Vite, and Vitest
 
-Planned after the core project:
+Planned after the current frontend and summarization acceptance gates:
 
 - Docker / Docker Compose
-- LLM API integration and AI-assisted ticket analysis
-- Small web frontend
 
 ## Backend Concepts Practiced
 
@@ -217,15 +221,18 @@ There are two different job flows:
 Ticket creation -> ticket_routing queue -> route_ticket() -> database assignment
 
 Analysis request -> durable PENDING row -> ticket_jobs queue
-    -> analyze_analysis_result(result_id) -> durable COMPLETED/FAILED row
+    -> analyze_analysis_result(result_id)
+    -> fake analyzer or OpenRouter
+    -> durable COMPLETED/FAILED row
 ```
 
 Automatic routing is implemented and database-owned: the queue delivers work,
 but the database transaction decides whether assignment is still valid.
 
-Analysis currently uses a deterministic fake summarizer rather than an LLM.
-The fake and future provider share a narrow validated interface, while SQL—not
-the expiring RQ job—is the permanent source of truth.
+Analysis defaults to a deterministic fake summarizer. OpenRouter mode uses the
+same provider-neutral interface and persists the requested provider, model,
+prompt version, successful token counts, and validated summary. SQL—not the
+expiring RQ job—is the permanent source of truth.
 
 ## Error Response Shape
 
@@ -301,21 +308,24 @@ src/core/               Security, config, and logging helpers
 src/constants/          Enums and shared constants
 src/dependencies/       FastAPI dependencies
 src/cache/              Redis/cache helper modules
+src/analyzers/          Provider-neutral, fake, and OpenRouter analyzers
 src/jobs/               RQ queue setup, job service logic, and worker tasks
 src/exceptions/         Domain exception classes
 src/tests/              Pytest test modules
+site/                   Vite/React browser demo and frontend tests
 keys/                   Local JWT key files
 ```
 
 ## Running Locally
 
-The current development stack needs four separate processes:
+The complete development demo needs five separate processes:
 
 ```text
 Redis server
 FastAPI API
 RQ worker
 RQ cron scheduler
+Vite frontend
 ```
 
 Create a `.env` file with local values. Do not commit real secrets:
@@ -332,7 +342,26 @@ ROUTING_RECONCILIATION_BATCH_SIZE=100
 ROUTING_RECONCILIATION_INTERVAL_SECONDS=60
 OVERDUE_SCAN_BATCH_SIZE=100
 OVERDUE_SCAN_INTERVAL_SECONDS=60
+ANALYZER_PROVIDER=fake
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openai/gpt-oss-20b
+OPENROUTER_TIMEOUT_SECONDS=20
+FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
+
+`ANALYZER_PROVIDER=fake` does not require an OpenRouter key. For a real
+acceptance job, set `ANALYZER_PROVIDER=openrouter`, keep the key only in the
+gitignored `.env` or process environment, and temporarily set
+`OPENROUTER_MODEL=openai/gpt-oss-20b:free`. Every request requires parameter
+support, denies provider data collection, and requires a Zero Data Retention
+endpoint; do not relax those controls if the free model cannot be routed.
+
+Manual acceptance status on 2026-07-23: not run. No OpenRouter key is configured
+in this checkout, and OpenRouter's public endpoint metadata lists Darkbloom as
+the only `openai/gpt-oss-20b:free` endpoint while the public ZDR endpoint list
+contains no zero-priced `gpt-oss-20b` endpoint. The code therefore records this
+as an external gate instead of making a paid request or weakening the privacy
+policy.
 
 Start Redis and verify it responds:
 
@@ -360,6 +389,20 @@ Start periodic waiting-ticket reconciliation:
 myvenv/bin/rq cron src/jobs/cron.py \
   --url redis://localhost:6379/0
 ```
+
+Start the browser application in another terminal:
+
+```bash
+cd site
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. The frontend defaults to
+`http://127.0.0.1:8000` for the API; change `VITE_API_BASE_URL` in
+`site/.env` if needed. More frontend contract and verification details are in
+[`site/README.md`](site/README.md).
 
 Open the interactive API documentation:
 
@@ -397,6 +440,14 @@ match the application:
 myvenv/bin/python -m pytest -q
 ```
 
+Run the frontend tests and production build:
+
+```bash
+cd site
+npm test
+npm run build
+```
+
 For the automatic-routing slice:
 
 ```bash
@@ -424,8 +475,8 @@ router -> jobs service -> RQ queue/Redis -> worker task
 ```
 
 Automatic ticket routing uses its own `ticket_routing` queue. Routing is a
-short, user-visible workflow and should not wait behind slower ticket inspection
-or future LLM jobs on `ticket_jobs`. Start a routing worker with:
+short, user-visible workflow and should not wait behind slower summarization
+jobs on `ticket_jobs`. Start a routing worker with:
 
 ```bash
 myvenv/bin/rq worker ticket_routing --url redis://localhost:6379/0
@@ -474,10 +525,10 @@ This project demonstrates a backend system with real application logic:
 users, authentication, JWTs, refresh sessions, roles, database relationships,
 ticket workflows, comments, service-layer authorization, Redis caching and rate
 limiting, background jobs, automatic routing, reconciliation, concurrency
-control, and SLA deadlines. AI assistance remains a future extension after the
-core project is stable.
+control, SLA deadlines, and a privacy-constrained asynchronous OpenRouter
+summarization boundary.
 
 It is useful for interview discussion because it shows both implemented backend
 behavior and honest next steps toward a more production-like system: lifecycle
 management, ticket-history APIs, durable analysis results, migrations,
-deployment, and observability.
+real-provider acceptance, deployment, and observability.

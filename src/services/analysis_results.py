@@ -1,6 +1,6 @@
 from src import constants
 from src import models as api_models
-from src.analyzers import AnalysisInputSnapshot
+from src.analyzers import AnalysisInputSnapshot, configured_analyzer_metadata
 from src.cache import consume_analysis_creation_allowance
 from src.db import models as db_models
 from src.db import operations
@@ -38,7 +38,29 @@ def _authorize_creation(ticket: db_models.Ticket, requester: api_models.User) ->
     )
 
 
-def _snapshot_for_ticket(ticket: db_models.Ticket) -> AnalysisInputSnapshot:
+MAX_PUBLIC_COMMENT_CHARACTERS = 8_000
+
+
+def _bounded_public_comment_bodies(
+    newest_first_comments: list[db_models.Comment],
+) -> tuple[str, ...]:
+    """Keep newest content within the budget, then restore reading order."""
+    remaining = MAX_PUBLIC_COMMENT_CHARACTERS
+    newest_first_bodies: list[str] = []
+    for comment in newest_first_comments:
+        if remaining == 0:
+            break
+        body = comment.body[:remaining]
+        if body:
+            newest_first_bodies.append(body)
+            remaining -= len(body)
+    return tuple(reversed(newest_first_bodies))
+
+
+def _snapshot_for_ticket(
+    ticket: db_models.Ticket,
+    public_comments: list[db_models.Comment],
+) -> AnalysisInputSnapshot:
     tags = (
         constants.deserialize_tags(ticket.tags)
         if ticket.tags is None or isinstance(ticket.tags, str)
@@ -51,6 +73,7 @@ def _snapshot_for_ticket(ticket: db_models.Ticket) -> AnalysisInputSnapshot:
         tags=tuple(tags),
         priority=ticket.priority,
         status=ticket.status,
+        public_comments=_bounded_public_comment_bodies(public_comments),
     )
 
 
@@ -65,15 +88,27 @@ def request_analysis(
             raise TicketDeletedError()
         _authorize_creation(ticket, requester)
 
-    def build_result(ticket: db_models.Ticket) -> db_models.AnalysisResult:
+    def build_result(
+        ticket: db_models.Ticket,
+        public_comments: list[db_models.Comment],
+    ) -> db_models.AnalysisResult:
+        analyzer_metadata = configured_analyzer_metadata()
         return db_models.AnalysisResult(
             id=constants.generate_id(),
-            input_snapshot=_snapshot_for_ticket(ticket).model_dump_json(),
+            input_snapshot=_snapshot_for_ticket(
+                ticket,
+                public_comments,
+            ).model_dump_json(),
             summary=None,
             error_code=None,
             error_message=None,
             ticket_id=ticket.id,
             job_id=None,
+            provider=analyzer_metadata.provider,
+            model=analyzer_metadata.model,
+            prompt_version=analyzer_metadata.prompt_version,
+            input_tokens=None,
+            output_tokens=None,
             requester_id=requester.id,
             attempt_count=0,
             created_at=now,

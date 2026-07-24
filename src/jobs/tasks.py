@@ -22,7 +22,7 @@ from src.analyzers import (
     AnalysisInputSnapshot,
     PermanentAnalysisError,
     RetryableAnalysisError,
-    build_fake_analyzer,
+    build_analyzer,
 )
 
 TEMPORARY_ROUTING_ERRORS = (
@@ -90,8 +90,18 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
 
     try:
         snapshot = AnalysisInputSnapshot.model_validate_json(running.input_snapshot)
-        output = build_fake_analyzer().analyze(snapshot)
-    except RetryableAnalysisError:
+        if not running.provider or not running.model or not running.prompt_version:
+            raise PermanentAnalysisError(
+                "analysis provider metadata missing",
+                code="provider_config_error",
+                safe_message="Analyzer provider configuration is invalid",
+            )
+        output = build_analyzer(
+            provider=running.provider,
+            model=running.model,
+            prompt_version=running.prompt_version,
+        ).analyze(snapshot)
+    except RetryableAnalysisError as exc:
         if running.attempt_count < 3:
             return_analysis_to_pending(analysis_result_id, utc_now())
             logger.warning(
@@ -105,8 +115,8 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
 
         _fail_analysis_permanently(
             analysis_result_id,
-            error_code="analysis_retry_exhausted",
-            error_message="Analysis failed after three attempts",
+            error_code=exc.code,
+            error_message=exc.safe_message,
         )
         logger.warning(
             "Analysis retry budget exhausted",
@@ -124,11 +134,11 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
             extra={"analysis_result_id": analysis_result_id},
         )
         raise PermanentAnalysisError("invalid analysis snapshot") from None
-    except PermanentAnalysisError:
+    except PermanentAnalysisError as exc:
         _fail_analysis_permanently(
             analysis_result_id,
-            error_code="analysis_permanent_failure",
-            error_message="Analysis could not process this ticket",
+            error_code=exc.code,
+            error_message=exc.safe_message,
         )
         logger.warning(
             "Analysis permanently rejected its input",
@@ -141,8 +151,8 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
             raise RetryableAnalysisError("temporary analyzer failure") from None
         _fail_analysis_permanently(
             analysis_result_id,
-            error_code="analysis_retry_exhausted",
-            error_message="Analysis failed after three attempts",
+            error_code="provider_unavailable",
+            error_message="Analysis provider temporarily unavailable",
         )
         raise RetryableAnalysisError("analysis retry budget exhausted") from None
 
@@ -150,6 +160,8 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
         analysis_result_id,
         output.summary,
         utc_now(),
+        input_tokens=output.input_tokens,
+        output_tokens=output.output_tokens,
     )
     if completed is None:
         raise PermanentAnalysisError("analysis completion transition failed")

@@ -28,6 +28,7 @@ from src.constants import (
     StartWorkOutcome,
     Status,
     TicketRoutingOutcome,
+    Visibility,
     calculate_sla_due_at,
     utc_now,
     DEFAULT_SORT_ORDER,
@@ -1090,9 +1091,7 @@ def create_comment_with_event(comment_data: Comment, event_data: Event) -> Comme
 
 def get_comment(comment_id: str) -> Comment | None:
     with Session(engine) as session:
-        with session.begin():
-            comment = session.get(Comment, comment_id)
-            return comment
+        return session.get(Comment, comment_id)
 
 
 def get_comments(
@@ -1102,22 +1101,21 @@ def get_comments(
                 sort_by: str = DEFAULT_SORT_BY,
                 sort_order: str = DEFAULT_SORT_ORDER) -> list[Comment]:
     with Session(engine) as session:
-        with session.begin():
-            sort_columns = {
-                "created_at": Comment.created_at,
-                "updated_at": Comment.updated_at,
-            }
-            sort_col = sort_columns[sort_by]
+        sort_columns = {
+            "created_at": Comment.created_at,
+            "updated_at": Comment.updated_at,
+        }
+        sort_col = sort_columns[sort_by]
 
-            order_exp = apply_sort_order(sort_col, sort_order)
+        order_exp = apply_sort_order(sort_col, sort_order)
 
-            query = select(Comment).order_by(order_exp).offset(offset)
-            if limit:
-                query = query.limit(limit)
-            
-            if ticket_id is not None:
-                query = query.where(Comment.ticket_id == ticket_id)
-            return session.scalars(query).all()
+        query = select(Comment).order_by(order_exp).offset(offset)
+        if limit:
+            query = query.limit(limit)
+
+        if ticket_id is not None:
+            query = query.where(Comment.ticket_id == ticket_id)
+        return session.scalars(query).all()
 
 
 def update_comment(comment_id: str, new_info: dict) -> Comment | None:
@@ -1246,7 +1244,7 @@ def reserve_analysis_result(
     *,
     authorize_ticket: Callable[[Ticket], None],
     consume_allowance: Callable[[], object],
-    build_result: Callable[[Ticket], AnalysisResult],
+    build_result: Callable[[Ticket, list[Comment]], AnalysisResult],
 ) -> AnalysisReservation | None:
     """Serialize active-result detection, limiting, and durable creation."""
     with Session(engine, expire_on_commit=False) as session:
@@ -1278,7 +1276,17 @@ def reserve_analysis_result(
             # This callback is intentionally after active duplicate detection.
             # Any exception rolls back the SQL reservation.
             consume_allowance()
-            result = build_result(ticket)
+            public_comments = list(session.scalars(
+                select(Comment)
+                .where(
+                    Comment.ticket_id == ticket_id,
+                    Comment.visibility == Visibility.PUBLIC,
+                    Comment.deleted_at.is_(None),
+                )
+                .order_by(Comment.created_at.desc(), Comment.id.desc())
+                .limit(10)
+            ).all())
+            result = build_result(ticket, public_comments)
             session.add(result)
             session.commit()
             return AnalysisReservation(result=result, created=True)
@@ -1390,6 +1398,9 @@ def complete_analysis_result(
     analysis_result_id: str,
     summary: str,
     now: datetime,
+    *,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> AnalysisResult | None:
     statement = (
         update(AnalysisResult)
@@ -1402,6 +1413,8 @@ def complete_analysis_result(
             summary=summary,
             error_code=None,
             error_message=None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             completed_at=now,
             updated_at=now,
         )

@@ -2,15 +2,55 @@ from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from datetime import datetime, timezone
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from main import app
 from src import constants
+from src.db import models as db_models
+from src.db import operations
 from src.exceptions.domain import AlreadyDeletedError, CommentNotFoundError
 from src.services import comments as comments_service
 from src.routers import tickets as tickets_router
 
 
 client = TestClient(app)
+
+
+def test_comment_reads_remain_usable_after_the_database_session_closes(
+    monkeypatch,
+    tmp_path,
+):
+    test_engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'comments.db'}")
+    db_models.Comment.__table__.create(test_engine)
+    monkeypatch.setattr(operations, "engine", test_engine)
+    now = datetime.now(timezone.utc)
+    with Session(test_engine) as session:
+        session.add(db_models.Comment(
+            id="comment-1",
+            ticket_id="ticket-1",
+            author_user_id="user-1",
+            body="Stored comment",
+            visibility=constants.Visibility.PUBLIC,
+            edited_at=None,
+            created_at=now,
+            updated_at=now,
+            deleted_at=None,
+            deleted_by_user_id=None,
+            parent_comment_id=None,
+            attachments_count=0,
+            source=constants.Source.API,
+        ))
+        session.commit()
+
+    comments = operations.get_comments("ticket-1")
+    comment = operations.get_comment("comment-1")
+
+    assert comments[0].deleted_at is None
+    assert comments[0].visibility is constants.Visibility.PUBLIC
+    assert comments[0].created_at.tzinfo is not None
+    assert comment is not None
+    assert comment.body == "Stored comment"
 
 
 def test_comment_create_rejects_server_owned_fields(make_user):

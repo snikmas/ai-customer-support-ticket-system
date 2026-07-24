@@ -98,7 +98,7 @@ def test_analysis_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
         },
     }
     assert captured["settings"]["retry"].max == 2
-    assert captured["settings"]["retry"].intervals == [5, 15]
+    assert captured["settings"]["retry"].intervals == [10, 60]
     assert job.id == "job-1"
     assert "Analysis job enqueued" in caplog.text
 
