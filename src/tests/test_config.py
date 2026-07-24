@@ -56,3 +56,37 @@ def test_redis_settings_accept_supported_url_schemes(monkeypatch, url):
     monkeypatch.setattr(config, "REDIS_URL", url)
 
     config.validate_redis_settings()
+
+
+def test_fake_analyzer_does_not_require_openrouter_key(monkeypatch):
+    monkeypatch.setattr(config, "ANALYZER_PROVIDER", "fake")
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", None)
+    monkeypatch.setattr(config, "OPENROUTER_TIMEOUT_SECONDS", 20)
+
+    config.validate_analyzer_settings()
+
+
+def test_openrouter_analyzer_requires_key(monkeypatch):
+    monkeypatch.setattr(config, "ANALYZER_PROVIDER", "openrouter")
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", None)
+    monkeypatch.setattr(config, "OPENROUTER_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setattr(config, "OPENROUTER_TIMEOUT_SECONDS", 20)
+
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY is required"):
+        config.validate_analyzer_settings()
+
+
+@pytest.mark.parametrize("provider", ["", "local", "OPENROUTER"])
+def test_analyzer_rejects_unsupported_normalized_provider(monkeypatch, provider):
+    monkeypatch.setattr(config, "ANALYZER_PROVIDER", provider)
+
+    with pytest.raises(RuntimeError, match="must be fake or openrouter"):
+        config.validate_analyzer_settings()
+
+
+def test_analyzer_rejects_nonpositive_timeout(monkeypatch):
+    monkeypatch.setattr(config, "ANALYZER_PROVIDER", "fake")
+    monkeypatch.setattr(config, "OPENROUTER_TIMEOUT_SECONDS", 0)
+
+    with pytest.raises(RuntimeError, match="must be greater than zero"):
+        config.validate_analyzer_settings()

@@ -4,10 +4,11 @@ from fastapi import FastAPI, Request
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from src.routers import analysis, users, tickets, auth, jobs, routing_catalogs
 from src.cache import close_redis_client, initialize_redis_client, ping_redis
-from src.core import REDIS_ENABLED, setup_logging
+from src.core import FRONTEND_ORIGINS, REDIS_ENABLED, setup_logging
 from src.constants import logger
 from src.db.engine import engine
 from src.db.utils import create_db, ping_database
@@ -36,6 +37,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(FRONTEND_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.exception_handler(AppException)

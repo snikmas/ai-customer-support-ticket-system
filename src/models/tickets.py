@@ -81,6 +81,11 @@ class AnalysisResult(BaseModel):
     error_message: str | None
     ticket_id: str | None
     job_id: str | None
+    provider: str | None
+    model: str | None
+    prompt_version: str | None
+    input_tokens: int | None
+    output_tokens: int | None
     requester_id: str | None
     attempt_count: int
     created_at: datetime
