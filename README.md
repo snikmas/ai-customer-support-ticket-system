@@ -50,7 +50,8 @@ Implemented:
 
 In progress or not finished:
 
-- Docker / Docker Compose and final portfolio documentation are not implemented
+- Final portfolio documentation (architecture diagram, demo script) is not
+  implemented
 
 The detailed checked roadmap is in
 [`notes/template.txt`](notes/template.txt).
@@ -96,7 +97,8 @@ Current stack:
 - FastAPI
 - Pydantic
 - SQLAlchemy
-- SQLite for local development
+- PostgreSQL (Docker deployment) and SQLite (tests, quick local runs)
+- Alembic schema migrations
 - JWT access tokens
 - Refresh-token sessions
 - bcrypt password hashing
@@ -105,10 +107,7 @@ Current stack:
 - OpenRouter Chat Completions through `httpx`
 - Pytest
 - React, TypeScript, Vite, and Vitest
-
-Planned after the current frontend and summarization acceptance gates:
-
-- Docker / Docker Compose
+- Docker and Docker Compose
 
 ## Backend Concepts Practiced
 
@@ -304,6 +303,9 @@ enforced safely.
 
 ```text
 main.py                 FastAPI app entrypoint
+Dockerfile              Backend image (API, worker, cron share it)
+compose.yaml            Full-stack Docker Compose definition
+alembic/                Versioned PostgreSQL schema migrations
 src/routers/            API route handlers
 src/services/           Business logic and permission-aware workflows
 src/db/                 SQLAlchemy engine, models, and database operations
@@ -320,9 +322,43 @@ site/                   Vite/React browser demo and frontend tests
 keys/                   Local JWT key files
 ```
 
-## Running Locally
+## Running with Docker
 
-The complete development demo needs five separate processes:
+The whole stack — PostgreSQL, Redis, schema migrations, API, RQ worker, RQ
+cron, and the frontend — starts with one command:
+
+```bash
+cp .env.example .env   # then set POSTGRES_PASSWORD and SUPERADMIN_* values
+docker compose up --build
+```
+
+Startup order is enforced by health checks: Postgres and Redis must pass their
+probes, the one-shot `migrate` service applies Alembic migrations, and only
+then do the API, worker, and cron start. Create the initial superadmin once:
+
+```bash
+docker compose exec api python bootstrap_superadmin.py
+```
+
+Then open `http://localhost:5173` (frontend) or `http://localhost:8000/docs`
+(API). Inside the compose network the services reach each other by name
+(`db`, `redis`); only the API (8000) and frontend (5173) are published to the
+host. Secrets stay out of images: `.env` is substituted at runtime and
+`keys/` is mounted read-only.
+
+Useful lifecycle commands:
+
+```bash
+docker compose ps                 # service status and health
+docker compose logs -f worker     # follow one service's logs
+docker compose down               # stop, keeping the Postgres volume
+docker compose down -v            # full reset, deletes all data
+```
+
+## Running Locally (bare metal)
+
+The bare-metal path keeps every process visible and is the better learning
+setup. It needs five separate processes:
 
 ```text
 Redis server
@@ -426,9 +462,10 @@ DATABASE_URL=sqlite+pysqlite:////tmp/tickets-smoke.db \
   myvenv/bin/python -m uvicorn main:app
 ```
 
-The current application creates or upgrades its local schema while `main.py` is
-imported. Moving this work to an explicit migration/startup boundary is still a
-roadmap item.
+Schema management is dialect-dependent: SQLite (tests, quick local runs) is
+created/upgraded in the application lifespan, while PostgreSQL schemas are
+owned by Alembic and applied explicitly with `alembic upgrade head` (the
+compose `migrate` service runs it automatically).
 
 ### Initial superadmin
 
