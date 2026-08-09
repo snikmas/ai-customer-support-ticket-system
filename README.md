@@ -50,10 +50,6 @@ Implemented:
 
 In progress or not finished:
 
-- Some routers still translate raw `PermissionError` and `ValueError` instead of
-  using the shared domain exceptions
-- One real free-model OpenRouter job still needs the manual acceptance check
-  (or an explicit no-ZDR-endpoint blocker)
 - Docker / Docker Compose and final portfolio documentation are not implemented
 
 The detailed checked roadmap is in
@@ -250,8 +246,11 @@ envelope:
 }
 ```
 
-Some older ticket and job routes still need to migrate from broad built-in
-exceptions to precise domain exceptions, so not every error code is final.
+All routers, dependencies, and services raise shared domain exceptions, so
+expected business failures always use this envelope with a stable `code`. The
+`http_<status>` codes remain only as a fallback for raw `HTTPException`s raised
+by the framework itself. `src/tests/test_error_contract.py` guards this
+contract.
 
 ## Architecture and Data Flow
 
@@ -361,12 +360,16 @@ gitignored `.env` or process environment, and temporarily set
 support, denies provider data collection, and requires a Zero Data Retention
 endpoint; do not relax those controls if the free model cannot be routed.
 
-Manual acceptance status on 2026-07-23: not run. No OpenRouter key is configured
-in this checkout, and OpenRouter's public endpoint metadata lists Darkbloom as
-the only `openai/gpt-oss-20b:free` endpoint while the public ZDR endpoint list
-contains no zero-priced `gpt-oss-20b` endpoint. The code therefore records this
-as an external gate instead of making a paid request or weakening the privacy
-policy.
+Manual acceptance status: **closed as an external blocker, accepted by
+policy.** Checked 2026-07-23 and rechecked 2026-08-09 against OpenRouter's
+public endpoint metadata (`/api/v1/models/openai/gpt-oss-20b/endpoints` and
+`/api/v1/endpoints/zdr`): the zero-priced `openai/gpt-oss-20b:free` variant has
+no ZDR-compliant endpoint — every ZDR-listed `gpt-oss-20b` endpoint is paid.
+The project therefore accepts this gate as blocked rather than making a paid
+request or weakening the privacy policy (`zdr=true`, `data_collection=deny`,
+`require_parameters=true`). If a ZDR-compliant free endpoint appears later, the
+runbook above (`ANALYZER_PROVIDER=openrouter`, one synthetic ticket, verify the
+durable row) closes the gate in under an hour.
 
 Start Redis and verify it responds:
 
