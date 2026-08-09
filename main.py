@@ -18,7 +18,17 @@ from src.exceptions.domain import AppException
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
-    create_db()
+    # Schema ownership is dialect-dependent. SQLite (tests, quick local runs)
+    # keeps the legacy create_all + ad-hoc migrations path. PostgreSQL schemas
+    # are owned by Alembic: run `alembic upgrade head` explicitly (locally or
+    # via the one-shot `migrate` compose service) before starting the API.
+    if engine.dialect.name == "sqlite":
+        create_db()
+    else:
+        logger.info(
+            "Schema managed by Alembic; expecting migrations already applied",
+            extra={"dialect": engine.dialect.name},
+        )
     initialize_redis_client()
     logger.info(
         "Application resources initialized",

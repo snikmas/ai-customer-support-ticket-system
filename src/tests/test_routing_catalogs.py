@@ -140,7 +140,7 @@ def test_catalog_management_is_manager_only(monkeypatch, tmp_path):
         routing_catalogs.create_skill(models.SkillCreate(name="Python"), customer)
 
 
-def test_skill_names_are_case_insensitive_and_duplicate_skill_ids_are_rejected(
+def test_skill_names_are_case_insensitive_and_customer_create_rejects_routing_fields(
     monkeypatch,
     tmp_path,
 ):
@@ -152,13 +152,12 @@ def test_skill_names_are_case_insensitive_and_duplicate_skill_ids_are_rejected(
     with pytest.raises(RoutingCatalogConflictError):
         routing_catalogs.create_skill(models.SkillCreate(name=" PYTHON "), manager)
 
-    with pytest.raises(ValidationError, match="duplicate_skill_ids"):
+    with pytest.raises(ValidationError, match="extra_forbidden"):
         models.TicketCreate(
             title="Need Python help",
             description="The worker fails",
             category=constants.Category.AGENT_WORKFLOW,
             department_id="support",
-            skill_ids=["python", "python"],
         )
 
 
@@ -279,58 +278,44 @@ def test_agent_department_change_is_blocked_with_active_work(monkeypatch, tmp_pa
         )
 
 
-def test_ticket_creation_persists_department_and_requested_skills(monkeypatch, tmp_path):
+def test_customer_ticket_creation_starts_without_routing_metadata(monkeypatch, tmp_path):
     engine = _database(monkeypatch, tmp_path)
     with Session(engine) as session:
-        manager = session.get(db_models.User, "manager")
         customer = session.get(db_models.User, "customer")
-    department = routing_catalogs.create_department(models.DepartmentCreate(name="Support"), manager)
-    skill = routing_catalogs.create_skill(models.SkillCreate(name="Redis"), manager)
-    monkeypatch.setattr(ticket_service, "enqueue_ticket_routing_job", lambda *_: None)
 
     ticket = ticket_service.create_ticket(
         models.TicketCreate(
             title="Redis timeout",
             description="The cache request times out",
             category=constants.Category.PERFORMANCE,
-            department_id=department.id,
-            skill_ids=[skill.id],
         ),
         customer,
     )
-    assert ticket.department_id == department.id
-    assert ticket.skill_ids == [skill.id]
-
-    routing_catalogs.archive_skill(skill.id, manager)
-    with pytest.raises(InactiveRoutingCatalogError):
-        ticket_service.create_ticket(
-            models.TicketCreate(
-                title="Another timeout",
-                description="The same cache request times out",
-                category=constants.Category.PERFORMANCE,
-                department_id=department.id,
-                skill_ids=[skill.id],
-            ),
-            customer,
-        )
+    assert ticket.department_id is None
+    assert ticket.skill_ids == []
+    assert ticket.status is constants.Status.NEW
+    assert ticket.assigned_agent_id is None
 
 
-def test_manager_can_correct_routing_metadata_only_before_assignment(monkeypatch, tmp_path):
+def test_manager_can_set_routing_metadata_only_before_assignment(monkeypatch, tmp_path):
     engine = _database(monkeypatch, tmp_path)
     with Session(engine) as session:
         manager = session.get(db_models.User, "manager")
         customer = session.get(db_models.User, "customer")
-    support = routing_catalogs.create_department(models.DepartmentCreate(name="Support"), manager)
     billing = routing_catalogs.create_department(models.DepartmentCreate(name="Billing"), manager)
     skill = routing_catalogs.create_skill(models.SkillCreate(name="Python"), manager)
-    monkeypatch.setattr(ticket_service, "enqueue_ticket_routing_job", lambda *_: None)
+    enqueued = []
+    monkeypatch.setattr(
+        ticket_service,
+        "enqueue_ticket_routing_job",
+        lambda ticket_id: enqueued.append(ticket_id),
+    )
     monkeypatch.setattr(ticket_service, "delete_cached_ticket", lambda *_: True)
     ticket = ticket_service.create_ticket(
         models.TicketCreate(
-            title="Wrong queue",
-            description="Please correct the routing metadata",
+            title="Needs triage",
+            description="Please choose the routing metadata",
             category=constants.Category.ACCOUNT_ACCESS,
-            department_id=support.id,
         ),
         customer,
     )
@@ -342,6 +327,7 @@ def test_manager_can_correct_routing_metadata_only_before_assignment(monkeypatch
     )
     assert updated.department_id == billing.id
     assert updated.skill_ids == [skill.id]
+    assert enqueued == [ticket.id]
 
     with Session(engine) as session, session.begin():
         stored = session.get(db_models.Ticket, ticket.id)

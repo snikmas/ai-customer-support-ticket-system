@@ -1,0 +1,38 @@
+# .dockerignore — like .gitignore, but for the Docker build context.
+#
+# Everything listed here is EXCLUDED from `COPY ... .` instructions and from
+# the context sent to the Docker daemon. Two reasons:
+#   1. Security: secrets must never be baked into an image. Anyone who pulls
+#      the image could extract them with `docker history` / layer inspection.
+#   2. Size/speed: myvenv and node_modules are hundreds of MB of junk.
+
+# Secrets — mounted at runtime by compose.yaml instead (read-only).
+.env
+keys/
+
+# Local virtual environment and caches — the image installs its own deps.
+myvenv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Local SQLite databases — the container uses PostgreSQL.
+tickets_system.db
+tickets_system.db-journal
+*.db
+
+# Local notes and learning artifacts — not part of the application.
+notes/
+QUIZ.md
+
+# Frontend dependencies/builds — site/ has its own build (site/Dockerfile).
+node_modules/
+site/node_modules/
+site/dist/
+dist/
+
+# VCS and tooling metadata.
+.git/
+.codex/
+.agents/
+.gstack/

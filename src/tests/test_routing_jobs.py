@@ -263,11 +263,10 @@ def test_duplicate_task_execution_relies_on_atomic_operation_and_invalidates_onc
     assert invalidated == ["ticket-1"]
 
 
-def test_create_ticket_preserves_committed_ticket_when_enqueue_fails(
+def test_customer_ticket_creation_is_durable_without_enqueuing_routing(
     monkeypatch,
     make_user,
     make_ticket,
-    caplog,
 ):
     requester = make_user(id="customer")
     stored_ticket = make_ticket(
@@ -275,22 +274,18 @@ def test_create_ticket_preserves_committed_ticket_when_enqueue_fails(
         creator_user_id=requester.id,
         tags=[constants.Tag.API_KEY],
     )
+    stored_ticket.department_id = None
     monkeypatch.setattr(
         ticket_service.operations,
         "create_ticket",
         lambda ticket, event, skill_ids: stored_ticket,
     )
-    monkeypatch.setattr(
-        ticket_service,
-        "_validate_routing_catalog_selection",
-        lambda *_: None,
-    )
+    enqueue_calls = []
     monkeypatch.setattr(
         ticket_service,
         "enqueue_ticket_routing_job",
-        lambda _: (_ for _ in ()).throw(ConnectionError("Redis unavailable")),
+        lambda ticket_id: enqueue_calls.append(ticket_id),
     )
-    caplog.set_level("ERROR")
 
     result = ticket_service.create_ticket(
         TicketCreate(
@@ -298,18 +293,18 @@ def test_create_ticket_preserves_committed_ticket_when_enqueue_fails(
             description="My API key is rejected by the service.",
             category=constants.Category.ACCOUNT_ACCESS,
             tags=[constants.Tag.API_KEY],
-            department_id="support",
         ),
         requester,
     )
 
     assert result.id == "ticket-1"
     assert result.status is constants.Status.NEW
+    assert result.department_id is None
     assert result.assigned_agent_id is None
-    assert "Ticket routing enqueue failed after ticket creation" in caplog.text
+    assert enqueue_calls == []
 
 
-def test_create_ticket_enqueues_only_after_database_create_returns(
+def test_customer_ticket_creation_persists_empty_routing_metadata(
     monkeypatch,
     make_user,
     make_ticket,
@@ -320,30 +315,25 @@ def test_create_ticket_enqueues_only_after_database_create_returns(
         creator_user_id=requester.id,
         tags=[constants.Tag.API_KEY],
     )
+    stored_ticket.department_id = None
     call_order = []
 
     def fake_database_create(ticket, event, skill_ids):
-        call_order.append(("committed", ticket.status, ticket.assigned_agent_id))
+        call_order.append(
+            (
+                "committed",
+                ticket.status,
+                ticket.assigned_agent_id,
+                ticket.department_id,
+                skill_ids,
+            )
+        )
         return stored_ticket
-
-    def fake_enqueue(ticket_id):
-        call_order.append(("enqueued", ticket_id))
-        return SimpleNamespace(id=f"route-ticket-{ticket_id}")
 
     monkeypatch.setattr(
         ticket_service.operations,
         "create_ticket",
         fake_database_create,
-    )
-    monkeypatch.setattr(
-        ticket_service,
-        "enqueue_ticket_routing_job",
-        fake_enqueue,
-    )
-    monkeypatch.setattr(
-        ticket_service,
-        "_validate_routing_catalog_selection",
-        lambda *_: None,
     )
 
     result = ticket_service.create_ticket(
@@ -352,13 +342,11 @@ def test_create_ticket_enqueues_only_after_database_create_returns(
             description="My API key is rejected by the service.",
             category=constants.Category.ACCOUNT_ACCESS,
             tags=[constants.Tag.API_KEY],
-            department_id="support",
         ),
         requester,
     )
 
     assert result.id == "ticket-1"
     assert call_order == [
-        ("committed", constants.Status.NEW, None),
-        ("enqueued", "ticket-1"),
+        ("committed", constants.Status.NEW, None, None, []),
     ]

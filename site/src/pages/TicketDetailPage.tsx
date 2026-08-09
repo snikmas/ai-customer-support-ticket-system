@@ -54,6 +54,8 @@ export function TicketDetailPage() {
   const [commentBody, setCommentBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("Public");
   const [selectedAgent, setSelectedAgent] = useState("");
+  const [selectedDepartment, setSelectedDepartment] = useState("");
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
 
   const role = identity?.role;
   const isManager = Boolean(role && MANAGER_ROLES.includes(role));
@@ -73,6 +75,8 @@ export function TicketDetailPage() {
         apiRequest<RoutingCatalog[]>("/skills/"),
       ]);
       setData({ ticket, comments, history, departments, skills });
+      setSelectedDepartment(ticket.department_id ?? departments[0]?.id ?? "");
+      setSelectedSkillIds(ticket.skill_ids);
 
       const maySeeAnalysis =
         isManager || (isAgent && ticket.assigned_agent_id === identity?.userId);
@@ -176,6 +180,8 @@ export function TicketDetailPage() {
     ticket.assigned_agent_id === identity?.userId;
   const canAnalyze =
     isManager || (isAgent && ticket.assigned_agent_id === identity?.userId);
+  const canConfigureRouting =
+    isManager && ticket.status === "New" && !ticket.assigned_agent_id;
   const canComment =
     !isReadonly &&
     (isManager ||
@@ -349,6 +355,73 @@ export function TicketDetailPage() {
           <section className="card action-card">
             <h2>Actions</h2>
             {isReadonly && <p className="muted">This role has read-only access.</p>}
+            {canConfigureRouting && (
+              <div className="routing-controls">
+                <strong>Route ticket</strong>
+                <p className="muted">
+                  Choose the internal destination after reviewing the customer request.
+                </p>
+                {departments.length === 0 ? (
+                  <p className="muted">No active departments are configured.</p>
+                ) : (
+                  <>
+                    <label>
+                      Department
+                      <select
+                        value={selectedDepartment}
+                        onChange={(event) => setSelectedDepartment(event.target.value)}
+                      >
+                        {departments.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {skills.length > 0 && (
+                      <fieldset>
+                        <legend>Required skills</legend>
+                        <div>
+                          {skills.map((skill) => (
+                            <label key={skill.id}>
+                              <input
+                                type="checkbox"
+                                checked={selectedSkillIds.includes(skill.id)}
+                                onChange={(event) =>
+                                  setSelectedSkillIds((current) =>
+                                    event.target.checked
+                                      ? [...current, skill.id]
+                                      : current.filter((id) => id !== skill.id),
+                                  )
+                                }
+                              />
+                              {skill.name}
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                    )}
+                    <button
+                      className="button primary full-width"
+                      disabled={!selectedDepartment || Boolean(busy)}
+                      onClick={() =>
+                        void perform("Routing", () =>
+                          apiRequest(`/tickets/${ticket.id}`, {
+                            method: "PATCH",
+                            body: {
+                              department_id: selectedDepartment,
+                              skill_ids: selectedSkillIds,
+                            },
+                          }),
+                        )
+                      }
+                    >
+                      Save routing
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             {canClaim && (
               <button
                 className="button secondary full-width"
@@ -362,7 +435,7 @@ export function TicketDetailPage() {
                 Claim ticket
               </button>
             )}
-            {isManager && agents.length > 0 && (
+            {isManager && agents.length > 0 && ticket.department_id && (
               <div className="inline-action">
                 <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)}>
                   {agents.map((agent) => (
@@ -460,7 +533,7 @@ export function TicketDetailPage() {
               </div>
               <div>
                 <dt>Department</dt>
-                <dd>{department?.name || "Unknown"}</dd>
+                <dd>{ticket.department_id ? department?.name || "Unknown" : "Awaiting triage"}</dd>
               </div>
               <div>
                 <dt>Assignee</dt>

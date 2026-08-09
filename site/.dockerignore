@@ -1,0 +1,5 @@
+# Excluded from the frontend Docker build context (see site/Dockerfile).
+node_modules/
+dist/
+.env
+*.tsbuildinfo

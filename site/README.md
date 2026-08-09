@@ -51,6 +51,8 @@ npm audit
   values in `src/api/types.ts` match the backend enums.
 - Customers do not choose priority while creating a ticket. Priority remains a
   server-owned triage field.
+- Customers do not choose a department or required agent skills. New tickets
+  remain unassigned and await system classification or Manager+ triage.
 - Controls are role- and state-aware. Unsupported design-export features stay
   visible but display a clear “not supported yet” notification.
 
@@ -67,8 +69,9 @@ The implemented browser flow covers:
 ```text
 login
   -> list/filter/sort/page tickets
-  -> create from live department and skill catalogs
+  -> create a customer request without internal routing metadata
   -> view ticket, public/internal comments, and history
+  -> Manager+ selects routing metadata and the routing worker may assign it
   -> perform allowed claim/assign/start/status actions
   -> request and poll durable AI analysis results
   -> logout

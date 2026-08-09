@@ -171,7 +171,19 @@ def create_user(user_data: User, event_data: Event | None = None) -> User:
 def create_initial_superadmin(user_data: User, event_data: Event) -> bool:
     with Session(engine) as session:
         try:
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            # SQLite: BEGIN IMMEDIATE serializes writers before the
+            # empty-table check. PostgreSQL: SELECT ... FOR UPDATE cannot
+            # lock rows that do not exist yet, so a brief table lock gives
+            # this one-time bootstrap the same single-writer boundary
+            # (SHARE ROW EXCLUSIVE conflicts with itself; plain reads are
+            # unaffected).
+            if session.get_bind().dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            else:
+                session.begin()
+                session.connection().exec_driver_sql(
+                    "LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE"
+                )
 
             if session.scalar(select(User.id).limit(1)) is not None:
                 session.rollback()
@@ -641,6 +653,7 @@ def get_waiting_ticket_ids(limit: int) -> list[str]:
             Ticket.deleted_at.is_(None),
             Ticket.status == Status.NEW,
             Ticket.assigned_agent_id.is_(None),
+            Ticket.department_id.is_not(None),
         )
         .order_by(Ticket.created_at.asc(), Ticket.id.asc())
         .limit(limit)

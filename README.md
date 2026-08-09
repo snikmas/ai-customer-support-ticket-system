@@ -50,11 +50,8 @@ Implemented:
 
 In progress or not finished:
 
-- Some routers still translate raw `PermissionError` and `ValueError` instead of
-  using the shared domain exceptions
-- One real free-model OpenRouter job still needs the manual acceptance check
-  (or an explicit no-ZDR-endpoint blocker)
-- Docker / Docker Compose and final portfolio documentation are not implemented
+- Final portfolio documentation (architecture diagram, demo script) is not
+  implemented
 
 The detailed checked roadmap is in
 [`notes/template.txt`](notes/template.txt).
@@ -100,7 +97,8 @@ Current stack:
 - FastAPI
 - Pydantic
 - SQLAlchemy
-- SQLite for local development
+- PostgreSQL (Docker deployment) and SQLite (tests, quick local runs)
+- Alembic schema migrations
 - JWT access tokens
 - Refresh-token sessions
 - bcrypt password hashing
@@ -109,10 +107,7 @@ Current stack:
 - OpenRouter Chat Completions through `httpx`
 - Pytest
 - React, TypeScript, Vite, and Vitest
-
-Planned after the current frontend and summarization acceptance gates:
-
-- Docker / Docker Compose
+- Docker and Docker Compose
 
 ## Backend Concepts Practiced
 
@@ -171,8 +166,8 @@ database, and blocks deleted or banned users.
 
 ### Tickets
 
-- `POST /tickets/` - create a ticket with an active `department_id` and optional
-  `skill_ids`
+- `POST /tickets/` - create an unassigned customer ticket without internal
+  routing metadata
 - `GET /tickets/` - list tickets with pagination, sorting, and filters
 - `GET /tickets/{id}` - get one ticket
 - `PATCH /tickets/{ticket_id}` - update ticket workflow fields
@@ -187,9 +182,11 @@ database, and blocks deleted or banned users.
 - `GET /tickets/{ticket_id}/analysis-results` - read authorized analysis history
 - `GET /analysis-results/{analysis_result_id}` - read one durable result
 
-Creating a ticket also attempts to enqueue automatic routing after the database
-commit. If Redis or enqueueing fails, the ticket remains durable as
-`NEW`/unassigned and periodic reconciliation can retry it later.
+New customer tickets remain durable as `NEW`, unassigned, and without a
+department until the support system or a Manager+ user classifies them.
+Manager+ users can set `department_id` and optional `skill_ids` through the
+ticket update endpoint. Saving valid routing metadata attempts to enqueue
+automatic routing; periodic reconciliation can retry if Redis is unavailable.
 
 ### Routing Catalogs
 
@@ -218,7 +215,7 @@ commit. If Redis or enqueueing fails, the ticket remains durable as
 There are two different job flows:
 
 ```text
-Ticket creation -> ticket_routing queue -> route_ticket() -> database assignment
+Routing metadata update -> ticket_routing queue -> route_ticket() -> database assignment
 
 Analysis request -> durable PENDING row -> ticket_jobs queue
     -> analyze_analysis_result(result_id)
@@ -248,8 +245,11 @@ envelope:
 }
 ```
 
-Some older ticket and job routes still need to migrate from broad built-in
-exceptions to precise domain exceptions, so not every error code is final.
+All routers, dependencies, and services raise shared domain exceptions, so
+expected business failures always use this envelope with a stable `code`. The
+`http_<status>` codes remain only as a fallback for raw `HTTPException`s raised
+by the framework itself. `src/tests/test_error_contract.py` guards this
+contract.
 
 ## Architecture and Data Flow
 
@@ -267,7 +267,8 @@ HTTP request
 Automatic routing crosses a process boundary:
 
 ```text
-Create and commit NEW ticket
+Create and commit NEW ticket without internal routing metadata
+    -> system classification or Manager+ triage sets department/skills
     -> enqueue stable routing job in Redis
     -> ticket_routing worker
     -> one database transaction:
@@ -278,10 +279,12 @@ Create and commit NEW ticket
          write audit event
 ```
 
-If enqueueing fails, the committed ticket is not deleted or rolled back.
-RQ cron later finds bounded pages of waiting `NEW`/unassigned tickets and
-enqueues them again. Duplicate delivery is expected, so database idempotency and
-transactional locking remain the final correctness boundary.
+If enqueueing fails, the classified ticket is not deleted and its routing
+metadata is not rolled back. RQ cron later finds bounded pages of
+`NEW`/unassigned tickets that have a department and enqueues them again.
+Unclassified tickets are deliberately excluded. Duplicate delivery is
+expected, so database idempotency and transactional locking remain the final
+correctness boundary.
 
 Automatic routing and overdue detection use `SYSTEM` audit actors with no fake
 human user ID. SLA deadlines combine the active status's base hours with the
@@ -300,6 +303,9 @@ enforced safely.
 
 ```text
 main.py                 FastAPI app entrypoint
+Dockerfile              Backend image (API, worker, cron share it)
+compose.yaml            Full-stack Docker Compose definition
+alembic/                Versioned PostgreSQL schema migrations
 src/routers/            API route handlers
 src/services/           Business logic and permission-aware workflows
 src/db/                 SQLAlchemy engine, models, and database operations
@@ -316,9 +322,43 @@ site/                   Vite/React browser demo and frontend tests
 keys/                   Local JWT key files
 ```
 
-## Running Locally
+## Running with Docker
 
-The complete development demo needs five separate processes:
+The whole stack — PostgreSQL, Redis, schema migrations, API, RQ worker, RQ
+cron, and the frontend — starts with one command:
+
+```bash
+cp .env.example .env   # then set POSTGRES_PASSWORD and SUPERADMIN_* values
+docker compose up --build
+```
+
+Startup order is enforced by health checks: Postgres and Redis must pass their
+probes, the one-shot `migrate` service applies Alembic migrations, and only
+then do the API, worker, and cron start. Create the initial superadmin once:
+
+```bash
+docker compose exec api python bootstrap_superadmin.py
+```
+
+Then open `http://localhost:5173` (frontend) or `http://localhost:8000/docs`
+(API). Inside the compose network the services reach each other by name
+(`db`, `redis`); only the API (8000) and frontend (5173) are published to the
+host. Secrets stay out of images: `.env` is substituted at runtime and
+`keys/` is mounted read-only.
+
+Useful lifecycle commands:
+
+```bash
+docker compose ps                 # service status and health
+docker compose logs -f worker     # follow one service's logs
+docker compose down               # stop, keeping the Postgres volume
+docker compose down -v            # full reset, deletes all data
+```
+
+## Running Locally (bare metal)
+
+The bare-metal path keeps every process visible and is the better learning
+setup. It needs five separate processes:
 
 ```text
 Redis server
@@ -356,12 +396,16 @@ gitignored `.env` or process environment, and temporarily set
 support, denies provider data collection, and requires a Zero Data Retention
 endpoint; do not relax those controls if the free model cannot be routed.
 
-Manual acceptance status on 2026-07-23: not run. No OpenRouter key is configured
-in this checkout, and OpenRouter's public endpoint metadata lists Darkbloom as
-the only `openai/gpt-oss-20b:free` endpoint while the public ZDR endpoint list
-contains no zero-priced `gpt-oss-20b` endpoint. The code therefore records this
-as an external gate instead of making a paid request or weakening the privacy
-policy.
+Manual acceptance status: **closed as an external blocker, accepted by
+policy.** Checked 2026-07-23 and rechecked 2026-08-09 against OpenRouter's
+public endpoint metadata (`/api/v1/models/openai/gpt-oss-20b/endpoints` and
+`/api/v1/endpoints/zdr`): the zero-priced `openai/gpt-oss-20b:free` variant has
+no ZDR-compliant endpoint — every ZDR-listed `gpt-oss-20b` endpoint is paid.
+The project therefore accepts this gate as blocked rather than making a paid
+request or weakening the privacy policy (`zdr=true`, `data_collection=deny`,
+`require_parameters=true`). If a ZDR-compliant free endpoint appears later, the
+runbook above (`ANALYZER_PROVIDER=openrouter`, one synthetic ticket, verify the
+durable row) closes the gate in under an hour.
 
 Start Redis and verify it responds:
 
@@ -418,9 +462,10 @@ DATABASE_URL=sqlite+pysqlite:////tmp/tickets-smoke.db \
   myvenv/bin/python -m uvicorn main:app
 ```
 
-The current application creates or upgrades its local schema while `main.py` is
-imported. Moving this work to an explicit migration/startup boundary is still a
-roadmap item.
+Schema management is dialect-dependent: SQLite (tests, quick local runs) is
+created/upgraded in the application lifespan, while PostgreSQL schemas are
+owned by Alembic and applied explicitly with `alembic upgrade head` (the
+compose `migrate` service runs it automatically).
 
 ### Initial superadmin
 

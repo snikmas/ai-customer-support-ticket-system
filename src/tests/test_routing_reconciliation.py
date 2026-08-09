@@ -46,6 +46,7 @@ def _ticket(
     status: constants.Status = constants.Status.NEW,
     assigned_agent_id: str | None = None,
     deleted_at: datetime | None = None,
+    department_id: str | None = "support",
 ) -> db_models.Ticket:
     return db_models.Ticket(
         id=ticket_id,
@@ -53,7 +54,7 @@ def _ticket(
         description="Description",
         category=constants.Category.ACCOUNT_ACCESS,
         tags=None,
-        department_id="support",
+        department_id=department_id,
         assigned_agent_id=assigned_agent_id,
         creator_user_id=creator_id,
         status=status,
@@ -145,6 +146,12 @@ def test_waiting_ticket_query_is_oldest_first_deterministic_and_bounded(
                     "customer",
                     now - timedelta(days=1),
                     status=constants.Status.OPEN,
+                ),
+                _ticket(
+                    "awaiting-triage",
+                    "customer",
+                    now - timedelta(days=2),
+                    department_id=None,
                 ),
             ]
         )
