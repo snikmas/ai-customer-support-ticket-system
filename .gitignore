@@ -15,6 +15,7 @@ dist/
 *.tsbuildinfo
 uploads/
 /uploads
+docs/DEMO.md
 /package-lock.json
 /package.json
 .gstack/

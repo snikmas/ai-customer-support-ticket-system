@@ -8,8 +8,8 @@ Vite/React/TypeScript staff workspace in `site/` talks to the real API.
 
 ![ResolveAI staff ticket workspace showing SQL-backed tickets, customer info, and routing](docs/media/stage10-ticket-detail.png)
 
-The screenshot uses synthetic local demo data. The complete safe recording
-sequence is in [docs/DEMO.md](docs/DEMO.md).
+The screenshot uses synthetic local demo data. Acceptance evidence is recorded
+in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
 ## Tech Stack
 
@@ -92,7 +92,6 @@ Errors use a shared envelope: `{ "error": { "code", "message" } }`.
 - [API examples](docs/API_EXAMPLES.md)
 - [Reliability and security](docs/RELIABILITY.md)
 - [Attachment contract](docs/ATTACHMENTS.md)
-- [Five-minute demo script](docs/DEMO.md)
 - [Stage 10 acceptance evidence](docs/ACCEPTANCE.md)
 
 ## Repository Structure
