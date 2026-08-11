@@ -140,6 +140,7 @@ def test_route_ticket_returns_terminal_domain_outcomes_without_retry_errors(
     monkeypatch,
     outcome,
 ):
+    monkeypatch.setattr(job_tasks, "_notify_managers", lambda *_args: None)
     monkeypatch.setattr(
         job_tasks,
         "try_route_ticket",
