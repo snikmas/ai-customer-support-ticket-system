@@ -13,6 +13,8 @@ keys
 node_modules/
 dist/
 *.tsbuildinfo
+uploads/
+/uploads
 /package-lock.json
 /package.json
 .gstack/

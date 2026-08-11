@@ -100,6 +100,33 @@ export interface User {
   created_at: string;
   deleted_at: string | null;
   user_status: "Active" | "Deleted" | "Banned";
+  agent_profile?: AgentProfile | null;
+}
+
+export interface AgentProfile {
+  user_id: string;
+  availability_status: "available" | "paused" | "offline";
+  availability_reason: string | null;
+  availability_note: string | null;
+  unavailable_until: string | null;
+  max_active_tickets: number;
+  last_assigned_at: string | null;
+  department_id: string | null;
+  skill_ids: string[];
+  current_active_tickets: number;
+  can_receive_new_tickets: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TicketCustomerSummary {
+  user_id: string;
+  display_name: string;
+  nickname: string;
+  account_status: "Active" | "Deleted" | "Banned";
+  email: string | null;
+  phone: string | null;
+  avatar_url: string | null;
 }
 
 export interface Ticket {
@@ -119,6 +146,15 @@ export interface Ticket {
   due_at: string | null;
   is_overdue: boolean;
   deleted_at: string | null;
+}
+
+export interface RelatedTicket {
+  link_id: string;
+  ticket_id: string;
+  title: string;
+  status: TicketStatus;
+  priority: Priority;
+  created_at: string;
 }
 
 export interface RoutingCatalog {
@@ -144,6 +180,24 @@ export interface Comment {
   parent_comment_id: string | null;
   attachments_count: number | null;
   source: "Web" | "API" | "Email" | "Bot" | "System";
+}
+
+export interface Attachment {
+  id: string;
+  comment_id: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface Notification {
+  id: string;
+  notification_type: string;
+  ticket_id: string | null;
+  message: string;
+  created_at: string;
+  read_at: string | null;
 }
 
 export interface HistoryEvent {

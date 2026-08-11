@@ -4,7 +4,12 @@ Backend-first FastAPI project for a customer support platform: users, JWT
 authentication, role-based permissions, ticket workflows, comments, automatic
 agent routing, SLA deadlines, Redis caching/rate limiting, RQ background jobs,
 and AI-assisted ticket summarization (fake analyzer or OpenRouter). A
-Vite/React/TypeScript frontend in `site/` talks to the real API.
+Vite/React/TypeScript staff workspace in `site/` talks to the real API.
+
+![ResolveAI staff ticket workspace showing SQL-backed tickets, customer info, and routing](docs/media/stage10-ticket-detail.png)
+
+The screenshot uses synthetic local demo data. The complete safe recording
+sequence is in [docs/DEMO.md](docs/DEMO.md).
 
 ## Tech Stack
 
@@ -19,16 +24,25 @@ Vite/React/TypeScript frontend in `site/` talks to the real API.
 ## Quick Start (Docker)
 
 The whole stack — PostgreSQL, Redis, migrations, API, worker, cron, and the
-frontend — starts with one command:
+frontend — starts with one project command:
 
 ```bash
 cp .env.example .env   # set POSTGRES_PASSWORD and SUPERADMIN_* values
-docker compose up --build
-docker compose exec api python bootstrap_superadmin.py   # once, first user
+./project.sh
 ```
 
 Then open `http://localhost:5173` (frontend) or `http://localhost:8000/docs`
-(API docs).
+(API docs). The launcher builds the images, starts every service in the
+background, waits for the stack to become healthy, and creates the configured
+superadmin automatically when the database has no users. On later starts it
+verifies the persisted administrator without overwriting it. It does not delete
+or reset PostgreSQL data.
+
+```bash
+./project.sh status   # show every container and its health
+./project.sh logs     # follow combined logs; Ctrl+C only stops viewing logs
+./project.sh stop     # stop services and preserve the database volume
+```
 
 ## Running Locally (bare metal)
 
@@ -61,12 +75,25 @@ cd site && npm test && npm run build  # frontend
 
 - **Users** — register, list, get, update, agent availability/profile, soft delete
 - **Auth** — `POST /auth/login`, `/auth/refresh`, `/auth/logout`; Bearer JWT
-- **Tickets** — CRUD, filtering/pagination, claim/assign/start-work, comments,
+- **Tickets** — SQL-backed search/filter/pagination, My Queue, claim/assign/
+  start-work, comments, ticket-scoped customer info, related issues, and
   durable AI analysis results
-- **Routing catalogs** — departments and skills CRUD (Manager+)
+- **Staff workspace** — role-aware Users, Routing catalogs, My Settings, agent
+  availability, secure comment attachments, and recipient-only notifications
 - **Jobs** — background job status and listing
 
 Errors use a shared envelope: `{ "error": { "code", "message" } }`.
+
+## Detailed documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Permissions](docs/PERMISSIONS.md)
+- [Ticket workflow](docs/TICKET_WORKFLOW.md)
+- [API examples](docs/API_EXAMPLES.md)
+- [Reliability and security](docs/RELIABILITY.md)
+- [Attachment contract](docs/ATTACHMENTS.md)
+- [Five-minute demo script](docs/DEMO.md)
+- [Stage 10 acceptance evidence](docs/ACCEPTANCE.md)
 
 ## Repository Structure
 

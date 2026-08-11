@@ -6,6 +6,7 @@ from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
 from src.exceptions.domain import AlreadyDeletedError, AuditLogError, AuthorizationError, CommentNotFoundError, EmptyUpdateError, TicketNotFoundError
+from src.services import notifications as s_notifications
 import json
 
 
@@ -135,6 +136,15 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
     res = operations.create_comment_with_event(comment, event)
     if res is None:
         raise AuditLogError("Comment could not be created", code="comment_create_failed")
+
+    if ticket.assigned_agent_id and ticket.assigned_agent_id != requester.id:
+        s_notifications.emit(
+            ticket.assigned_agent_id,
+            "comment_added",
+            f"A new visible comment was added to ticket #{ticket_id[:8]}.",
+            ticket_id=ticket_id,
+            idempotency_key=f"comment-added:{comment.id}:{ticket.assigned_agent_id}",
+        )
 
     return _to_api_comment(res)
 

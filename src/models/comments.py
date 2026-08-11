@@ -33,3 +33,12 @@ class CommentUpdate(BaseModel):
 
     body: LongBody | None = None
     visibility: Visibility | None = None
+
+
+class AttachmentResponse(BaseModel):
+    id: str
+    comment_id: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime

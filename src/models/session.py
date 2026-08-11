@@ -23,6 +23,21 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
 
+
+class Notification(BaseModel):
+    id: str
+    notification_type: str
+    ticket_id: str | None = None
+    message: str
+    created_at: datetime
+    read_at: datetime | None = None
+
+
+class NotificationMarkRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    read: bool = True
+
 class RefreshSession(BaseModel):
     id: str
     user_id: str

@@ -219,6 +219,41 @@ class CommentNotFoundError(NotFoundError):
     message = "Comment not found"
 
 
+class RelatedTicketConflictError(ConflictError):
+    code = "related_ticket_conflict"
+    message = "The tickets cannot be linked"
+
+
+class RelatedTicketNotFoundError(NotFoundError):
+    code = "related_ticket_not_found"
+    message = "Related ticket link not found"
+
+
+class AttachmentNotFoundError(NotFoundError):
+    code = "attachment_not_found"
+    message = "Attachment not found"
+
+
+class AttachmentValidationError(BadRequestError):
+    code = "attachment_invalid"
+    message = "Attachment is invalid"
+
+
+class NotificationNotFoundError(NotFoundError):
+    code = "notification_not_found"
+    message = "Notification not found"
+
+
+class LastSuperAdminError(ConflictError):
+    code = "last_super_admin_protected"
+    message = "The last active Super Admin cannot be removed"
+
+
+class FinalAdminAccessError(ConflictError):
+    code = "final_admin_access_protected"
+    message = "The administrator would lose their final administrative access"
+
+
 class JobNotFoundError(NotFoundError):
     code = "job_not_found"
     message = "Job not found"

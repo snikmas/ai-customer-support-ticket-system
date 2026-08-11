@@ -7,6 +7,9 @@ import { CreateTicketPage } from "./pages/CreateTicketPage";
 import { LoginPage } from "./pages/LoginPage";
 import { TicketDetailPage } from "./pages/TicketDetailPage";
 import { TicketListPage } from "./pages/TicketListPage";
+import { UsersPage } from "./pages/UsersPage";
+import { RoutingPage } from "./pages/RoutingPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 function ProtectedLayout() {
   const { identity, loading } = useAuth();
@@ -35,6 +38,9 @@ export function App() {
           <Route path="/tickets" element={<TicketListPage />} />
           <Route path="/tickets/new" element={<CreateTicketPage />} />
           <Route path="/tickets/:ticketId" element={<TicketDetailPage />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/routing" element={<RoutingPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/tickets" replace />} />
       </Routes>

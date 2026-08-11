@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy import CheckConstraint, Column, ForeignKey, String, Time, Interval, Enum, DateTime, Table, Text, Index, Integer, text
+from sqlalchemy import CheckConstraint, Column, ForeignKey, String, Time, Interval, Enum, DateTime, Table, Text, Index, Integer, UniqueConstraint, text
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from datetime import datetime, timedelta, timezone
@@ -108,6 +108,12 @@ class Skill(Base):
 
 class Ticket(Base):
     __tablename__ = 'tickets'
+    __table_args__ = (
+        Index("ix_tickets_creator_status_created", "creator_user_id", "status", "created_at"),
+        Index("ix_tickets_assignee_status_updated", "assigned_agent_id", "status", "updated_at"),
+        Index("ix_tickets_department_status_updated", "department_id", "status", "updated_at"),
+        Index("ix_tickets_deleted_due", "deleted_at", "due_at"),
+    )
     id:                 Mapped[str] = mapped_column(String(36), primary_key=True)
     title:              Mapped[str] = mapped_column(String(255))
     description:        Mapped[str] = mapped_column(String(32000))
@@ -294,6 +300,78 @@ class Comment(Base):
     )
     attachments_count: Mapped[int] = mapped_column(default=0)
     source: Mapped[Source] = mapped_column(Enum(Source), nullable=False)
+
+
+class TicketLink(Base):
+    """Canonical undirected link between two non-deleted tickets."""
+
+    __tablename__ = "ticket_links"
+    __table_args__ = (
+        CheckConstraint("ticket_id < related_ticket_id", name="ck_ticket_links_canonical_order"),
+        UniqueConstraint("ticket_id", "related_ticket_id", name="uq_ticket_links_pair"),
+        Index("ix_ticket_links_ticket", "ticket_id"),
+        Index("ix_ticket_links_related_ticket", "related_ticket_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("tickets.id", ondelete="RESTRICT"), nullable=False
+    )
+    related_ticket_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("tickets.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+    __table_args__ = (
+        Index("ix_attachments_comment_created", "comment_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    comment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("comments.id", ondelete="RESTRICT"), nullable=False
+    )
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index(
+            "ix_notifications_recipient_read_created",
+            "recipient_user_id",
+            "read_at",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    recipient_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    notification_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    ticket_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("tickets.id", ondelete="SET NULL"), nullable=True
+    )
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    read_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(180), unique=True, nullable=True
+    )
 
 
 # ========================== APP ==============================

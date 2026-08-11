@@ -25,6 +25,7 @@ from .operations import (
     record_overdue_ticket_events,
     reserve_analysis_result,
     get_user,
+    get_active_user_ids_by_roles,
     get_user_by_email,
     get_user_by_nickname,
     get_users,

@@ -1,5 +1,7 @@
 from .tickets import (
     AssignTicketRequest,
+    RelatedTicket,
+    RelatedTicketCreate,
     RefreshTokenRequest,
     Ticket,
     TicketCreate,
@@ -13,7 +15,9 @@ from .users import (
     AgentProfileResponse,
     User,
     UserCreate,
+    StaffCreate,
     UserResponse,
+    TicketCustomerSummary,
     UserUpdate,
 )
 from .session import (
@@ -24,8 +28,10 @@ from .session import (
     LogoutRequest,
     RefreshSession,
     TokenResponse,
+    Notification,
+    NotificationMarkRead,
 )
-from .comments import Comment, CommentCreate, CommentUpdate
+from .comments import AttachmentResponse, Comment, CommentCreate, CommentUpdate
 from .jobs import JobResponse, JobStatusResponse, Job
 from .routing_catalogs import (
     DepartmentCreate,

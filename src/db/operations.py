@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from .engine import engine
 from .models import (
     AgentProfile,
+    Attachment,
     AnalysisResult,
     Comment,
     Department,
@@ -11,6 +12,8 @@ from .models import (
     RefreshSession,
     Skill,
     Ticket,
+    TicketLink,
+    Notification,
     User,
     UserStatus,
     agent_skills,
@@ -218,6 +221,141 @@ def get_user(id: str) -> User | None:
         result = session.get(User, id)
         return result
 
+
+def get_active_user_ids_by_roles(roles: set[Role]) -> list[str]:
+    """Return notification recipients without exposing user records."""
+    if not roles:
+        return []
+    with Session(engine) as session:
+        return list(session.scalars(
+            select(User.id).where(
+                User.role.in_(roles),
+                User.user_status == UserStatus.ACTIVE,
+                User.deleted_at.is_(None),
+            )
+        ).all())
+
+
+def count_active_superadmins() -> int:
+    with Session(engine) as session:
+        return session.scalar(
+            select(func.count(User.id)).where(
+                User.role == Role.SUPER_ADMIN,
+                User.user_status == UserStatus.ACTIVE,
+                User.deleted_at.is_(None),
+            )
+        ) or 0
+
+
+def count_active_administrators() -> int:
+    with Session(engine) as session:
+        return session.scalar(
+            select(func.count(User.id)).where(
+                User.role.in_((Role.ADMIN, Role.SUPER_ADMIN)),
+                User.user_status == UserStatus.ACTIVE,
+                User.deleted_at.is_(None),
+            )
+        ) or 0
+
+
+def create_notification(
+    recipient_user_id: str,
+    notification_type: str,
+    message: str,
+    *,
+    ticket_id: str | None = None,
+    idempotency_key: str | None = None,
+) -> Notification:
+    with Session(engine) as session:
+        with session.begin():
+            if idempotency_key:
+                existing = session.scalar(
+                    select(Notification).where(
+                        Notification.idempotency_key == idempotency_key
+                    )
+                )
+                if existing is not None:
+                    return existing
+            notification = Notification(
+                id=generate_id(),
+                recipient_user_id=recipient_user_id,
+                notification_type=notification_type,
+                ticket_id=ticket_id,
+                message=message,
+                created_at=utc_now(),
+                read_at=None,
+                idempotency_key=idempotency_key,
+            )
+            session.add(notification)
+        session.refresh(notification)
+        return notification
+
+
+def list_notifications(
+    recipient_user_id: str,
+    limit: int,
+    offset: int,
+    *,
+    unread_only: bool = False,
+) -> list[Notification]:
+    with Session(engine) as session:
+        statement = select(Notification).where(
+            Notification.recipient_user_id == recipient_user_id
+        )
+        if unread_only:
+            statement = statement.where(Notification.read_at.is_(None))
+        statement = (
+            statement.order_by(
+                Notification.created_at.desc(), Notification.id.desc()
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(session.scalars(statement).all())
+
+
+def count_unread_notifications(recipient_user_id: str) -> int:
+    with Session(engine) as session:
+        return session.scalar(
+            select(func.count(Notification.id)).where(
+                Notification.recipient_user_id == recipient_user_id,
+                Notification.read_at.is_(None),
+            )
+        ) or 0
+
+
+def mark_notification_read(
+    notification_id: str,
+    recipient_user_id: str,
+) -> Notification | None:
+    with Session(engine) as session:
+        with session.begin():
+            notification = session.scalar(
+                select(Notification).where(
+                    Notification.id == notification_id,
+                    Notification.recipient_user_id == recipient_user_id,
+                )
+            )
+            if notification is None:
+                return None
+            notification.read_at = utc_now()
+        session.refresh(notification)
+        return notification
+
+
+def mark_all_notifications_read(recipient_user_id: str) -> int:
+    with Session(engine) as session:
+        with session.begin():
+            result = session.execute(
+                update(Notification)
+                .where(
+                    Notification.recipient_user_id == recipient_user_id,
+                    Notification.read_at.is_(None),
+                )
+                .values(read_at=utc_now())
+            )
+        return result.rowcount
+
 def get_user_by_email(inputted_email: str) -> User | None:
     with Session(engine) as session:
         return session.query(User).filter_by(email=inputted_email).first()
@@ -290,7 +428,12 @@ def get_users(
             limit: int | None = None,
             offset: int = 0,
             sort_by: str = DEFAULT_SORT_BY,
-            sort_order: str = DEFAULT_SORT_ORDER) -> list[User]:
+            sort_order: str = DEFAULT_SORT_ORDER,
+            *,
+            role: Role | None = None,
+            user_status: UserStatus | None = None,
+            search: str | None = None,
+            ) -> list[User]:
     
     sort_columns = {
         "created_at": User.created_at,
@@ -304,7 +447,23 @@ def get_users(
 
         order_exp = apply_sort_order(sort_col, sort_order)
         
-        query = select(User).order_by(order_exp).offset(offset)
+        query = select(User)
+        if role:
+            query = query.where(User.role == role)
+        if user_status:
+            query = query.where(User.user_status == user_status)
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            query = query.where(
+                or_(
+                    User.id == search.strip(),
+                    User.nickname.ilike(pattern),
+                    User.first_name.ilike(pattern),
+                    User.last_name.ilike(pattern),
+                    User.email.ilike(pattern),
+                )
+            )
+        query = query.order_by(order_exp, User.id.asc()).offset(offset)
         if limit is not None:
             query = query.limit(limit)
             
@@ -509,6 +668,40 @@ def update_user(id: str, new_info: dict, event_data: Event | None = None) -> Use
         return user
 
 
+def create_staff_user(
+    user: User,
+    event_data: Event,
+    *,
+    max_active_tickets: int = 5,
+    department_id: str | None = None,
+    skill_ids: list[str] | None = None,
+) -> User:
+    with Session(engine) as session:
+        with session.begin():
+            session.add(user)
+            if user.role is Role.AGENT:
+                profile = AgentProfile(
+                    user_id=user.id,
+                    availability_status=AvailabilityStatus.OFFLINE,
+                    availability_reason=None,
+                    availability_note=None,
+                    unavailable_until=None,
+                    max_active_tickets=max_active_tickets,
+                    last_assigned_at=None,
+                    department_id=department_id,
+                    created_at=user.created_at,
+                    updated_at=user.updated_at,
+                )
+                if skill_ids:
+                    profile.skills = list(
+                        session.scalars(select(Skill).where(Skill.id.in_(skill_ids))).all()
+                    )
+                session.add(profile)
+            session.add(_event_from_data(event_data))
+        session.refresh(user)
+        return user
+
+
 def delete_user(id: str, delete_info: dict, event_data: Event | None = None) -> bool:
     with Session(engine) as session:
         with session.begin():
@@ -586,6 +779,64 @@ def get_ticket(id: str) -> Ticket | None:
     with Session(engine) as session:
         result = session.get(Ticket, id)
         return result
+
+
+def get_ticket_link(ticket_id: str, related_ticket_id: str) -> TicketLink | None:
+    with Session(engine) as session:
+        return session.scalar(
+            select(TicketLink).where(
+                TicketLink.ticket_id == ticket_id,
+                TicketLink.related_ticket_id == related_ticket_id,
+            )
+        )
+
+
+def create_ticket_link(link: TicketLink, event_data: Event) -> TicketLink:
+    with Session(engine) as session:
+        with session.begin():
+            session.add(link)
+            session.add(_event_from_data(event_data))
+        session.refresh(link)
+        return link
+
+
+def get_ticket_links(ticket_id: str) -> list[tuple[TicketLink, Ticket]]:
+    with Session(engine) as session:
+        statement = (
+            select(TicketLink, Ticket)
+            .join(
+                Ticket,
+                or_(
+                    and_(
+                        TicketLink.ticket_id == ticket_id,
+                        Ticket.id == TicketLink.related_ticket_id,
+                    ),
+                    and_(
+                        TicketLink.related_ticket_id == ticket_id,
+                        Ticket.id == TicketLink.ticket_id,
+                    ),
+                ),
+            )
+            .where(
+                or_(
+                    TicketLink.ticket_id == ticket_id,
+                    TicketLink.related_ticket_id == ticket_id,
+                )
+            )
+            .order_by(Ticket.created_at.desc(), Ticket.id.asc())
+        )
+        return list(session.execute(statement).all())
+
+
+def delete_ticket_link(link_id: str, event_data: Event) -> bool:
+    with Session(engine) as session:
+        with session.begin():
+            link = session.get(TicketLink, link_id)
+            if link is None:
+                return False
+            session.delete(link)
+            session.add(_event_from_data(event_data))
+        return True
             # limit: int,
         # offset: int,
         # sort_by: str,
@@ -600,6 +851,15 @@ def get_tickets(
         status: Status | None = None,
         overdue: bool | None = None,
         now: datetime | None = None,
+        *,
+        requester_id: str | None = None,
+        requester_role: Role | None = None,
+        assigned_to_me: bool = False,
+        department_id: str | None = None,
+        assignee_id: str | None = None,
+        category=None,
+        tag=None,
+        search: str | None = None,
 ) -> list[Ticket]:
     with Session(engine) as session: 
         sort_columns = {
@@ -611,7 +871,50 @@ def get_tickets(
         sort_col = sort_columns[sort_by]
         order_exp = apply_sort_order(sort_col, sort_order)
 
-        query = select(Ticket)
+        query = select(Ticket).where(Ticket.deleted_at.is_(None))
+        if requester_role in (Role.ADMIN, Role.SUPER_ADMIN, Role.MANAGER, Role.AGENT_READONLY):
+            pass
+        elif requester_role is Role.AGENT:
+            if assigned_to_me:
+                query = query.where(Ticket.assigned_agent_id == requester_id)
+            else:
+                query = query.where(
+                    or_(
+                        Ticket.assigned_agent_id == requester_id,
+                        and_(
+                            Ticket.assigned_agent_id.is_(None),
+                            Ticket.status == Status.NEW,
+                        ),
+                    )
+                )
+        elif requester_role is Role.USER:
+            query = query.where(Ticket.creator_user_id == requester_id)
+        else:
+            query = query.where(Ticket.id == "__no_visible_ticket__")
+
+        if department_id:
+            query = query.where(Ticket.department_id == department_id)
+        if assignee_id:
+            query = query.where(Ticket.assigned_agent_id == assignee_id)
+        if category:
+            query = query.where(Ticket.category == category)
+        if tag:
+            # Tags are stored as a bounded JSON string for SQLite/PostgreSQL
+            # compatibility. Searching for the quoted value avoids matching a
+            # substring inside a different tag.
+            tag_value = getattr(tag, "value", tag)
+            query = query.where(Ticket.tags.like(f'%"{tag_value}"%'))
+        if search:
+            search_value = search.strip()
+            if search_value:
+                pattern = f"%{search_value}%"
+                query = query.where(
+                    or_(
+                        Ticket.id == search_value,
+                        Ticket.title.ilike(pattern),
+                        Ticket.description.ilike(pattern),
+                    )
+                )
         if priority:
             query = query.where(Ticket.priority == priority)
         if status:
@@ -631,7 +934,7 @@ def get_tickets(
                     )
                 )
 
-        query = query.order_by(order_exp).offset(offset)
+        query = query.order_by(order_exp, Ticket.id.asc()).offset(offset)
         if limit is not None:
             query = query.limit(limit)
 
@@ -1105,6 +1408,48 @@ def create_comment_with_event(comment_data: Comment, event_data: Event) -> Comme
 def get_comment(comment_id: str) -> Comment | None:
     with Session(engine) as session:
         return session.get(Comment, comment_id)
+
+
+def count_comment_attachments(comment_id: str) -> int:
+    with Session(engine) as session:
+        return session.scalar(
+            select(func.count(Attachment.id)).where(
+                Attachment.comment_id == comment_id,
+                Attachment.deleted_at.is_(None),
+            )
+        ) or 0
+
+
+def create_attachment(attachment: Attachment, event_data: Event) -> Attachment:
+    with Session(engine) as session:
+        with session.begin():
+            session.add(attachment)
+            session.add(_event_from_data(event_data))
+            comment = session.get(Comment, attachment.comment_id)
+            if comment is not None:
+                # Keep the counter update inside the same transaction as the
+                # attachment insert.  Opening a second Session here can read
+                # a snapshot that does not include the new attachment.
+                comment.attachments_count = (comment.attachments_count or 0) + 1
+        session.refresh(attachment)
+        return attachment
+
+
+def get_attachment(attachment_id: str) -> Attachment | None:
+    with Session(engine) as session:
+        return session.get(Attachment, attachment_id)
+
+
+def get_comment_attachments(comment_id: str) -> list[Attachment]:
+    with Session(engine) as session:
+        return list(session.scalars(
+            select(Attachment)
+            .where(
+                Attachment.comment_id == comment_id,
+                Attachment.deleted_at.is_(None),
+            )
+            .order_by(Attachment.created_at.asc(), Attachment.id.asc())
+        ).all())
 
 
 def get_comments(

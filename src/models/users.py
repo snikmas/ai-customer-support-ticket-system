@@ -33,6 +33,22 @@ class UserCreate(BaseModel):
     phone: PhoneNumber
     email: EmailAddress
 
+
+class StaffCreate(UserCreate):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Role
+    max_active_tickets: int = Field(default=5, ge=0, le=100)
+    department_id: EntityId | None = None
+    skill_ids: list[EntityId] = Field(default_factory=list, max_length=50)
+
+    @field_validator("role")
+    @classmethod
+    def require_staff_role(cls, value: Role):
+        if value not in {Role.AGENT, Role.MANAGER, Role.ADMIN, Role.SUPER_ADMIN, Role.AGENT_READONLY}:
+            raise ValueError("staff_role_required")
+        return value
+
 class UserUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -61,6 +77,18 @@ class UserResponse(BaseModel):
     created_at: datetime
     deleted_at: datetime | None = None
     user_status: UserStatus | None = UserStatus.ACTIVE
+
+
+class TicketCustomerSummary(BaseModel):
+    """Minimum customer data staff need while working on one ticket."""
+
+    user_id: str
+    display_name: str
+    nickname: str
+    account_status: UserStatus
+    email: str | None = None
+    phone: str | None = None
+    avatar_url: str | None = None
 
 
 class AgentAvailabilityUpdate(BaseModel):

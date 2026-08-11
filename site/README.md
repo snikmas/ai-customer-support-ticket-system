@@ -1,6 +1,6 @@
 # ResolveAI frontend
 
-This directory contains the Stage 0 browser demo for the real FastAPI backend.
+This directory contains the staff-workspace browser application for the real FastAPI backend.
 It is a Vite, React, and TypeScript application; it does not use mock ticket
 data.
 
@@ -53,8 +53,9 @@ npm audit
   server-owned triage field.
 - Customers do not choose a department or required agent skills. New tickets
   remain unassigned and await system classification or Manager+ triage.
-- Controls are role- and state-aware. Unsupported design-export features stay
-  visible but display a clear “not supported yet” notification.
+- Controls are role- and state-aware. Search, My Queue, customer info, related
+  issues, attachments, users, routing, settings, and notifications call real
+  backend operations.
 
 The demo session policy is intentionally simple. A production browser
 application would normally keep the refresh token in a Secure, HttpOnly,
@@ -74,6 +75,8 @@ login
   -> Manager+ selects routing metadata and the routing worker may assign it
   -> perform allowed claim/assign/start/status actions
   -> request and poll durable AI analysis results
+  -> inspect customer summary, related tickets, attachments, and notifications
+  -> manage users/routing/settings for the permitted role
   -> logout
 ```
 

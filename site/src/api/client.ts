@@ -81,7 +81,8 @@ export async function apiRequest<T>(
   } = options;
 
   const headers = new Headers(providedHeaders);
-  if (body !== undefined) headers.set("Content-Type", "application/json");
+  const isMultipart = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isMultipart) headers.set("Content-Type", "application/json");
   if (authenticated) {
     const tokens = readTokens();
     if (!tokens) throw new ApiError("Please sign in", 401, "session_missing");
@@ -91,7 +92,7 @@ export async function apiRequest<T>(
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...requestInit,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : isMultipart ? (body as FormData) : JSON.stringify(body),
   });
 
   if (response.status === 401 && authenticated && retryUnauthorized) {
@@ -110,6 +111,16 @@ export async function apiRequest<T>(
     return (payload as { data: T }).data;
   }
   return payload as T;
+}
+
+export async function downloadFile(path: string): Promise<Blob> {
+  const tokens = readTokens();
+  if (!tokens) throw new ApiError("Please sign in", 401, "session_missing");
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${tokens.access_token}` },
+  });
+  if (!response.ok) throw await parseError(response);
+  return response.blob();
 }
 
 export function toErrorMessage(error: unknown): string {

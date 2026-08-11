@@ -8,26 +8,28 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiRequest, toErrorMessage } from "../api/client";
+import { apiRequest, downloadFile, toErrorMessage } from "../api/client";
 import {
   MANAGER_ROLES,
   PRIORITY_LABELS,
   STATUS_TRANSITIONS,
+  type Attachment,
   type AnalysisResult,
   type Comment,
   type HistoryEvent,
   type Priority,
   type RoutingCatalog,
   type Ticket,
+  type TicketCustomerSummary,
+  type RelatedTicket,
   type TicketStatus,
   type User,
   type Visibility,
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { StatePanel } from "../components/StatePanel";
-import { UnsupportedButton } from "../components/UnsupportedButton";
 import { useToast } from "../components/ToastContext";
 import { formatDate, initials, priorityLabel, relativeTime, roleLabel } from "../lib/format";
 
@@ -56,6 +58,21 @@ export function TicketDetailPage() {
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<"activity" | "customer" | "related">("activity");
+  const [customer, setCustomer] = useState<TicketCustomerSummary | null>(null);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerError, setCustomerError] = useState("");
+  const [related, setRelated] = useState<RelatedTicket[]>([]);
+  const [relatedCandidates, setRelatedCandidates] = useState<Ticket[]>([]);
+  const [relatedSearch, setRelatedSearch] = useState("");
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const [relatedBusy, setRelatedBusy] = useState("");
+  const [relatedError, setRelatedError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState("");
+  const [attachmentsByComment, setAttachmentsByComment] = useState<Record<string, Attachment[]>>({});
+  const [downloadingAttachment, setDownloadingAttachment] = useState("");
 
   const role = identity?.role;
   const isManager = Boolean(role && MANAGER_ROLES.includes(role));
@@ -75,6 +92,21 @@ export function TicketDetailPage() {
         apiRequest<RoutingCatalog[]>("/skills/"),
       ]);
       setData({ ticket, comments, history, departments, skills });
+      const attachmentEntries = await Promise.all(
+        comments.map(async (comment) => {
+          try {
+            return [
+              comment.id,
+              await apiRequest<Attachment[]>(
+                `/tickets/${ticketId}/comments/${comment.id}/attachments`,
+              ),
+            ] as const;
+          } catch {
+            return [comment.id, []] as const;
+          }
+        }),
+      );
+      setAttachmentsByComment(Object.fromEntries(attachmentEntries));
       setSelectedDepartment(ticket.department_id ?? departments[0]?.id ?? "");
       setSelectedSkillIds(ticket.skill_ids);
 
@@ -112,6 +144,84 @@ export function TicketDetailPage() {
   }, [identity?.userId, isAgent, isManager, ticketId, user]);
 
   useEffect(() => void load(), [load]);
+
+  const loadCustomer = useCallback(async () => {
+    setCustomerLoading(true);
+    setCustomerError("");
+    try {
+      setCustomer(await apiRequest<TicketCustomerSummary>(`/tickets/${ticketId}/customer`));
+    } catch (caught) {
+      setCustomerError(toErrorMessage(caught));
+    } finally {
+      setCustomerLoading(false);
+    }
+  }, [ticketId]);
+
+  useEffect(() => {
+    if (activeTab === "customer") void loadCustomer();
+  }, [activeTab, loadCustomer]);
+
+  const loadRelated = useCallback(async () => {
+    setRelatedLoading(true);
+    setRelatedError("");
+    try {
+      setRelated(await apiRequest<RelatedTicket[]>(`/tickets/${ticketId}/related`));
+    } catch (caught) {
+      setRelatedError(toErrorMessage(caught));
+    } finally {
+      setRelatedLoading(false);
+    }
+  }, [ticketId]);
+
+  useEffect(() => {
+    if (activeTab === "related") void loadRelated();
+  }, [activeTab, loadRelated]);
+
+  const searchRelated = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!relatedSearch.trim()) {
+      setRelatedCandidates([]);
+      return;
+    }
+    try {
+      const found = await apiRequest<Ticket[]>(
+        `/tickets/?search=${encodeURIComponent(relatedSearch.trim())}&limit=10&sort_by=updated_at&sort_order=desc`,
+      );
+      setRelatedCandidates(found.filter((candidate) => candidate.id !== ticketId));
+    } catch (caught) {
+      setRelatedError(toErrorMessage(caught));
+    }
+  };
+
+  const addRelated = async (candidateId: string) => {
+    setRelatedBusy(candidateId);
+    setRelatedError("");
+    try {
+      await apiRequest(`/tickets/${ticketId}/related`, {
+        method: "POST",
+        body: { related_ticket_id: candidateId },
+      });
+      setRelatedCandidates((items) => items.filter((item) => item.id !== candidateId));
+      await loadRelated();
+    } catch (caught) {
+      setRelatedError(toErrorMessage(caught));
+    } finally {
+      setRelatedBusy("");
+    }
+  };
+
+  const removeRelated = async (candidateId: string) => {
+    setRelatedBusy(candidateId);
+    setRelatedError("");
+    try {
+      await apiRequest(`/tickets/${ticketId}/related/${candidateId}`, { method: "DELETE" });
+      setRelated((items) => items.filter((item) => item.ticket_id !== candidateId));
+    } catch (caught) {
+      setRelatedError(toErrorMessage(caught));
+    } finally {
+      setRelatedBusy("");
+    }
+  };
 
   const activeAnalysis = analyses.find(
     (item) => item.status === "pending" || item.status === "running",
@@ -190,14 +300,78 @@ export function TicketDetailPage() {
   const transitions = allowedTransitions(ticket, role, identity?.userId);
   const latestAnalysis = analyses[0];
 
+  const selectFiles = (fileList: FileList | null) => {
+    if (!fileList) return;
+    const incoming = Array.from(fileList);
+    const allowed = new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "text/plain",
+      "text/csv",
+      "application/json",
+    ]);
+    const invalid = incoming.find(
+      (file) => !allowed.has(file.type) || file.size > 5 * 1024 * 1024,
+    );
+    if (invalid) {
+      setFileError(`${invalid.name} is not an allowed type or is larger than 5 MiB.`);
+      return;
+    }
+    if (selectedFiles.length + incoming.length > 5) {
+      setFileError("A comment can have at most 5 attachments.");
+      return;
+    }
+    setFileError("");
+    setSelectedFiles((current) => [...current, ...incoming]);
+  };
+
+  const downloadAttachment = async (attachment: Attachment) => {
+    setDownloadingAttachment(attachment.id);
+    try {
+      const blob = await downloadFile(
+        `/tickets/${ticket.id}/comments/${attachment.comment_id}/attachments/${attachment.id}`,
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = attachment.original_filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      setMutationError(toErrorMessage(caught));
+    } finally {
+      setDownloadingAttachment("");
+    }
+  };
+
   async function addComment(event: FormEvent) {
     event.preventDefault();
     if (!commentBody.trim()) return;
     await perform("Comment", async () => {
-      await apiRequest(`/tickets/${ticket.id}/comments`, {
+      const created = await apiRequest<Comment>(`/tickets/${ticket.id}/comments`, {
         method: "POST",
         body: { body: commentBody.trim(), visibility },
       });
+      const failed: File[] = [];
+      for (const file of selectedFiles) {
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          await apiRequest(`/tickets/${ticket.id}/comments/${created.id}/attachments`, {
+            method: "POST",
+            body: form,
+          });
+        } catch {
+          failed.push(file);
+        }
+      }
+      if (failed.length > 0) {
+        setFileError(`Comment saved, but ${failed.length} attachment(s) failed. Retry them.`);
+      } else {
+        setFileError("");
+      }
+      setSelectedFiles(failed);
       setCommentBody("");
     });
   }
@@ -250,84 +424,210 @@ export function TicketDetailPage() {
 
           <section className="card tabs-card">
             <div className="tab-row">
-              <button className="active">Activity</button>
-              <UnsupportedButton feature="Customer Info">Customer Info</UnsupportedButton>
-              <UnsupportedButton feature="Related Issues">Related Issues</UnsupportedButton>
+              <button className={activeTab === "activity" ? "active" : undefined} onClick={() => setActiveTab("activity")}>
+                Activity
+              </button>
+              <button className={activeTab === "customer" ? "active" : undefined} onClick={() => setActiveTab("customer")}>
+                Customer Info
+              </button>
+              <button className={activeTab === "related" ? "active" : undefined} onClick={() => setActiveTab("related")}>
+                Related Issues
+              </button>
             </div>
-            <div className="comment-list">
-              {comments.length === 0 ? (
-                <p className="muted">No comments yet.</p>
-              ) : (
-                comments.map((comment) => {
-                  const author = userMap.get(comment.author_user_id);
-                  return (
-                    <article
-                      key={comment.id}
-                      className={`comment comment-${comment.visibility.toLowerCase().replaceAll(" ", "-")}`}
-                    >
-                      <div className="avatar small">
-                        {author
-                          ? initials(author.first_name, author.last_name)
-                          : comment.author_user_id.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <header>
-                          <strong>
+            {activeTab === "activity" ? (
+              <>
+                <div className="comment-list">
+                  {comments.length === 0 ? (
+                    <p className="muted">No comments yet.</p>
+                  ) : (
+                    comments.map((comment) => {
+                      const author = userMap.get(comment.author_user_id);
+                      return (
+                        <article
+                          key={comment.id}
+                          className={`comment comment-${comment.visibility.toLowerCase().replaceAll(" ", "-")}`}
+                        >
+                          <div className="avatar small">
                             {author
-                              ? `${author.first_name} ${author.last_name}`
-                              : `User ${comment.author_user_id.slice(0, 8)}`}
-                          </strong>
-                          {comment.visibility !== "Public" && (
-                            <span className="visibility">
-                              <Lock size={12} /> {comment.visibility}
-                            </span>
-                          )}
-                          <time title={formatDate(comment.created_at)}>
-                            {relativeTime(comment.created_at)}
-                          </time>
-                        </header>
-                        <p>{comment.body}</p>
-                      </div>
-                    </article>
-                  );
-                })
-              )}
-            </div>
-            {canComment && (
-              <form className="reply-form" onSubmit={(event) => void addComment(event)}>
-                <div className="reply-toolbar">
-                  <select
-                    aria-label="Comment visibility"
-                    value={visibility}
-                    onChange={(event) => setVisibility(event.target.value as Visibility)}
-                  >
-                    <option value="Public">Public reply</option>
-                    {!isCustomer && <option value="Internal">Internal note</option>}
-                    {isManager && <option value="Private To Manager">Manager note</option>}
-                  </select>
+                              ? initials(author.first_name, author.last_name)
+                              : comment.author_user_id.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <header>
+                              <strong>
+                                {author
+                                  ? `${author.first_name} ${author.last_name}`
+                                  : `User ${comment.author_user_id.slice(0, 8)}`}
+                              </strong>
+                              {comment.visibility !== "Public" && (
+                                <span className="visibility">
+                                  <Lock size={12} /> {comment.visibility}
+                                </span>
+                              )}
+                              <time title={formatDate(comment.created_at)}>
+                                {relativeTime(comment.created_at)}
+                              </time>
+                            </header>
+                            <p>{comment.body}</p>
+                            {(attachmentsByComment[comment.id] || []).length > 0 && (
+                              <ul className="comment-attachments">
+                                {(attachmentsByComment[comment.id] || []).map((attachment) => (
+                                  <li key={attachment.id}>
+                                    <button
+                                      type="button"
+                                      onClick={() => void downloadAttachment(attachment)}
+                                      disabled={downloadingAttachment === attachment.id}
+                                    >
+                                      {downloadingAttachment === attachment.id ? "Downloading…" : attachment.original_filename}
+                                    </button>
+                                    <span>{Math.max(1, Math.round(attachment.size_bytes / 1024))} KB</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
                 </div>
-                <textarea
-                  rows={4}
-                  value={commentBody}
-                  onChange={(event) => setCommentBody(event.target.value)}
-                  placeholder="Write a reply…"
+                {canComment && (
+                  <form className="reply-form" onSubmit={(event) => void addComment(event)}>
+                    <div className="reply-toolbar">
+                      <select
+                        aria-label="Comment visibility"
+                        value={visibility}
+                        onChange={(event) => setVisibility(event.target.value as Visibility)}
+                      >
+                        <option value="Public">Public reply</option>
+                        {!isCustomer && <option value="Internal">Internal note</option>}
+                        {isManager && <option value="Private To Manager">Manager note</option>}
+                      </select>
+                    </div>
+                    <textarea
+                      rows={4}
+                      value={commentBody}
+                      onChange={(event) => setCommentBody(event.target.value)}
+                      placeholder="Write a reply…"
+                    />
+                    {fileError && <p className="field-error" role="alert">{fileError}</p>}
+                    {selectedFiles.length > 0 && (
+                      <ul className="selected-files">
+                        {selectedFiles.map((file, index) => (
+                          <li key={`${file.name}-${index}`}>
+                            <span>{file.name} · {Math.max(1, Math.round(file.size / 1024))} KB</span>
+                            <button type="button" onClick={() => setSelectedFiles((items) => items.filter((_, itemIndex) => itemIndex !== index))}>
+                              Remove
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <footer>
+                      <input
+                        ref={fileInputRef}
+                        className="visually-hidden"
+                        type="file"
+                        multiple
+                        accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.json"
+                        onChange={(event) => {
+                          selectFiles(event.target.files);
+                          event.target.value = "";
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label="Attach a file"
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <Paperclip size={17} />
+                      </button>
+                      <button
+                        className="button primary"
+                        disabled={!commentBody.trim() || busy === "Comment"}
+                      >
+                        {busy === "Comment" ? "Submitting…" : "Submit reply"}
+                      </button>
+                    </footer>
+                  </form>
+                )}
+              </>
+            ) : activeTab === "customer" ? (
+              customerLoading ? (
+                <StatePanel kind="loading" title="Loading customer info" message="Requesting the ticket-scoped customer summary…" />
+              ) : customerError ? (
+                <StatePanel
+                  kind="error"
+                  title="Customer info unavailable"
+                  message={customerError}
+                  action={<button className="button secondary" onClick={() => void loadCustomer()}>Try again</button>}
                 />
-                <footer>
-                  <UnsupportedButton
-                    feature="Attachments"
-                    className="icon-button"
-                    aria-label="Attach a file"
-                  >
-                    <Paperclip size={17} />
-                  </UnsupportedButton>
-                  <button
-                    className="button primary"
-                    disabled={!commentBody.trim() || busy === "Comment"}
-                  >
-                    {busy === "Comment" ? "Submitting…" : "Submit reply"}
-                  </button>
-                </footer>
-              </form>
+              ) : customer ? (
+                <dl className="customer-summary">
+                  <div><dt>Name</dt><dd>{customer.display_name}</dd></div>
+                  <div><dt>Nickname</dt><dd>{customer.nickname}</dd></div>
+                  <div><dt>Account status</dt><dd>{customer.account_status}</dd></div>
+                  <div><dt>Email</dt><dd>{customer.email || "Not available"}</dd></div>
+                  <div><dt>Phone</dt><dd>{customer.phone || "Not available"}</dd></div>
+                </dl>
+              ) : (
+                <p className="muted">No customer summary is available.</p>
+              )
+            ) : relatedLoading ? (
+              <StatePanel kind="loading" title="Loading related issues" message="Checking visible ticket links…" />
+            ) : relatedError ? (
+              <StatePanel
+                kind="error"
+                title="Related issues unavailable"
+                message={relatedError}
+                action={<button className="button secondary" onClick={() => void loadRelated()}>Try again</button>}
+              />
+            ) : (
+              <div className="related-panel">
+                {related.length === 0 ? <p className="muted">No related tickets yet.</p> : (
+                  <ul className="related-list">
+                    {related.map((item) => (
+                      <li key={item.link_id}>
+                        <div>
+                          <strong>#{item.ticket_id.slice(0, 8)} · {item.title}</strong>
+                          <span>{item.status} · {priorityLabel(item.priority)}</span>
+                        </div>
+                        {isManager && (
+                          <button
+                            className="button subtle"
+                            disabled={Boolean(relatedBusy)}
+                            onClick={() => void removeRelated(item.ticket_id)}
+                          >
+                            {relatedBusy === item.ticket_id ? "Removing…" : "Unlink"}
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {isManager && (
+                  <form className="related-search" onSubmit={(event) => void searchRelated(event)}>
+                    <label>
+                      Find a visible ticket to link
+                      <input value={relatedSearch} onChange={(event) => setRelatedSearch(event.target.value)} placeholder="ID, title, or description" />
+                    </label>
+                    <button className="button secondary">Search</button>
+                  </form>
+                )}
+                {relatedCandidates.length > 0 && (
+                  <ul className="related-list candidates">
+                    {relatedCandidates.map((candidate) => (
+                      <li key={candidate.id}>
+                        <div><strong>#{candidate.id.slice(0, 8)} · {candidate.title}</strong><span>{candidate.status} · {priorityLabel(candidate.priority)}</span></div>
+                        <button className="button secondary" disabled={Boolean(relatedBusy)} onClick={() => void addRelated(candidate.id)}>
+                          {relatedBusy === candidate.id ? "Linking…" : "Link"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
           </section>
 

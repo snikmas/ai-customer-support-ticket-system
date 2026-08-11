@@ -4,7 +4,12 @@ import pytest
 
 from main import app
 from src import constants
-from src.exceptions.domain import AlreadyDeletedError, AuthorizationError, InvalidAssigneeError
+from src.exceptions.domain import (
+    AlreadyDeletedError,
+    AuthorizationError,
+    InvalidAssigneeError,
+    RelatedTicketConflictError,
+)
 from src.db.models import Comment, Event, Ticket
 from src.routers import tickets as tickets_router
 from src.services import tickets as tickets_service
@@ -399,3 +404,112 @@ def test_repeated_ticket_delete_is_rejected_before_new_event(monkeypatch, make_u
 
     with pytest.raises(AlreadyDeletedError):
         tickets_service.delete_ticket(ticket.id, requester)
+
+
+def test_ticket_query_contract_passes_search_and_visibility_before_pagination(
+    monkeypatch, make_user
+):
+    requester = make_user(id="agent-a", role=constants.Role.AGENT)
+    captured = {}
+
+    def fake_get_tickets(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(tickets_service.operations, "get_tickets", fake_get_tickets)
+
+    result = tickets_service.get_all_tickets(
+        requester,
+        20,
+        40,
+        "updated_at",
+        "asc",
+        constants.Priority.HIGH,
+        constants.Status.OPEN,
+        False,
+        assigned_to_me=True,
+        department_id="department-1",
+        category=constants.Category.ACCOUNT_ACCESS,
+        tag=constants.Tag.API_KEY,
+        search="timeout [customer]",
+    )
+
+    assert result == []
+    assert captured == {
+        "requester_id": requester.id,
+        "requester_role": requester.role,
+        "assigned_to_me": True,
+        "department_id": "department-1",
+        "assignee_id": None,
+        "category": constants.Category.ACCOUNT_ACCESS,
+        "tag": constants.Tag.API_KEY,
+        "search": "timeout [customer]",
+    }
+
+
+def test_assigned_agent_can_read_limited_ticket_customer_summary(
+    monkeypatch, make_user, make_ticket
+):
+    agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    customer = make_user(id="customer-1", role=constants.Role.USER)
+    ticket = make_ticket(
+        id="ticket-1",
+        creator_user_id=customer.id,
+        assigned_agent_id=agent.id,
+        status=constants.Status.IN_PROGRESS,
+    )
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
+    monkeypatch.setattr(tickets_service.operations, "get_user", lambda user_id: customer if user_id == customer.id else None)
+
+    summary = tickets_service.get_ticket_customer_summary(ticket.id, agent)
+
+    assert summary.user_id == customer.id
+    assert summary.display_name == "Test User"
+    assert summary.email == customer.email
+    assert not hasattr(summary, "password")
+
+
+def test_unassigned_agent_cannot_read_ticket_customer_summary(
+    monkeypatch, make_user, make_ticket
+):
+    agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    customer = make_user(id="customer-1", role=constants.Role.USER)
+    ticket = make_ticket(id="ticket-1", creator_user_id=customer.id)
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
+
+    with pytest.raises(AuthorizationError) as exc_info:
+        tickets_service.get_ticket_customer_summary(ticket.id, agent)
+
+    assert exc_info.value.code == "ticket_customer_forbidden"
+
+
+def test_related_ticket_link_is_canonical_and_duplicate_safe(
+    monkeypatch, make_user, make_ticket
+):
+    manager = make_user(id="manager-1", role=constants.Role.MANAGER)
+    first = make_ticket(id="z-ticket")
+    second = make_ticket(id="a-ticket")
+    links = {}
+    monkeypatch.setattr(
+        tickets_service.operations,
+        "get_ticket",
+        lambda ticket_id: {first.id: first, second.id: second}.get(ticket_id),
+    )
+    monkeypatch.setattr(
+        tickets_service.operations,
+        "get_ticket_link",
+        lambda left, right: links.get((left, right)),
+    )
+    monkeypatch.setattr(
+        tickets_service.operations,
+        "create_ticket_link",
+        lambda link, event: links.setdefault((link.ticket_id, link.related_ticket_id), link),
+    )
+
+    created = tickets_service.create_related_ticket(first.id, second.id, manager)
+
+    assert created.ticket_id == second.id
+    assert set(links) == {(second.id, first.id)}
+    with pytest.raises(RelatedTicketConflictError) as exc_info:
+        tickets_service.create_related_ticket(first.id, second.id, manager)
+    assert exc_info.value.code == "related_ticket_duplicate"

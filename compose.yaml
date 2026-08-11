@@ -42,8 +42,10 @@ services:
       FRONTEND_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       JWT_PRIVATE_KEY_PATH: keys/private.pem
       JWT_PUBLIC_KEY_PATH: keys/public.pem
+      ATTACHMENTS_DIR: /app/uploads
     volumes:
       - ./keys:/app/keys:ro
+      - attachments:/app/uploads
     ports:
       - "8000:8000"
     depends_on:
@@ -103,3 +105,4 @@ services:
 
 volumes:
   pgdata:
+  attachments:

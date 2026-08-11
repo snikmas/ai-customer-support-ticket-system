@@ -27,12 +27,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # the venv, and local databases OUT of this copy.
 COPY main.py bootstrap_superadmin.py alembic.ini ./
 COPY src ./src
+COPY scripts ./scripts
 COPY alembic ./alembic
 
 # SECURITY: containers run as root by default. A compromised process running
 # as root inside the container is one mistake away from escaping it, so we
 # create an unprivileged user and run as it. Production standard practice.
 RUN useradd --create-home appuser
+RUN mkdir -p /app/uploads && chown -R appuser:appuser /app/uploads
 USER appuser
 
 # Documentation only — the actual port mapping happens in compose.yaml.

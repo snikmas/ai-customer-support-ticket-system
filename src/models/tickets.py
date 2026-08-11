@@ -63,6 +63,21 @@ class AssignTicketRequest(BaseModel):
     agent_id: EntityId
 
 
+class RelatedTicketCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    related_ticket_id: EntityId
+
+
+class RelatedTicket(BaseModel):
+    link_id: str
+    ticket_id: str
+    title: str
+    status: Status
+    priority: Priority
+    created_at: datetime
+
+
 class AnalysisResult(BaseModel):
     model_config = ConfigDict(extra='forbid', from_attributes=True)
 

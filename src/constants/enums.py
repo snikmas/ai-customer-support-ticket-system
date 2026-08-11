@@ -118,6 +118,10 @@ class EventType(Enum):
     COMMENT_CREATED = 'Comment Created'
     COMMENT_UPDATED = 'Comment Updated'
     COMMENT_DELETED = 'Comment Deleted'
+    TICKET_LINKED = 'Ticket Linked'
+    TICKET_UNLINKED = 'Ticket Unlinked'
+    ATTACHMENT_ADDED = 'Attachment Added'
+    ATTACHMENT_DELETED = 'Attachment Deleted'
 
 class EntityType(Enum):
     TICKET = 'Ticket'
@@ -127,6 +131,7 @@ class EntityType(Enum):
     SKILL = 'Skill'
     REFRESH_SESSION = 'Refresh Session'
     COMMENT = 'Comment'
+    ATTACHMENT = 'Attachment'
 
 
 class ActorType(str, Enum):

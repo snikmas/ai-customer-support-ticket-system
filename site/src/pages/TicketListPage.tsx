@@ -1,15 +1,20 @@
-import { AlertTriangle, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest, toErrorMessage } from "../api/client";
 import {
   PRIORITY_LABELS,
+  CATEGORIES,
+  TAGS,
+  MANAGER_ROLES,
   TICKET_STATUSES,
   type Priority,
   type RoutingCatalog,
   type Ticket,
   type TicketStatus,
+  type User,
 } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { StatePanel } from "../components/StatePanel";
 import { formatDate, priorityLabel, relativeTime } from "../lib/format";
 
@@ -20,15 +25,23 @@ export function TicketListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [departments, setDepartments] = useState<RoutingCatalog[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const page = Number(searchParams.get("page") || "1");
   const status = (searchParams.get("status") || "") as TicketStatus | "";
   const priority = searchParams.get("priority") as `${Priority}` | null;
+  const search = searchParams.get("search") || "";
+  const assignedToMe = searchParams.get("assigned_to_me") === "true";
+  const departmentId = searchParams.get("department_id") || "";
+  const assigneeId = searchParams.get("assignee_id") || "";
+  const category = searchParams.get("category") || "";
+  const tag = searchParams.get("tag") || "";
   const overdue = searchParams.get("overdue") === "true";
   const sortBy = searchParams.get("sort_by") || "created_at";
   const sortOrder = searchParams.get("sort_order") || "desc";
+  const { user } = useAuth();
 
   const updateParam = (key: string, value: string) => {
     const next = new URLSearchParams(searchParams);
@@ -50,19 +63,30 @@ export function TicketListPage() {
     if (status) query.set("status", status);
     if (priority) query.set("priority", priority);
     if (overdue) query.set("overdue", "true");
+    if (search) query.set("search", search);
+    if (assignedToMe) query.set("assigned_to_me", "true");
+    if (departmentId) query.set("department_id", departmentId);
+    if (assigneeId) query.set("assignee_id", assigneeId);
+    if (category) query.set("category", category);
+    if (tag) query.set("tag", tag);
     try {
-      const [ticketData, departmentData] = await Promise.all([
+      const requests: [Promise<Ticket[]>, Promise<RoutingCatalog[]>, Promise<User[]>?] = [
         apiRequest<Ticket[]>(`/tickets/?${query}`),
         apiRequest<RoutingCatalog[]>("/departments/"),
-      ]);
+      ];
+      if (user && MANAGER_ROLES.includes(user.role)) {
+        requests.push(apiRequest<User[]>("/users/?limit=100&sort_by=first_name&sort_order=asc"));
+      }
+      const [ticketData, departmentData, userData] = await Promise.all(requests);
       setTickets(ticketData);
       setDepartments(departmentData);
+      setUsers(userData || []);
     } catch (caught) {
       setError(toErrorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, [page, priority, sortBy, sortOrder, status, overdue]);
+  }, [assignedToMe, assigneeId, category, departmentId, overdue, page, priority, search, sortBy, sortOrder, status, tag, user]);
 
   useEffect(() => void load(), [load]);
 
@@ -76,7 +100,7 @@ export function TicketListPage() {
       <div className="page-heading">
         <div>
           <p className="eyebrow">Ticket workspace</p>
-          <h1>All tickets</h1>
+          <h1>{assignedToMe ? "My queue" : "All tickets"}</h1>
           <p>Showing up to {PAGE_SIZE} tickets from the real API.</p>
         </div>
         <button className="button secondary" onClick={() => void load()}>
@@ -85,6 +109,15 @@ export function TicketListPage() {
       </div>
 
       <section className="filter-bar" aria-label="Ticket filters">
+        <label className="search-filter">
+          Search
+          <input
+            aria-label="Search ticket text"
+            value={search}
+            onChange={(event) => updateParam("search", event.target.value)}
+            placeholder="ID, title, or description"
+          />
+        </label>
         <label>
           Status
           <select value={status} onChange={(event) => updateParam("status", event.target.value)}>
@@ -119,6 +152,38 @@ export function TicketListPage() {
           </select>
         </label>
         <label>
+          Department
+          <select value={departmentId} onChange={(event) => updateParam("department_id", event.target.value)}>
+            <option value="">Any</option>
+            {departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+        {user && MANAGER_ROLES.includes(user.role) && (
+          <label>
+            Assignee
+            <select value={assigneeId} onChange={(event) => updateParam("assignee_id", event.target.value)}>
+              <option value="">Anyone</option>
+              {users.filter((item) => item.role === "agent").map((item) => (
+                <option key={item.id} value={item.id}>{item.first_name} {item.last_name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label>
+          Category
+          <select value={category} onChange={(event) => updateParam("category", event.target.value)}>
+            <option value="">Any</option>
+            {CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label>
+          Tag
+          <select value={tag} onChange={(event) => updateParam("tag", event.target.value)}>
+            <option value="">Any</option>
+            {TAGS.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label>
           Sort
           <select value={sortBy} onChange={(event) => updateParam("sort_by", event.target.value)}>
             <option value="created_at">Created</option>
@@ -133,6 +198,11 @@ export function TicketListPage() {
         >
           {sortOrder === "desc" ? "Newest first" : "Oldest first"}
         </button>
+        {search && (
+          <button className="sort-direction" onClick={() => updateParam("search", "")}>
+            <X size={14} /> Clear search
+          </button>
+        )}
       </section>
 
       {loading ? (
@@ -152,7 +222,7 @@ export function TicketListPage() {
         <StatePanel
           kind="empty"
           title="No tickets found"
-          message="There are no tickets matching these filters on this page."
+          message={search ? `No tickets match “${search}”. Try a different search or clear it.` : "There are no tickets matching these filters on this page."}
         />
       ) : (
         <div className="table-card">

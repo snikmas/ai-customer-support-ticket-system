@@ -14,6 +14,8 @@ from src.exceptions.domain import (
     InternalOperationError,
     UserAlreadyExistsError,
     UserNotFoundError,
+    LastSuperAdminError,
+    FinalAdminAccessError,
 )
 from src.services.routing import dispatch_waiting_tickets_after_capacity_event
 from sqlalchemy.exc import IntegrityError
@@ -90,6 +92,16 @@ def _can_agent_receive_new_tickets(
         ) is not None
         and current_workload < profile.max_active_tickets
     )
+
+
+def get_agent_profile_settings(
+    agent_id: str,
+    requester: api_models.User,
+) -> api_models.AgentProfileResponse:
+    stored_requester, agent, profile = _load_agent_profile_context(agent_id, requester)
+    if stored_requester.id != agent_id and stored_requester.role not in PROFILE_MANAGER_ROLES:
+        raise AuthorizationError()
+    return _agent_profile_response(agent, profile)
 
 
 def update_agent_availability(
@@ -284,6 +296,67 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
     return user
 
 
+def create_staff_user(
+    user_data: api_models.StaffCreate,
+    requester: api_models.User,
+) -> db_models.User:
+    if requester.role not in {
+        constants.Role.ADMIN,
+        constants.Role.SUPER_ADMIN,
+    }:
+        raise AuthorizationError()
+    department, active_skills = operations.active_routing_catalog_selection(
+        user_data.department_id,
+        user_data.skill_ids,
+    )
+    if user_data.role is constants.Role.AGENT:
+        if user_data.department_id is not None and department is None:
+            raise InactiveRoutingCatalogError(
+                "Agent department is missing or archived"
+            )
+        if len(active_skills) != len(user_data.skill_ids):
+            raise InactiveRoutingCatalogError(
+                "One or more agent skills are missing or archived"
+            )
+    now = datetime.now(timezone.utc)
+    user = db_models.User(
+        id=constants.generate_id(),
+        nickname=user_data.nickname,
+        avatar_url=user_data.avatar_url,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        phone=user_data.phone,
+        email=user_data.email,
+        password=hash_password(user_data.password),
+        role=user_data.role,
+        updated_at=now,
+        created_at=now,
+        deleted_at=None,
+        user_status=constants.UserStatus.ACTIVE,
+    )
+    event = api_models.Event(
+        id=constants.generate_id(),
+        entity_type=constants.EntityType.USER,
+        entity_id=user.id,
+        actor_user_id=requester.id,
+        event_type=constants.EventType.USER_CREATED,
+        old_value=None,
+        new_value=constants._audit_json({"id": user.id, "role": user.role}),
+        metadata="source=staff_creation",
+        created_at=now,
+    )
+    try:
+        return operations.create_staff_user(
+            user,
+            event,
+            max_active_tickets=user_data.max_active_tickets,
+            department_id=user_data.department_id,
+            skill_ids=user_data.skill_ids,
+        )
+    except IntegrityError as exc:
+        raise UserAlreadyExistsError() from exc
+
+
 def bootstrap_superadmin(user_data: api_models.UserCreate) -> bool:
     now = datetime.now(timezone.utc)
     user = db_models.User(
@@ -334,11 +407,24 @@ def get_all_users(requester: api_models.User,
                   limit: int,
                   offset: int,
                   sort_by: str,
-                  sort_order: str) -> list[db_models.User]:
+                  sort_order: str,
+                  *,
+                  role: constants.Role | None = None,
+                  user_status: constants.UserStatus | None = None,
+                  search: str | None = None,
+                  ) -> list[db_models.User]:
     if check_for_access(requester.role, constants.Role.MANAGER) is False:
         raise AuthorizationError()
 
-    return operations.get_users(limit, offset, sort_by, sort_order)
+    return operations.get_users(
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        role=role,
+        user_status=user_status,
+        search=search,
+    )
 
 def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, requester: api_models.User) -> db_models.User:
     requester = operations.get_user(requester.id)
@@ -379,6 +465,35 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
     if any(key in updated_info for key in ['role', 'user_status', 'deleted_at']):
         if check_for_access(requester.role, constants.Role.ADMIN) is False:
             raise AuthorizationError()
+
+    role_removes_super_admin = (
+        user.role is constants.Role.SUPER_ADMIN
+        and (
+            updated_info.get("role", user.role) is not constants.Role.SUPER_ADMIN
+            or updated_info.get("user_status", user.user_status) is not constants.UserStatus.ACTIVE
+            or updated_info.get("deleted_at", user.deleted_at) is not None
+        )
+    )
+    if role_removes_super_admin:
+        if requester.role is not constants.Role.SUPER_ADMIN and requester.id != user.id:
+            raise AuthorizationError(
+                "Only a Super Admin can manage another Super Admin",
+                code="super_admin_management_forbidden",
+            )
+        if operations.count_active_superadmins() <= 1:
+            raise LastSuperAdminError()
+
+    removes_requester_admin_access = (
+        requester.id == user.id
+        and user.role in {constants.Role.ADMIN, constants.Role.SUPER_ADMIN}
+        and (
+            updated_info.get("role", user.role) not in {constants.Role.ADMIN, constants.Role.SUPER_ADMIN}
+            or updated_info.get("user_status", user.user_status) is not constants.UserStatus.ACTIVE
+            or updated_info.get("deleted_at", user.deleted_at) is not None
+        )
+    )
+    if removes_requester_admin_access and operations.count_active_administrators() <= 1:
+        raise FinalAdminAccessError()
 
     if 'password' in updated_info:
         updated_info['password'] = hash_password(updated_info['password'])

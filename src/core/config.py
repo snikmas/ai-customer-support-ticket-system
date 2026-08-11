@@ -57,6 +57,7 @@ OPENROUTER_MODEL = os.getenv(
     "OPENROUTER_MODEL",
     "openai/gpt-oss-20b",
 ).strip()
+ATTACHMENTS_DIR = Path(os.getenv("ATTACHMENTS_DIR", str(PROJECT_ROOT / "uploads")))
 try:
     OPENROUTER_TIMEOUT_SECONDS = float(
         os.getenv("OPENROUTER_TIMEOUT_SECONDS", "20")

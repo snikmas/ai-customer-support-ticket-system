@@ -10,13 +10,14 @@ from src.db import (
     complete_analysis_result,
     fail_analysis_result,
     get_analysis_result,
+    get_active_user_ids_by_roles,
     get_ticket,
     record_overdue_ticket_events,
     return_analysis_to_pending,
     start_analysis_attempt,
     try_route_ticket,
 )
-from src.constants import AnalysisStatus, TicketRoutingOutcome, logger
+from src.constants import AnalysisStatus, Role, TicketRoutingOutcome, logger
 from src.constants import utc_now
 from src.analyzers import (
     AnalysisInputSnapshot,
@@ -31,6 +32,45 @@ TEMPORARY_ROUTING_ERRORS = (
     RedisError,
     TimeoutError,
 )
+
+NOTIFICATION_MANAGER_ROLES = {
+    Role.MANAGER,
+    Role.ADMIN,
+    Role.SUPER_ADMIN,
+}
+
+
+def _notify_analysis_owner(analysis_result_id: str, notification_type: str, message: str) -> None:
+    try:
+        from src.services import notifications
+
+        result = get_analysis_result(analysis_result_id)
+        if result is not None and result.requester_id:
+            notifications.emit(
+                result.requester_id,
+                notification_type,
+                message,
+                ticket_id=result.ticket_id,
+                idempotency_key=f"analysis:{notification_type}:{analysis_result_id}",
+            )
+    except Exception:
+        logger.exception(
+            "Analysis notification lookup failed",
+            extra={"analysis_result_id": analysis_result_id},
+        )
+
+
+def _notify_managers(notification_type: str, message: str, ticket_id: str) -> None:
+    from src.services import notifications
+
+    for recipient_id in get_active_user_ids_by_roles(NOTIFICATION_MANAGER_ROLES):
+        notifications.emit(
+            recipient_id,
+            notification_type,
+            message,
+            ticket_id=ticket_id,
+            idempotency_key=f"{notification_type}:{ticket_id}:{recipient_id}",
+        )
 
 def _disable_current_job_retries() -> None:
     current_job = get_current_job()
@@ -53,6 +93,11 @@ def _fail_analysis_permanently(
         now=utc_now(),
     )
     _disable_current_job_retries()
+    _notify_analysis_owner(
+        analysis_result_id,
+        "ai_analysis_failed",
+        "AI analysis failed and will not be retried automatically.",
+    )
 
 
 def analyze_analysis_result(analysis_result_id: str) -> dict:
@@ -60,6 +105,11 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
     logger.info(
         "Analysis attempt started",
         extra={"analysis_result_id": analysis_result_id},
+    )
+    _notify_analysis_owner(
+        analysis_result_id,
+        "ai_analysis_completed",
+        "AI analysis is ready to review.",
     )
     running = start_analysis_attempt(analysis_result_id, utc_now())
     if running is None:
@@ -212,6 +262,22 @@ def route_ticket(ticket_id: str) -> dict:
         # Cache deletion is fail-open in this project. The database remains the
         # source of truth even if Redis is temporarily unavailable.
         delete_cached_ticket(ticket_id)
+        if result.assigned_agent_id:
+            from src.services import notifications
+
+            notifications.emit(
+                result.assigned_agent_id,
+                "ticket_assigned",
+                f"Ticket #{ticket_id[:8]} was assigned to you.",
+                ticket_id=ticket_id,
+                idempotency_key=f"ticket-assigned:auto:{ticket_id}:{result.assigned_agent_id}",
+            )
+    elif result.outcome is TicketRoutingOutcome.NO_ELIGIBLE_AGENT:
+        _notify_managers(
+            "no_eligible_agent",
+            f"Ticket #{ticket_id[:8]} is waiting for an eligible agent.",
+            ticket_id,
+        )
 
     logger.info(
         "Ticket routing completed",
@@ -231,6 +297,25 @@ def route_ticket(ticket_id: str) -> dict:
 def scan_overdue_tickets(batch_size: int) -> dict:
     """Record one bounded page of idempotent SLA-overdue events."""
     ticket_ids = record_overdue_ticket_events(batch_size, utc_now())
+    for ticket_id in ticket_ids:
+        ticket = get_ticket(ticket_id)
+        if ticket is None:
+            continue
+        if ticket.assigned_agent_id:
+            from src.services import notifications
+
+            notifications.emit(
+                ticket.assigned_agent_id,
+                "ticket_overdue",
+                f"Ticket #{ticket_id[:8]} is overdue.",
+                ticket_id=ticket_id,
+                idempotency_key=f"ticket-overdue:agent:{ticket_id}:{ticket.assigned_agent_id}",
+            )
+        _notify_managers(
+            "ticket_overdue",
+            f"Ticket #{ticket_id[:8]} is overdue.",
+            ticket_id,
+        )
     result = {"scanned": len(ticket_ids), "ticket_ids": ticket_ids}
     logger.info("Overdue ticket scan completed", extra=result)
     return result
