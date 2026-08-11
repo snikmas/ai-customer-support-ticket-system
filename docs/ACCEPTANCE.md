@@ -11,6 +11,7 @@ Recorded locally on 2026-08-11 after the Stage 10 implementation pass.
 | `cd site && npm run build` | passed |
 | `cd site && npm audit --omit=dev` | 0 vulnerabilities |
 | `docker compose config --quiet` | passed |
+| GitHub Actions run `31474154749` | backend, frontend, and Compose passed |
 | `python -m compileall ...`, `bash -n project.sh`, `git diff --check` | passed |
 
 The full frontend audit still reports one high and one moderate advisory in
@@ -52,7 +53,8 @@ The browser console reported no page errors. Screenshots are stored under
   has no `UnsupportedButton` references and no mockup-sandbox source tree.
   Physical deletion was refused by the repository safety hook, so the exact
   source remains recoverable in `docs/archive/`.
-- GitHub Actions has been added but has not run remotely because this pass did
-  not push or open a PR.
+- GitHub Actions run `31474154749` passed all three jobs on commit `c6a8597`.
+  GitHub emitted non-failing Node.js 20 deprecation annotations for the pinned
+  action versions; this is a maintenance warning, not a failed check.
 - The final “Mary can explain” item is a human learning proof, not something
   the repository can honestly self-certify.
