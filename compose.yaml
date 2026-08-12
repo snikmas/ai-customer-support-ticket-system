@@ -40,8 +40,10 @@ services:
       REDIS_ENABLED: "true"
       REDIS_URL: redis://redis:6379/0
       FRONTEND_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      JWT_ALGORITHM: RS256
       JWT_PRIVATE_KEY_PATH: keys/private.pem
       JWT_PUBLIC_KEY_PATH: keys/public.pem
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:?Set REFRESH_TOKEN_SECRET in .env}
       ATTACHMENTS_DIR: /app/uploads
     volumes:
       - ./keys:/app/keys:ro

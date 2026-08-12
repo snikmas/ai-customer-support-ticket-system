@@ -31,6 +31,10 @@ cp .env.example .env   # set POSTGRES_PASSWORD and SUPERADMIN_* values
 ./project.sh
 ```
 
+Before the first start, add a private random `REFRESH_TOKEN_SECRET` to `.env`
+(for example, generate one with `openssl rand -hex 32`). Keep it out of Git
+and screenshots.
+
 Then open `http://localhost:5173` (frontend) or `http://localhost:8000/docs`
 (API docs). The launcher builds the images, starts every service in the
 background, waits for the stack to become healthy, and creates the configured
