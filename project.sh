@@ -52,7 +52,9 @@ require_configuration() {
         exit 1
     fi
 
-    if ! grep -Eq '^REFRESH_TOKEN_SECRET=.+$' "${PROJECT_DIR}/.env"; then
+    local refresh_token_secret
+    refresh_token_secret="$(sed -n 's/^REFRESH_TOKEN_SECRET=//p' "${PROJECT_DIR}/.env")"
+    if [[ -z "${refresh_token_secret}" || "${refresh_token_secret}" == "replace-with-a-long-random-refresh-secret" ]]; then
         echo "Missing REFRESH_TOKEN_SECRET in ${PROJECT_DIR}/.env" >&2
         echo "Generate one with: openssl rand -hex 32" >&2
         echo "Store it only in .env; never commit or paste it into screenshots." >&2
