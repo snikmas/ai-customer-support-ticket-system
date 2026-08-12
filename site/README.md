@@ -14,6 +14,11 @@ frontend  http://127.0.0.1:5173
 API       http://127.0.0.1:8000
 ```
 
+The frontend calls the API through the `/api` path. In the Docker image,
+nginx forwards that path to the internal `api:8000` service. In Vite
+development, the dev-server proxy forwards it to `127.0.0.1:8000`. This keeps
+browser requests same-origin in Compose and avoids host proxy settings.
+
 Then start the frontend:
 
 ```bash
@@ -23,9 +28,11 @@ cp .env.example .env
 npm run dev
 ```
 
-Set `VITE_API_BASE_URL` in `site/.env` when FastAPI uses another address. The
-backend's `FRONTEND_ORIGINS` setting must contain the exact frontend origins;
-the local defaults allow `localhost:5173` and `127.0.0.1:5173`.
+Set `VITE_API_BASE_URL` in `site/.env` only when FastAPI uses another address.
+The default `/api` value is suitable for both Docker and local Vite
+development. The backend's `FRONTEND_ORIGINS` setting must contain the exact
+frontend origins; the local defaults allow `localhost:5173` and
+`127.0.0.1:5173`.
 
 Useful checks:
 
