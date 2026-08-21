@@ -1,59 +1,89 @@
-# AI-Oriented Customer Support Ticket System
+# AI customer support ticket system
 
-Backend-first FastAPI project for a customer support platform: users, JWT
-authentication, role-based permissions, ticket workflows, comments, automatic
-agent routing, SLA deadlines, Redis caching/rate limiting, RQ background jobs,
-and AI-assisted ticket summarization (fake analyzer or OpenRouter). A
-Vite/React/TypeScript staff workspace in `site/` talks to the real API.
+This project is a customer-support backend with a React staff workspace. It
+manages users, tickets, comments, permissions, agent routing, SLA deadlines,
+background jobs, and optional AI-assisted ticket analysis.
+
+The API uses FastAPI. The staff workspace in `site/` uses React, TypeScript,
+and Vite. The Docker stack runs PostgreSQL, Redis, RQ workers, the API, and the
+frontend together.
 
 ![ResolveAI staff ticket workspace showing SQL-backed tickets, customer info, and routing](docs/media/stage10-ticket-detail.png)
 
 The screenshot uses synthetic local demo data. Acceptance evidence is recorded
 in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
-## Tech Stack
+## What it includes
 
-- Python, FastAPI, Pydantic, SQLAlchemy, Alembic
-- PostgreSQL (Docker) / SQLite (tests, quick local runs)
-- Redis, RQ (workers + cron scheduler)
-- JWT (RS256) with refresh-token sessions, bcrypt password hashing
-- OpenRouter Chat Completions via `httpx`
-- Pytest; React, TypeScript, Vite, Vitest
-- Docker and Docker Compose
+- Users, roles, agent profiles, and availability
+- JWT login, refresh-token sessions, and logout
+- Ticket search, filters, pagination, assignment, claiming, and start-work
+- Comments, related issues, attachments, and recipient-only notifications
+- Department and skill-based routing with SLA deadlines
+- Redis caching and login rate limiting
+- RQ jobs for routing, AI analysis, and scheduled checks
+- Fake analysis for offline runs and OpenRouter analysis when configured
 
-## Quick Start (Docker)
+## Technology
 
-The whole stack — PostgreSQL, Redis, migrations, API, worker, cron, and the
-frontend — starts with one project command:
+- Python, FastAPI, Pydantic, SQLAlchemy, and Alembic
+- PostgreSQL for Docker runs and SQLite for local tests
+- Redis and RQ for caching, rate limiting, workers, and scheduled jobs
+- JWT with RS256 signing, refresh-token sessions, and bcrypt password hashing
+- React, TypeScript, Vite, and Vitest for the staff workspace
+- Docker Compose for the full local stack
+
+## Start the full stack with Docker
+
+Requirements: Docker, the Docker Compose plugin, and OpenSSL.
+
+Create the local environment file:
 
 ```bash
-cp .env.example .env   # set POSTGRES_PASSWORD and SUPERADMIN_* values
+cp .env.example .env
+```
+
+Set `POSTGRES_PASSWORD`, `SUPERADMIN_PASSWORD`, and a private
+`REFRESH_TOKEN_SECRET` in `.env`. Generate the secret with:
+
+```bash
+openssl rand -hex 32
+```
+
+The API also needs an RSA key pair. Create it in the ignored `keys/` directory:
+
+```bash
+mkdir -p keys
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/private.pem
+openssl rsa -in keys/private.pem -pubout -out keys/public.pem
+```
+
+Start the stack:
+
+```bash
 ./project.sh
 ```
 
-Before the first start, add a private random `REFRESH_TOKEN_SECRET` to `.env`
-(for example, generate one with `openssl rand -hex 32`). Keep it out of Git
-and screenshots.
+The launcher builds the images, runs migrations, waits for health checks, and
+creates the configured superadmin when the database has no users. It does not
+reset existing PostgreSQL data.
 
-Then open `http://localhost:5173` (frontend) or `http://localhost:8000/docs`
-(API docs). The launcher builds the images, starts every service in the
-background, waits for the stack to become healthy, and creates the configured
-superadmin automatically when the database has no users. On later starts it
-verifies the persisted administrator without overwriting it. It does not delete
-or reset PostgreSQL data.
+Open the staff workspace at `http://localhost:5173`. Open the API docs at
+`http://localhost:8000/docs` and the health endpoint at
+`http://localhost:8000/health`.
 
 ```bash
-./project.sh status   # show every container and its health
-./project.sh logs     # follow combined logs; Ctrl+C only stops viewing logs
-./project.sh stop     # stop services and preserve the database volume
+./project.sh status
+./project.sh logs
+./project.sh stop
 ```
 
-## Running Locally (bare metal)
+## Run the services without Docker
 
-Requires five processes: Redis, the API, an RQ worker, RQ cron, and Vite.
+This path requires Redis, the API, an RQ worker, RQ cron, and the Vite frontend.
 
 ```bash
-# .env: see .env.example; for local runs use SQLite + ANALYZER_PROVIDER=fake
+# Use SQLite and ANALYZER_PROVIDER=fake for an offline local run.
 
 redis-server                                            # 1
 myvenv/bin/python -m uvicorn main:app --reload          # 2
@@ -62,31 +92,35 @@ myvenv/bin/rq worker ticket_routing ticket_jobs \
 myvenv/bin/rq cron src/jobs/cron.py \
   --url redis://localhost:6379/0                        # 4
 
-cd site && npm install && cp .env.example .env && npm run dev   # 5
+cd site
+npm install
+npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. Create the initial superadmin once with
-`myvenv/bin/python bootstrap_superadmin.py` (requires `SUPERADMIN_*` env vars).
+Open `http://127.0.0.1:5173`. Set the `SUPERADMIN_*` variables before running
+`myvenv/bin/python bootstrap_superadmin.py`.
 
-## Tests
+## Run the checks
 
 ```bash
-myvenv/bin/python -m pytest -q      # backend
-cd site && npm test && npm run build  # frontend
+myvenv/bin/python -m pytest -q
+cd site
+npm test
+npm run build
 ```
 
-## API Overview
+## API areas
 
-- **Users** — register, list, get, update, agent availability/profile, soft delete
-- **Auth** — `POST /auth/login`, `/auth/refresh`, `/auth/logout`; Bearer JWT
-- **Tickets** — SQL-backed search/filter/pagination, My Queue, claim/assign/
+- **Users:** register, list, get, update, agent availability and profiles, and soft delete
+- **Auth:** `POST /auth/login`, `/auth/refresh`, and `/auth/logout` with Bearer JWT
+- **Tickets:** SQL-backed search, filters, pagination, My Queue, claim, assign,
   start-work, comments, ticket-scoped customer info, related issues, and
   durable AI analysis results
-- **Staff workspace** — role-aware Users, Routing catalogs, My Settings, agent
+- **Staff workspace:** role-aware Users, Routing catalogs, My Settings, agent
   availability, secure comment attachments, and recipient-only notifications
-- **Jobs** — background job status and listing
+- **Jobs:** background job status and listing
 
-Errors use a shared envelope: `{ "error": { "code", "message" } }`.
+API errors use the envelope `{ "error": { "code", "message" } }`.
 
 ## Detailed documentation
 
@@ -98,7 +132,7 @@ Errors use a shared envelope: `{ "error": { "code", "message" } }`.
 - [Attachment contract](docs/ATTACHMENTS.md)
 - [Stage 10 acceptance evidence](docs/ACCEPTANCE.md)
 
-## Repository Structure
+## Repository structure
 
 ```text
 main.py                 FastAPI app entrypoint
@@ -116,18 +150,18 @@ src/tests/              Pytest suite
 site/                   Vite/React frontend (see site/README.md)
 ```
 
-## How It Works
+## How requests move through the system
 
 Synchronous requests follow `router -> auth dependency -> service -> database`.
-Two flows cross a process boundary through Redis/RQ:
+Routing and analysis cross a process boundary through Redis and RQ.
 
-- **Routing**: a classified ticket (`department_id` set) is enqueued on
+- **Routing:** a classified ticket with `department_id` set is enqueued on
   `ticket_routing`; a worker assigns it to the eligible least-loaded agent in
   one idempotent database transaction. RQ cron re-enqueues tickets whose
   enqueue failed earlier.
-- **Analysis**: a durable PENDING row is created, processed on `ticket_jobs`
-  by the fake analyzer or OpenRouter, and stored as COMPLETED/FAILED — SQL is
-  the source of truth, not the RQ job.
+- **Analysis:** the API creates a durable `PENDING` row. A `ticket_jobs` worker
+  processes it with the fake analyzer or OpenRouter and stores `COMPLETED` or
+  `FAILED`. SQL remains the source of truth.
 
 Redis also provides ticket-detail caching (SQL fallback on failure) and login
 rate limiting (fails closed). SLA deadlines combine status base hours with a
