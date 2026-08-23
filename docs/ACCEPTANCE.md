@@ -86,5 +86,5 @@ keyboard-focusable; the current screenshot is under the ignored
 - Local attachment storage, unmanaged local secrets, and the absence of
   production metrics/traces are intentional v1 scope limits. They are not
   hidden production-readiness claims.
-- The final “Mary can explain” item is a human learning proof, not something
-  the repository can honestly self-certify.
+- A separate human learning quiz is outside this closure and is not part of the
+  repository release gate.
