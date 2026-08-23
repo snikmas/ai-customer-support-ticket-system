@@ -104,7 +104,7 @@ Errors use a shared envelope: `{ "error": { "code", "message" } }`.
 - [API examples](docs/API_EXAMPLES.md)
 - [Reliability and security](docs/RELIABILITY.md)
 - [Attachment contract](docs/ATTACHMENTS.md)
-- [Stage 10 acceptance evidence](docs/ACCEPTANCE.md)
+- [Final v1 acceptance evidence](docs/ACCEPTANCE.md)
 
 ## Repository Structure
 
