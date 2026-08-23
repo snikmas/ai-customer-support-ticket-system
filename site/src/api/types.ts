@@ -234,6 +234,35 @@ export interface AnalysisResult {
   status: AnalysisStatus;
 }
 
+export type AIProvider = "fake" | "openrouter" | "deepseek";
+
+export interface ProviderCapability {
+  provider: AIProvider;
+  configured: boolean;
+  configuration_status: "ready" | "key_missing" | "unavailable";
+  selectable_models: string[];
+  default_model: string;
+  privacy_notice: string;
+}
+
+export interface AISettings {
+  provider: AIProvider;
+  model: string;
+  version: number;
+  updated_at: string;
+  updated_by_user_id: string | null;
+  providers: ProviderCapability[];
+}
+
+export interface AIProviderTestResult {
+  provider: AIProvider;
+  model: string;
+  ok: boolean;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  safe_error_code: string | null;
+}
+
 export interface ApiErrorBody {
   error?: {
     code?: string;

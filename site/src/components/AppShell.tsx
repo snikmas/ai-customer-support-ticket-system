@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Cpu,
   Building2,
   Inbox,
   Layers,
@@ -92,6 +93,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Building2 size={17} /> Routing
               </Link>
             </>
+          )}
+          {user && ["admin", "super_admin"].includes(user.role) && (
+            <Link to="/ai-settings" className={location.pathname === "/ai-settings" ? "active" : undefined} onClick={close}>
+              <Cpu size={17} /> AI settings
+            </Link>
           )}
           <Link to="/settings" className={location.pathname === "/settings" ? "active" : undefined} onClick={close}>
             <Settings size={17} /> My settings

@@ -6,6 +6,7 @@ from .models import (
     AgentProfile,
     Attachment,
     AnalysisResult,
+    AISetting,
     Comment,
     Department,
     Event,
@@ -71,6 +72,112 @@ class StartWorkResult:
 class AnalysisReservation:
     result: AnalysisResult
     created: bool
+
+
+def _new_global_ai_setting(now: datetime) -> AISetting:
+    return AISetting(
+        id="global",
+        provider="fake",
+        model="deterministic-fake-v1",
+        version=1,
+        updated_by_user_id=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def get_ai_setting() -> AISetting:
+    """Read the singleton without opening a write transaction."""
+    with Session(engine) as session:
+        setting = session.get(AISetting, "global")
+        if setting is not None:
+            return setting
+    # Test fixtures may create metadata directly instead of running create_db.
+    # Return the documented default without nesting a write inside an active
+    # ticket-reservation transaction; normal startup seeds the durable row.
+    return _new_global_ai_setting(utc_now())
+
+
+def update_ai_setting(
+    *,
+    provider: str,
+    model: str,
+    expected_version: int,
+    updated_by_user_id: str,
+    now: datetime,
+) -> AISetting | None:
+    """Update the setting and audit event atomically, or return a conflict."""
+    with Session(engine, expire_on_commit=False) as session:
+        with session.begin():
+            statement = select(AISetting).where(AISetting.id == "global")
+            if session.get_bind().dialect.name != "sqlite":
+                statement = statement.with_for_update()
+            setting = session.scalar(statement)
+            if setting is None:
+                setting = _new_global_ai_setting(now)
+                session.add(setting)
+                session.flush()
+            if setting.version != expected_version:
+                return None
+
+            old_value = _audit_json({
+                "provider": setting.provider,
+                "model": setting.model,
+                "version": setting.version,
+            })
+            setting.provider = provider
+            setting.model = model
+            setting.version += 1
+            setting.updated_by_user_id = updated_by_user_id
+            setting.updated_at = now
+            session.add(_event_from_data(Event(
+                id=generate_id(),
+                entity_type=EntityType.AI_SETTINGS,
+                entity_id="global",
+                actor_type=ActorType.HUMAN,
+                actor_user_id=updated_by_user_id,
+                event_type=EventType.AI_SETTINGS_UPDATED,
+                old_value=old_value,
+                new_value=_audit_json({
+                    "provider": provider,
+                    "model": model,
+                    "version": setting.version,
+                }),
+                created_at=now,
+            )))
+            session.flush()
+            return setting
+
+
+def record_ai_provider_test(
+    *,
+    provider: str,
+    model: str,
+    actor_user_id: str,
+    ok: bool,
+    error_code: str | None,
+    now: datetime,
+) -> bool:
+    """Write safe provider-test metadata without prompt or output content."""
+    with Session(engine) as session:
+        with session.begin():
+            session.add(_event_from_data(Event(
+                id=generate_id(),
+                entity_type=EntityType.AI_SETTINGS,
+                entity_id="global",
+                actor_type=ActorType.HUMAN,
+                actor_user_id=actor_user_id,
+                event_type=EventType.AI_PROVIDER_TESTED,
+                old_value=None,
+                new_value=_audit_json({
+                    "provider": provider,
+                    "model": model,
+                    "ok": ok,
+                    "error_code": error_code,
+                }),
+                created_at=now,
+            )))
+    return True
 
 
 # ==============================================================
@@ -1341,6 +1448,11 @@ def _record_agent_received_ticket(
 # ==============================================================
 # ===================== COMMENTS ===============================
 def _event_from_data(event_data: Event) -> Event:
+    metadata_value = (
+        event_data.model_dump().get("metadata")
+        if hasattr(event_data, "model_dump")
+        else getattr(event_data, "metadata_", None)
+    )
     return Event(
         id=event_data.id,
         entity_type=event_data.entity_type,
@@ -1350,7 +1462,7 @@ def _event_from_data(event_data: Event) -> Event:
         event_type=event_data.event_type,
         old_value=event_data.old_value,
         new_value=event_data.new_value,
-        metadata_=event_data.metadata,
+        metadata_=metadata_value,
         idempotency_key=event_data.idempotency_key,
         created_at=event_data.created_at,
         batch_id=event_data.batch_id

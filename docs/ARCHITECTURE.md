@@ -20,6 +20,25 @@ attachment, related-link, and notification requests use the first path.
 Routing and AI analysis cross a process boundary through Redis/RQ; the durable
 database record is the source of truth when a worker is delayed or restarted.
 
+## Provider selection and provenance
+
+The `ai_settings` table contains exactly one global provider/model selection,
+seeded to the deterministic fake provider. Admin and Super Admin updates use an
+optimistic version and write a safe audit event in the same transaction. The
+API exposes readiness and privacy notices, never credentials.
+
+When an analysis is reserved, `AnalysisResult` stores the provider, model, and
+prompt version before the RQ enqueue. The worker builds an adapter from that
+immutable row, not from the latest global setting. A later administrator change
+therefore affects new analyses without rewriting queued work.
+
+Supported adapters are the local fake analyzer, OpenRouter with its existing
+structured-output and data-collection controls, and direct DeepSeek at the
+fixed official endpoint. Each adapter owns its payload shape, response
+validation, token accounting, and safe error mapping. Direct DeepSeek live
+verification uses synthetic ticket data only; the project does not claim that
+it provides an OpenRouter-equivalent request-level ZDR control.
+
 Local attachments use `LocalAttachmentStorage` and the Compose `attachments`
 volume. The adapter has one small interface so a production deployment can
 replace it with S3-compatible object storage without exposing filenames as

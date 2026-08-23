@@ -156,7 +156,7 @@ def update_comment(ticket_id: str, comment_id: str, new_info: api_models.Comment
     if comment is None: raise CommentNotFoundError()
     _check_comment_belongs_to_ticket(comment, ticket_id)
 
-    ticket = operations.get_ticket(comment.ticket_id) #comment.ticked id couldn't be none cuz its non-none value
+    ticket = operations.get_ticket(comment.ticket_id)
     if ticket is None: raise TicketNotFoundError()
 
     if comment.deleted_at is not None or ticket.deleted_at is not None: 
@@ -185,9 +185,7 @@ def update_comment(ticket_id: str, comment_id: str, new_info: api_models.Comment
         if check_for_access(requester.role, constants.Role.MANAGER) is False:
             raise AuthorizationError()
 
-    requested_fields = updated_info.keys()
     old_info = {}
-    #later can create a helper fuctino with it
     for field in updated_info:
         old_value = getattr(comment, field)
         old_info[field] = constants._audit_value(old_value)

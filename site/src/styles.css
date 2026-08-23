@@ -565,6 +565,49 @@ label textarea {
   margin: 0;
 }
 
+.card-heading-row,
+.settings-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status-chip {
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 0.7rem;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.status-chip.ready { background: #ecfdf3; color: #16703a; }
+.status-chip.key_missing { background: #fff7e6; color: #9a6700; }
+.status-chip.unavailable { background: #fef3f2; color: #b42318; }
+
+.privacy-note,
+.settings-note {
+  border-left: 3px solid #93b4ff;
+  background: #f5f8ff;
+  color: #536075;
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.test-result,
+.empty-inline {
+  display: grid;
+  gap: 5px;
+  border-radius: 8px;
+  padding: 13px;
+  font-size: 0.82rem;
+}
+
+.test-result.success { border: 1px solid #bbdfc7; background: #ecfdf3; color: #16703a; }
+.test-result.failure { border: 1px solid #f2c4c0; background: #fef3f2; color: #b42318; }
+.empty-inline { border: 1px dashed #dce1e8; color: #7d8694; }
+
 .settings-card label,
 .routing-create label {
   display: grid;

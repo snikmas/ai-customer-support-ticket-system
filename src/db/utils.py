@@ -9,9 +9,24 @@ from .migrations import (
     migrate_event_actor_contract,
 )
 from sqlalchemy import text
+from sqlalchemy.orm import Session
+from src.constants import utc_now
 
 def create_db() -> None:
     models.Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        if session.get(models.AISetting, "global") is None:
+            now = utc_now()
+            session.add(models.AISetting(
+                id="global",
+                provider="fake",
+                model="deterministic-fake-v1",
+                version=1,
+                updated_by_user_id=None,
+                created_at=now,
+                updated_at=now,
+            ))
+            session.commit()
     add_agent_profile_last_assigned_at(engine)
     add_ticket_due_at(engine)
     add_ticket_department_id(engine)

@@ -6,7 +6,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from src.routers import analysis, users, tickets, auth, jobs, routing_catalogs, notifications
+from src.routers import analysis, users, tickets, auth, jobs, routing_catalogs, notifications, ai_settings
 from src.cache import close_redis_client, initialize_redis_client, ping_redis
 from src.core import FRONTEND_ORIGINS, REDIS_ENABLED, setup_logging
 from src.constants import logger
@@ -123,6 +123,7 @@ app.include_router(routing_catalogs.departments_router)
 app.include_router(routing_catalogs.skills_router)
 app.include_router(analysis.router)
 app.include_router(notifications.router)
+app.include_router(ai_settings.router)
 
 @app.get("/")
 async def root():

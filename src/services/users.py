@@ -390,7 +390,7 @@ def bootstrap_superadmin(user_data: api_models.UserCreate) -> bool:
     )
     return operations.create_initial_superadmin(user, event)
 
-def get_user(id: str, requester: api_models.User) -> db_models.User: #im not sure is it a db user or api model
+def get_user(id: str, requester: api_models.User) -> db_models.User:
     if requester.id != id and check_for_access(requester.role, constants.Role.ADMIN) is False:
         raise AuthorizationError()
 
@@ -545,8 +545,8 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
 
     return user
 
-def delete_user(id: str, reqiester_user: api_models.User) -> None:
-    requester = operations.get_user(reqiester_user.id) # if its exist?
+def delete_user(id: str, requester_user: api_models.User) -> None:
+    requester = operations.get_user(requester_user.id)
 
     if requester is None:
         raise UserNotFoundError()

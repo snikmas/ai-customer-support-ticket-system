@@ -82,6 +82,11 @@ def request_analysis(
     requester: api_models.User,
 ) -> api_models.AnalysisResult:
     now = constants.utc_now()
+    setting = operations.get_ai_setting()
+    analyzer_metadata = configured_analyzer_metadata(
+        provider=setting.provider,
+        model=setting.model,
+    )
 
     def authorize(ticket: db_models.Ticket) -> None:
         if ticket.deleted_at is not None:
@@ -92,7 +97,6 @@ def request_analysis(
         ticket: db_models.Ticket,
         public_comments: list[db_models.Comment],
     ) -> db_models.AnalysisResult:
-        analyzer_metadata = configured_analyzer_metadata()
         return db_models.AnalysisResult(
             id=constants.generate_id(),
             input_snapshot=_snapshot_for_ticket(

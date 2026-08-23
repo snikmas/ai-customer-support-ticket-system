@@ -64,6 +64,11 @@ try:
     )
 except ValueError as exc:
     raise RuntimeError("OPENROUTER_TIMEOUT_SECONDS must be numeric") from exc
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+try:
+    DEEPSEEK_TIMEOUT_SECONDS = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20"))
+except ValueError as exc:
+    raise RuntimeError("DEEPSEEK_TIMEOUT_SECONDS must be numeric") from exc
 
 
 def validate_redis_settings() -> None:

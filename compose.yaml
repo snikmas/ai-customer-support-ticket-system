@@ -12,6 +12,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -20,6 +21,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   migrate:
     build: .
@@ -104,6 +106,7 @@ services:
     depends_on:
       api:
         condition: service_started
+    restart: unless-stopped
 
 volumes:
   pgdata:

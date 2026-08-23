@@ -63,7 +63,17 @@ def test_get_users_returns_current_service_shape(monkeypatch, make_user):
     app.dependency_overrides[users_router.get_current_user] = lambda: requester
     captured = {}
 
-    def fake_get_all_users(current_user, limit, offset, sort_by, sort_order):
+    def fake_get_all_users(
+        current_user,
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        *,
+        role=None,
+        user_status=None,
+        search=None,
+    ):
         captured.update(
             {
                 "current_user": current_user,

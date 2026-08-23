@@ -273,6 +273,26 @@ class Event(Base):
     created_at:     Mapped[datetime] = mapped_column(UTCDateTime())
 
 
+class AISetting(Base):
+    """The one global provider/model selection for new analyses."""
+
+    __tablename__ = "ai_settings"
+    __table_args__ = (
+        CheckConstraint("id = 'global'", name="ck_ai_settings_singleton"),
+        CheckConstraint("version > 0", name="ck_ai_settings_version_positive"),
+    )
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
 class Comment(Base):
     __tablename__ = 'comments'
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

@@ -41,3 +41,11 @@ from .routing_catalogs import (
     SkillResponse,
     SkillUpdate,
 )
+from .ai_settings import (
+    AIProviderTestRequest,
+    AIProviderTestResult,
+    AISettingsResponse,
+    AISettingsUpdate,
+    ProviderCapability,
+    ProviderId,
+)
