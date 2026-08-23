@@ -151,7 +151,7 @@ def create_ticket(ticket_data: api_models.TicketCreate, requester: api_models.Us
     return _to_api_ticket(ticket)
 
 
-def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket: #im not sure is it a db ticket or api model
+def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket:
     if check_for_access(requester.role, constants.Role.USER) is False:
         raise AuthorizationError()
     

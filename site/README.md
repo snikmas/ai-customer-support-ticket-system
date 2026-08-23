@@ -82,6 +82,7 @@ login
   -> Manager+ selects routing metadata and the routing worker may assign it
   -> perform allowed claim/assign/start/status actions
   -> request and poll durable AI analysis results
+  -> Admin/Super Admin selects and tests the global AI provider/model
   -> inspect customer summary, related tickets, attachments, and notifications
   -> manage users/routing/settings for the permitted role
   -> logout

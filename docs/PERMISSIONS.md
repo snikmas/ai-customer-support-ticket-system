@@ -12,6 +12,7 @@
 | Personal profile/password | self | self | self | self | self | self |
 | Agent availability | no | self | no | self | self | self |
 | Notifications | recipient only | recipient only | recipient only | recipient only | recipient only | recipient only |
+| Global AI settings and provider tests | no | no | no | no | yes | yes |
 
 Authorization is applied before pagination for ticket and user directory
 queries. A user response never includes password or refresh-session fields.

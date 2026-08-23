@@ -10,6 +10,7 @@ import { TicketListPage } from "./pages/TicketListPage";
 import { UsersPage } from "./pages/UsersPage";
 import { RoutingPage } from "./pages/RoutingPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { AISettingsPage } from "./pages/AISettingsPage";
 
 function ProtectedLayout() {
   const { identity, loading } = useAuth();
@@ -41,6 +42,7 @@ export function App() {
           <Route path="/users" element={<UsersPage />} />
           <Route path="/routing" element={<RoutingPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/ai-settings" element={<AISettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/tickets" replace />} />
       </Routes>

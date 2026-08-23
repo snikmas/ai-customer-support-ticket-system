@@ -48,5 +48,8 @@ from .operations import (
     create_analysis_result,
     return_analysis_to_pending,
     start_analysis_attempt,
+    get_ai_setting,
+    update_ai_setting,
+    record_ai_provider_test,
 )
 from .engine import engine

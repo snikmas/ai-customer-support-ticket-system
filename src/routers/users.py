@@ -3,7 +3,6 @@ from src import models, constants
 from src.services import users as s_users
 from src.dependencies.auth import get_current_user
 from typing import Literal
-import inspect
 from src.exceptions import ServiceUnavailableError
 
 router = APIRouter(
@@ -42,24 +41,16 @@ def get_users(requester = Depends(get_current_user),
                     search: str | None = Query(None, max_length=200),
                     ):
 
-    service_parameters = inspect.signature(s_users.get_all_users).parameters
-    supports_filters = (
-        "role" in service_parameters
-        or any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in service_parameters.values())
+    data = s_users.get_all_users(
+        requester,
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        role=role,
+        user_status=user_status,
+        search=search,
     )
-    if supports_filters:
-        data = s_users.get_all_users(
-            requester,
-            limit,
-            offset,
-            sort_by,
-            sort_order,
-            role=role,
-            user_status=user_status,
-            search=search,
-        )
-    else:
-        data = s_users.get_all_users(requester, limit, offset, sort_by, sort_order)
     if data:
         return {"data": [models.UserResponse.model_validate(user, from_attributes=True) for user in data]}
     return {"data": []}

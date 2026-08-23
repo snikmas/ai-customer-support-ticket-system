@@ -19,3 +19,4 @@ docs/DEMO.md
 /package-lock.json
 /package.json
 .gstack/
+.project-workflow/

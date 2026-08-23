@@ -1,9 +1,9 @@
-# AI-Oriented Customer Support Ticket System
+# ResolveAI — AI-Oriented Customer Support Ticket System
 
 Backend-first FastAPI project for a customer support platform: users, JWT
 authentication, role-based permissions, ticket workflows, comments, automatic
 agent routing, SLA deadlines, Redis caching/rate limiting, RQ background jobs,
-and AI-assisted ticket summarization (fake analyzer or OpenRouter). A
+and AI-assisted ticket summarization (fake, OpenRouter, or direct DeepSeek). A
 Vite/React/TypeScript staff workspace in `site/` talks to the real API.
 
 ![ResolveAI staff ticket workspace showing SQL-backed tickets, customer info, and routing](docs/media/stage10-ticket-detail.png)
@@ -17,7 +17,7 @@ in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
 - PostgreSQL (Docker) / SQLite (tests, quick local runs)
 - Redis, RQ (workers + cron scheduler)
 - JWT (RS256) with refresh-token sessions, bcrypt password hashing
-- OpenRouter Chat Completions via `httpx`
+- OpenRouter and direct DeepSeek Chat Completions via `httpx`
 - Pytest; React, TypeScript, Vite, Vitest
 - Docker and Docker Compose
 
@@ -53,7 +53,8 @@ or reset PostgreSQL data.
 Requires five processes: Redis, the API, an RQ worker, RQ cron, and Vite.
 
 ```bash
-# .env: see .env.example; for local runs use SQLite + ANALYZER_PROVIDER=fake
+# .env: copy .env.example; the database seeds the safe fake provider selection
+# Redis must be running at REDIS_URL=redis://localhost:6379/0.
 
 redis-server                                            # 1
 myvenv/bin/python -m uvicorn main:app --reload          # 2
@@ -71,9 +72,14 @@ Open `http://127.0.0.1:5173`. Create the initial superadmin once with
 ## Tests
 
 ```bash
-myvenv/bin/python -m pytest -q      # backend
-cd site && npm test && npm run build  # frontend
+REDIS_ENABLED=false myvenv/bin/python -m pytest -q  # isolated backend tests
+cd site && npm test -- --run && npm run build        # frontend
+cd .. && myvenv/bin/ruff check main.py src scripts bootstrap_superadmin.py
 ```
+
+The backend tests disable Redis deliberately because they use isolated test
+fixtures. The running local application still requires Redis, as shown in
+`.env.example`.
 
 ## API Overview
 
@@ -82,6 +88,8 @@ cd site && npm test && npm run build  # frontend
 - **Tickets** — SQL-backed search/filter/pagination, My Queue, claim/assign/
   start-work, comments, ticket-scoped customer info, related issues, and
   durable AI analysis results
+- **AI settings** — Admin/Super Admin-only global provider/model selection for
+  fake, OpenRouter, and direct DeepSeek; provider keys never cross the API
 - **Staff workspace** — role-aware Users, Routing catalogs, My Settings, agent
   availability, secure comment attachments, and recipient-only notifications
 - **Jobs** — background job status and listing
@@ -110,7 +118,7 @@ src/db/                 SQLAlchemy engine, models, operations
 src/models/             Pydantic request/response models
 src/core/               Security, config, logging
 src/jobs/               RQ queues, worker tasks, cron
-src/analyzers/          Fake and OpenRouter analyzers
+src/analyzers/          Fake, OpenRouter, and DeepSeek analyzers
 src/cache/              Redis helpers
 src/tests/              Pytest suite
 site/                   Vite/React frontend (see site/README.md)
@@ -125,10 +133,18 @@ Two flows cross a process boundary through Redis/RQ:
   `ticket_routing`; a worker assigns it to the eligible least-loaded agent in
   one idempotent database transaction. RQ cron re-enqueues tickets whose
   enqueue failed earlier.
-- **Analysis**: a durable PENDING row is created, processed on `ticket_jobs`
-  by the fake analyzer or OpenRouter, and stored as COMPLETED/FAILED — SQL is
-  the source of truth, not the RQ job.
+- **Analysis**: the current database selection is snapshotted into a durable
+  PENDING row before enqueue, processed on `ticket_jobs` by the selected fake,
+  OpenRouter, or direct DeepSeek adapter, and stored as COMPLETED/FAILED — SQL
+  is the source of truth, not the RQ job.
 
 Redis also provides ticket-detail caching (SQL fallback on failure) and login
 rate limiting (fails closed). SLA deadlines combine status base hours with a
 priority multiplier; a periodic scanner records one overdue event per ticket.
+
+The deterministic fake analyzer is the default verified local-demo provider.
+OpenRouter and direct DeepSeek require external keys. This closure pass
+live-tested direct DeepSeek with synthetic data only. OpenRouter live testing
+was explicitly waived; its adapter and automated tests remain covered.
+OpenRouter keeps its configured ZDR/data-collection controls. ResolveAI makes
+no equivalent request-level ZDR claim for direct DeepSeek.

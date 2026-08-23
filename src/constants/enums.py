@@ -122,6 +122,8 @@ class EventType(Enum):
     TICKET_UNLINKED = 'Ticket Unlinked'
     ATTACHMENT_ADDED = 'Attachment Added'
     ATTACHMENT_DELETED = 'Attachment Deleted'
+    AI_SETTINGS_UPDATED = 'AI Settings Updated'
+    AI_PROVIDER_TESTED = 'AI Provider Tested'
 
 class EntityType(Enum):
     TICKET = 'Ticket'
@@ -132,6 +134,7 @@ class EntityType(Enum):
     REFRESH_SESSION = 'Refresh Session'
     COMMENT = 'Comment'
     ATTACHMENT = 'Attachment'
+    AI_SETTINGS = 'AI Settings'
 
 
 class ActorType(str, Enum):

@@ -87,7 +87,7 @@ def create_refresh_session_for_user(user_id: str) -> CreatedRefreshSession | Non
     refresh_session = RefreshSession(
         id=generate_id(),
         user_id=user_id,
-        refresh_token_hash=hash_token(raw_refresh_token), #maybe later change its name for hash_secrets 
+        refresh_token_hash=hash_token(raw_refresh_token),
         expires_at=now + timedelta(weeks=1),
         revoked_at=None,
         created_at=now
