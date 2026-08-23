@@ -54,14 +54,6 @@ Status: local portfolio/learning v1 closure in progress. Historical closure item
 - [x] Defer a full Compose end-to-end test in CI; local Compose acceptance is recorded above.
 - [x] Do not deploy a public demo in this closure pass; revisit data-retention, authentication, and cost limits before deployment.
 
-## Human learning gate
-
-- [ ] Explain one complete request flow without notes:
-  browser → nginx → FastAPI router → auth dependency → service → database/Redis.
-- [ ] Explain one asynchronous flow:
-  API request → durable SQL record → Redis/RQ queue → worker → durable result readback.
-- [ ] Work through the relevant questions in `QUIZ.md` and record any weak topics.
-
 ## Definition of done
 
 - [x] P1 items are complete.
