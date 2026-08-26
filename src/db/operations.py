@@ -1148,7 +1148,12 @@ def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> T
             old_assignee_id = ticket.assigned_agent_id
             now = event_data.created_at if event_data is not None else utc_now()
             skill_ids = new_info.pop("skill_ids", None)
-            if "status" in new_info or "priority" in new_info:
+            # The service layer computes due_at itself; only derive it here for
+            # callers that change status/priority without providing one.
+            if (
+                ("status" in new_info or "priority" in new_info)
+                and "due_at" not in new_info
+            ):
                 new_info = {
                     **new_info,
                     "due_at": calculate_sla_due_at(
@@ -1569,7 +1574,10 @@ def get_comments(
                 limit: int | None = None,
                 offset: int = 0,
                 sort_by: str = DEFAULT_SORT_BY,
-                sort_order: str = DEFAULT_SORT_ORDER) -> list[Comment]:
+                sort_order: str = DEFAULT_SORT_ORDER,
+                *,
+                visibilities: tuple | None = None,
+                include_deleted: bool = False) -> list[Comment]:
     with Session(engine) as session:
         sort_columns = {
             "created_at": Comment.created_at,
@@ -1579,9 +1587,16 @@ def get_comments(
 
         order_exp = apply_sort_order(sort_col, sort_order)
 
+        # Visibility and soft-delete filtering belong in SQL so LIMIT/OFFSET
+        # pages are not shortened by rows the requester cannot see.
         query = select(Comment).order_by(order_exp).offset(offset)
         if limit:
             query = query.limit(limit)
+
+        if not include_deleted:
+            query = query.where(Comment.deleted_at.is_(None))
+        if visibilities is not None:
+            query = query.where(Comment.visibility.in_(visibilities))
 
         if ticket_id is not None:
             query = query.where(Comment.ticket_id == ticket_id)

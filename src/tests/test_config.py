@@ -80,7 +80,7 @@ def test_openrouter_analyzer_requires_key(monkeypatch):
 def test_analyzer_rejects_unsupported_normalized_provider(monkeypatch, provider):
     monkeypatch.setattr(config, "ANALYZER_PROVIDER", provider)
 
-    with pytest.raises(RuntimeError, match="must be fake or openrouter"):
+    with pytest.raises(RuntimeError, match="must be fake, openrouter, or deepseek"):
         config.validate_analyzer_settings()
 
 

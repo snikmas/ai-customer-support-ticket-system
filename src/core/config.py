@@ -106,21 +106,30 @@ def validate_routing_reconciliation_settings() -> None:
 
 
 def validate_analyzer_settings() -> None:
-    if ANALYZER_PROVIDER not in {"fake", "openrouter"}:
-        raise RuntimeError("ANALYZER_PROVIDER must be fake or openrouter")
+    if ANALYZER_PROVIDER not in {"fake", "openrouter", "deepseek"}:
+        raise RuntimeError("ANALYZER_PROVIDER must be fake, openrouter, or deepseek")
     if OPENROUTER_TIMEOUT_SECONDS <= 0:
         raise RuntimeError("OPENROUTER_TIMEOUT_SECONDS must be greater than zero")
+    if DEEPSEEK_TIMEOUT_SECONDS <= 0:
+        raise RuntimeError("DEEPSEEK_TIMEOUT_SECONDS must be greater than zero")
     if ANALYZER_PROVIDER == "fake":
         return
-    if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.strip():
-        raise RuntimeError(
-            "OPENROUTER_API_KEY is required when ANALYZER_PROVIDER=openrouter"
-        )
-    if not OPENROUTER_MODEL:
-        raise RuntimeError(
-            "OPENROUTER_MODEL is required when ANALYZER_PROVIDER=openrouter"
-        )
+    if ANALYZER_PROVIDER == "openrouter":
+        if not OPENROUTER_API_KEY or not OPENROUTER_API_KEY.strip():
+            raise RuntimeError(
+                "OPENROUTER_API_KEY is required when ANALYZER_PROVIDER=openrouter"
+            )
+        if not OPENROUTER_MODEL:
+            raise RuntimeError(
+                "OPENROUTER_MODEL is required when ANALYZER_PROVIDER=openrouter"
+            )
+    if ANALYZER_PROVIDER == "deepseek":
+        if not DEEPSEEK_API_KEY or not DEEPSEEK_API_KEY.strip():
+            raise RuntimeError(
+                "DEEPSEEK_API_KEY is required when ANALYZER_PROVIDER=deepseek"
+            )
 
 
 validate_redis_settings()
 validate_routing_reconciliation_settings()
+validate_analyzer_settings()

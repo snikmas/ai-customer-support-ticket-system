@@ -62,31 +62,50 @@ def create_access_token(user: User) -> str:
         "iat": now
     }
 
-    private_key_path = os.getenv("JWT_PRIVATE_KEY_PATH")
-    algorithm = os.getenv("JWT_ALGORITHM")
-
-    with open(private_key_path, 'r') as key_file:
-        private_key = key_file.read()
-    
     token = jwt.encode(
         payload_data,
-        private_key,
-        algorithm
+        _load_jwt_key("JWT_PRIVATE_KEY_PATH", "private.pem"),
+        _jwt_algorithm()
     )
 
     return token
 
 def decode_access_token(token: str) -> dict:
-    public_key_path = os.getenv("JWT_PUBLIC_KEY_PATH")
-    algorithm = os.getenv("JWT_ALGORITHM")
-
-    with open(public_key_path, 'r') as key_file:
-        public_key = key_file.read()
-
     payload = jwt.decode(
         token,
-        public_key,
-        algorithm
+        _load_jwt_key("JWT_PUBLIC_KEY_PATH", "public.pem"),
+        _jwt_algorithm()
     )
 
     return payload
+
+
+# --- JWT key loading -------------------------------------------------------
+# Keys are read once per process instead of on every token create/verify, and
+# default to the project keys/ directory so local runs outside Docker work
+# without extra environment setup.
+_JWT_KEY_CACHE: dict[str, str] = {}
+
+
+def _jwt_algorithm() -> str:
+    return os.getenv("JWT_ALGORITHM", "RS256")
+
+
+def _load_jwt_key(env_var: str, default_filename: str) -> str:
+    from pathlib import Path
+
+    path = os.getenv(env_var)
+    if not path:
+        path = str(
+            Path(__file__).resolve().parent.parent.parent / "keys" / default_filename
+        )
+    if path not in _JWT_KEY_CACHE:
+        try:
+            with open(path, 'r') as key_file:
+                _JWT_KEY_CACHE[path] = key_file.read()
+        except OSError as exc:
+            raise RuntimeError(
+                f"JWT key file is not readable: {path} "
+                f"(set {env_var} to override)"
+            ) from exc
+    return _JWT_KEY_CACHE[path]

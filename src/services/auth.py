@@ -61,10 +61,12 @@ def logout_user(refresh_token_raw: str) -> bool:
 
     if session.revoked_at is not None:
         return False
-    if session.expires_at < datetime.now(timezone.utc):
-        return False
-    
+
     now = datetime.now(timezone.utc)
+    if session.expires_at <= now:
+        # Expired sessions are still marked revoked so they do not linger as
+        # apparently-active rows, and logout stays idempotent for the client.
+        return operations.revoke_refresh_session(session.id, now)
     event = Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.REFRESH_SESSION,

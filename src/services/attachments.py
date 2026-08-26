@@ -147,6 +147,12 @@ def download_attachment(
         path = storage.path(attachment.storage_key)
     except FileNotFoundError as exc:
         raise AttachmentNotFoundError("Attachment bytes are no longer available") from exc
-    ascii_name = "".join(character if ord(character) < 128 and character.isprintable() else "_" for character in attachment.original_filename)
+    # Keep the quoted filename free of characters that could break out of the
+    # Content-Disposition quoted-string (" and \ especially).
+    ascii_name = "".join(
+        character if ord(character) < 128 and character.isprintable() and character not in '"\\;'
+        else "_"
+        for character in attachment.original_filename
+    )
     disposition = f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(attachment.original_filename)}'
     return path, attachment, disposition

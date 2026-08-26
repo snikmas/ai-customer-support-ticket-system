@@ -9,11 +9,13 @@ from src.exceptions import CacheUnavailableError
 from src.routers import auth as auth_router
 
 
-def test_rate_limit_check_fails_closed_when_redis_is_disabled(monkeypatch):
+def test_rate_limit_check_is_skipped_when_redis_is_disabled(monkeypatch):
     monkeypatch.setattr(rate_limit, "get_redis_client", lambda: None)
 
-    with pytest.raises(CacheUnavailableError):
-        rate_limit.is_login_limited("mary")
+    # Redis disabled by configuration must not make login unavailable.
+    assert rate_limit.is_login_limited("mary") is False
+    assert rate_limit.record_failed_login("mary") == 0
+    assert rate_limit.clear_login_attempts("mary") is False
 
 
 def test_rate_limit_check_translates_redis_failure(monkeypatch):

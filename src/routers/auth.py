@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from src import models
 from src.core import security
 from src.cache import record_failed_login, is_login_limited, clear_login_attempts
@@ -24,24 +24,30 @@ router = APIRouter(
 
 
 @router.post("/login")
-def login(login_request: models.LoginRequest) -> models.TokenResponse:
+def login(login_request: models.LoginRequest, request: Request) -> models.TokenResponse:
 
     if login_request.nickname is not None:
         identifier = login_request.nickname
     else:
         identifier = login_request.email
 
-    if is_login_limited(identifier):
+    # Rate-limit key combines the account identifier with the client IP, so an
+    # attacker failing logins from their network cannot lock out the
+    # legitimate owner signing in from elsewhere.
+    client_host = request.client.host if request.client is not None else "unknown"
+    rate_limit_key = f"{identifier}|{client_host}"
+
+    if is_login_limited(rate_limit_key):
         raise RateLimitExceededError()
 
     user = login_user(identifier, login_request.password)
-    
+
     if user is None:
-        record_failed_login(identifier)
+        record_failed_login(rate_limit_key)
         raise InvalidCredentialsError()
 
     # user is ok, clear redis
-    clear_login_attempts(identifier)
+    clear_login_attempts(rate_limit_key)
 
     raw_access_token = security.create_access_token(user)
     created_refresh_section = create_refresh_session_for_user(user.id)

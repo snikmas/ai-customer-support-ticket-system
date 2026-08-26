@@ -34,8 +34,20 @@ def _check_comment_is_visible(comment: db_models.Comment, requester: api_models.
         raise AuthorizationError()
         
         
+def _check_agent_can_access_ticket(ticket: db_models.Ticket, requester: api_models.User) -> None:
+    """Mirror the ticket read rule for agents: assigned work or the NEW queue."""
+    if (
+        ticket.assigned_agent_id != requester.id
+        and not (
+            ticket.assigned_agent_id is None
+            and ticket.status == constants.Status.NEW
+        )
+    ):
+        raise AuthorizationError()
+
+
 def get_all_comments(
-                    ticket_id: str, 
+                    ticket_id: str,
                     requester: api_models.User,
                     limit: int,
                     offset: int,
@@ -45,24 +57,29 @@ def get_all_comments(
     if ticket is None or ticket.deleted_at is not None:
         raise TicketNotFoundError()
 
-    comments = operations.get_comments(ticket_id, limit, offset, sort_by, sort_order)
-
     if requester.role == constants.Role.USER:
         if ticket.creator_user_id != requester.id:
             raise AuthorizationError()
-        comments = [
-            comment for comment in comments
-            if comment.deleted_at is None and comment.visibility == constants.Visibility.PUBLIC
-        ]
+        visibilities = (constants.Visibility.PUBLIC,)
     elif check_for_access(requester.role, constants.Role.MANAGER):
-        comments = [comment for comment in comments if comment.deleted_at is None]
+        visibilities = None
     elif check_for_access(requester.role, constants.Role.AGENT_READONLY):
-        comments = [
-            comment for comment in comments
-            if comment.deleted_at is None and comment.visibility != constants.Visibility.PRIVATE_TO_MANAGER
-        ]
+        if requester.role == constants.Role.AGENT:
+            _check_agent_can_access_ticket(ticket, requester)
+        visibilities = (constants.Visibility.PUBLIC, constants.Visibility.INTERNAL)
     else:
         raise AuthorizationError()
+
+    # Visibility filtering happens in SQL so pages are not shortened by rows
+    # the requester cannot see.
+    comments = operations.get_comments(
+        ticket_id,
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        visibilities=visibilities,
+    )
 
     return [_to_api_comment(comment) for comment in comments]
 
@@ -90,7 +107,13 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
     ticket = operations.get_ticket(ticket_id)
     if ticket == None or ticket.deleted_at is not None: raise TicketNotFoundError()
 
-    if check_for_access(requester.role, constants.Role.AGENT) is False and requester.id != ticket.creator_user_id:
+    # Commenting follows ticket read access: managers anywhere, agents only on
+    # their assigned work or the unassigned NEW queue, customers only their own.
+    if check_for_access(requester.role, constants.Role.MANAGER):
+        pass
+    elif requester.role == constants.Role.AGENT:
+        _check_agent_can_access_ticket(ticket, requester)
+    elif requester.id != ticket.creator_user_id:
         raise AuthorizationError()
     if requester.role == constants.Role.USER and comment_create.visibility != constants.Visibility.PUBLIC:
         raise AuthorizationError()
@@ -161,13 +184,21 @@ def update_comment(ticket_id: str, comment_id: str, new_info: api_models.Comment
 
     if comment.deleted_at is not None or ticket.deleted_at is not None: 
         raise CommentNotFoundError()
-    if requester.role == constants.Role.USER and comment.author_user_id != requester.id:
-        raise AuthorizationError()
-    elif requester.role == constants.Role.AGENT and ticket.assigned_agent_id != requester.id: 
-        raise AuthorizationError()
+    if requester.role == constants.Role.USER:
+        if comment.author_user_id != requester.id:
+            raise AuthorizationError()
+    elif requester.role == constants.Role.AGENT:
+        # Agents edit only their own comments, on their own tickets, and never
+        # manager-private notes they are not allowed to read.
+        if ticket.assigned_agent_id != requester.id:
+            raise AuthorizationError()
+        if comment.author_user_id != requester.id:
+            raise AuthorizationError()
+        if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER:
+            raise AuthorizationError()
     elif check_for_access(requester.role, constants.Role.MANAGER):
         pass
-    elif requester.role not in [constants.Role.USER, constants.Role.AGENT]:
+    else:
         raise AuthorizationError()
     
     

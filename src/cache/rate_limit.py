@@ -17,7 +17,9 @@ def record_failed_login(identifier: str) -> int:
     try:
         client = get_redis_client()
         if client is None:
-            raise CacheUnavailableError()
+            # Redis is disabled by configuration: rate limiting is skipped,
+            # but login must stay available.
+            return 0
         key = build_login_attempt_key(identifier)
 
         # the problem with this code: it can run client.incr but git an error in client.expire. result: a key without ttl -> a user could be permamently blocked
@@ -47,7 +49,8 @@ def is_login_limited(identifier: str) -> bool:
     try:
         client = get_redis_client()
         if client is None:
-            raise CacheUnavailableError()
+            # Redis is disabled by configuration: do not lock anyone out.
+            return False
 
         key = build_login_attempt_key(identifier)
         attempts = client.get(key)
@@ -63,7 +66,7 @@ def clear_login_attempts(identifier: str) -> bool:
     try:
         client = get_redis_client()
         if client is None:
-            raise CacheUnavailableError()
+            return False
         key = build_login_attempt_key(identifier)
         deleted_count = client.delete(key)
     except RedisError as exc:

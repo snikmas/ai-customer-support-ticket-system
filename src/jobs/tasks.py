@@ -106,11 +106,6 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
         "Analysis attempt started",
         extra={"analysis_result_id": analysis_result_id},
     )
-    _notify_analysis_owner(
-        analysis_result_id,
-        "ai_analysis_completed",
-        "AI analysis is ready to review.",
-    )
     running = start_analysis_attempt(analysis_result_id, utc_now())
     if running is None:
         existing = get_analysis_result(analysis_result_id)
@@ -216,6 +211,11 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
     if completed is None:
         raise PermanentAnalysisError("analysis completion transition failed")
 
+    _notify_analysis_owner(
+        analysis_result_id,
+        "ai_analysis_completed",
+        "AI analysis is ready to review.",
+    )
     logger.info(
         "Analysis completed",
         extra={"analysis_result_id": analysis_result_id},
