@@ -20,3 +20,7 @@ docs/DEMO.md
 /package.json
 .gstack/
 .project-workflow/
+
+.cursor/
+.ruff_cache/
+CONTEXT.md
