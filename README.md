@@ -92,6 +92,23 @@ The backend tests disable Redis deliberately because they use isolated test
 fixtures. The running local application still requires Redis, as shown in
 `.env.example`.
 
+## Use the direct DeepSeek API
+
+Put your DeepSeek API key in `DEEPSEEK_API_KEY` in your private `.env` file.
+Recreate the API and RQ worker containers with
+`docker compose up -d --force-recreate api worker`, or restart both bare-metal
+processes, so they load the key. In the staff workspace, sign in as Admin or
+Super Admin, open **AI settings**, choose
+**Direct DeepSeek** and `deepseek-flash`, then run **Test provider** with its
+fixed synthetic ticket. If the test succeeds, choose **Save selection**.
+New analyses use DeepSeek; analyses already queued keep the provider and model
+recorded when they were requested. Keep real customer data out of external
+provider tests unless you have permission to send it.
+
+The selection is stored in the database. Changing `ANALYZER_PROVIDER` alone
+does not switch the staff workspace's active provider. OpenRouter remains
+available as a separate option.
+
 ## API Overview
 
 - **Users** — register, list, get, update, agent availability/profile, soft delete

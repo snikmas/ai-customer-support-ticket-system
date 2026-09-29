@@ -14,7 +14,8 @@ from .openrouter import (
 
 
 FAKE_MODEL = "deterministic-fake-v1"
-DEEPSEEK_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+DEEPSEEK_MODELS = ("deepseek-flash", "deepseek-v4-pro")
+DEEPSEEK_LEGACY_MODELS = ("deepseek-v4-flash",)
 OPENROUTER_DEFAULT_MODEL = "openai/gpt-oss-20b"
 OPENROUTER_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._:-]+$")
 
@@ -44,7 +45,7 @@ def validate_selection(provider: str, model: str) -> None:
             )
         return
     if provider == "deepseek":
-        if model not in DEEPSEEK_MODELS:
+        if model not in (*DEEPSEEK_MODELS, *DEEPSEEK_LEGACY_MODELS):
             raise PermanentAnalysisError(
                 "invalid DeepSeek model",
                 code="provider_model_invalid",

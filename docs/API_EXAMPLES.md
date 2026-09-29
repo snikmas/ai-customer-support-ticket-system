@@ -27,7 +27,7 @@ curl http://localhost:8000/ai-settings/ \
 curl -X PATCH http://localhost:8000/ai-settings/ \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"provider":"deepseek","model":"deepseek-v4-flash","expected_version":1}'
+  -d '{"provider":"deepseek","model":"deepseek-flash","expected_version":1}'
 
 curl -X POST http://localhost:8000/ai-settings/test \
   -H "Authorization: Bearer $ACCESS_TOKEN" \

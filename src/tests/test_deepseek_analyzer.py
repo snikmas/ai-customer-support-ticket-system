@@ -14,7 +14,7 @@ from src.analyzers import (
 from src.analyzers.deepseek import DEEPSEEK_CHAT_COMPLETIONS_URL
 
 
-MODEL = "deepseek-v4-flash"
+MODEL = "deepseek-flash"
 
 
 def snapshot() -> AnalysisInputSnapshot:
@@ -68,6 +68,7 @@ def test_deepseek_success_uses_json_object_mode_and_usage():
     assert result.input_tokens == 12
     assert result.output_tokens == 5
     assert captured["url"] == DEEPSEEK_CHAT_COMPLETIONS_URL
+    assert captured["payload"]["model"] == MODEL
     assert captured["authorization"] == "Bearer synthetic-deepseek-key"
     assert captured["payload"]["response_format"] == {"type": "json_object"}
     assert "\"summary\"" in captured["payload"]["messages"][0]["content"]

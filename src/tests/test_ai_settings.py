@@ -14,6 +14,7 @@ from src.services import ai_settings
 from src.services import analysis_results
 from src.jobs import service as jobs_service
 from src.analyzers import build_analyzer
+from src.analyzers.factory import validate_selection
 from src.core import config
 
 
@@ -174,6 +175,10 @@ def test_worker_factory_uses_durable_provider_not_legacy_process_setting(monkeyp
     )
 
     assert analyzer.analyze(ai_settings._synthetic_snapshot()).summary.startswith("Synthetic")
+
+
+def test_queued_deepseek_flash_alias_remains_valid():
+    validate_selection("deepseek", "deepseek-v4-flash")
 
 
 @pytest.mark.parametrize("role", [constants.Role.MANAGER, constants.Role.AGENT])
