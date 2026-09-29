@@ -42,7 +42,8 @@ def check_ticket(ticket_id: str) -> Ticket | None:
 def delete_ticket(ticket_id: str) -> bool:
     try:
         client = get_redis_client()
-        if client is None: return False
+        if client is None:
+            return False
 
         ticket_key = build_ticket_key(ticket_id)
         #do i have to check if ticket key is none?

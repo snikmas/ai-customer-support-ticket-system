@@ -2,6 +2,7 @@ from . import models
 from .engine import engine
 from .migrations import (
     add_agent_profile_last_assigned_at,
+    add_refresh_session_previous_hash,
     add_ticket_department_id,
     add_ticket_due_at,
     backfill_legacy_departments,
@@ -30,6 +31,7 @@ def create_db() -> None:
     add_agent_profile_last_assigned_at(engine)
     add_ticket_due_at(engine)
     add_ticket_department_id(engine)
+    add_refresh_session_previous_hash(engine)
     backfill_legacy_departments(engine)
     migrate_event_actor_contract(engine)
     migrate_analysis_result_contract(engine)

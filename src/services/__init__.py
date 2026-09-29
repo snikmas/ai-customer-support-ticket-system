@@ -11,7 +11,6 @@ from .tickets import (
 )
 from .users import (
     create_user,
-    delete_all_users,
     delete_user,
     get_all_users,
     get_user,
@@ -26,3 +25,27 @@ from .auth import (
     rotate_refresh_session,
     verify_refresh_session,
 )
+
+__all__ = [
+    "check_for_access",
+    "assign_ticket",
+    "claim_ticket",
+    "create_ticket",
+    "delete_all_tickets",
+    "delete_ticket",
+    "get_all_tickets",
+    "get_ticket",
+    "update_ticket",
+    "create_user",
+    "delete_user",
+    "get_all_users",
+    "get_user",
+    "update_user",
+    "update_agent_availability",
+    "update_agent_profile_settings",
+    "create_refresh_session_for_user",
+    "login_user",
+    "logout_user",
+    "rotate_refresh_session",
+    "verify_refresh_session",
+]

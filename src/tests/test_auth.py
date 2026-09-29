@@ -9,7 +9,9 @@ from src.dependencies import auth as auth_dependency
 from src.services import auth as auth_service
 from src.models import LoginRequest
 from pydantic import ValidationError
-from src.exceptions import AuthenticationError, InactiveUserError, InvalidCredentialsError, RefreshSessionRevokedError
+from src.exceptions import AuthenticationError, InactiveUserError, InvalidCredentialsError, RefreshSessionNotFoundError, RefreshSessionRevokedError
+from src.routers.auth import _get_client_host
+from starlette.datastructures import Headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from src.db import models as db_models
@@ -271,3 +273,106 @@ def test_refresh_session_expiry_remains_utc_aware_after_sqlite_round_trip(
 
     assert loaded.expires_at.tzinfo is not None
     assert loaded.expires_at.utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize(
+    "forwarded_for, client_host, expected",
+    [
+        ("203.0.113.5", "10.0.0.1", "203.0.113.5"),
+        ("203.0.113.5, 198.51.100.2", "10.0.0.1", "198.51.100.2"),
+        ("  203.0.113.5  ,  198.51.100.2  ", "10.0.0.1", "198.51.100.2"),
+        (None, "10.0.0.1", "10.0.0.1"),
+        (None, None, "unknown"),
+    ],
+)
+def test_get_client_host_uses_last_x_forwarded_for_or_falls_back(
+    forwarded_for, client_host, expected
+):
+    raw_headers = []
+    if forwarded_for is not None:
+        raw_headers.append((b"x-forwarded-for", forwarded_for.encode()))
+    request = SimpleNamespace(
+        headers=Headers(raw=raw_headers),
+        client=SimpleNamespace(host=client_host) if client_host else None,
+    )
+
+    assert _get_client_host(request) == expected
+
+
+def test_verify_refresh_session_revokes_reused_previous_token(monkeypatch):
+    now = datetime.now(timezone.utc)
+    session = SimpleNamespace(
+        id="session-1",
+        refresh_token_hash="hash-current",
+        previous_refresh_token_hash="hash-previous",
+        revoked_at=None,
+        expires_at=now + timedelta(days=1),
+    )
+
+    monkeypatch.setattr(auth_service, "hash_token", lambda raw: "hash-previous")
+    monkeypatch.setattr(
+        auth_service.operations,
+        "get_refresh_session_by_hash_refresh_token",
+        lambda token_hash: session if token_hash == "hash-previous" else None,
+    )
+    revoked = {}
+    monkeypatch.setattr(
+        auth_service.operations,
+        "revoke_refresh_session",
+        lambda session_id, revoked_at: revoked.update({"id": session_id, "at": revoked_at}) or True,
+    )
+
+    with pytest.raises(RefreshSessionRevokedError):
+        auth_service.verify_refresh_session("stolen-old-token")
+
+    assert revoked["id"] == "session-1"
+    assert revoked["at"] is not None
+
+
+def test_verify_refresh_session_rejects_token_that_matches_neither_hash(monkeypatch):
+    monkeypatch.setattr(auth_service, "hash_token", lambda raw: "hash-unknown")
+    monkeypatch.setattr(
+        auth_service.operations,
+        "get_refresh_session_by_hash_refresh_token",
+        lambda _: None,
+    )
+
+    with pytest.raises(RefreshSessionNotFoundError):
+        auth_service.verify_refresh_session("random-token")
+
+
+def test_dummy_password_hash_is_valid_argon2_and_rejects_any_password():
+    assert auth_service.verify_password("any-password", auth_service._DUMMY_PASSWORD_HASH) is False
+
+
+def test_login_user_runs_dummy_password_check_for_unknown_identifier(monkeypatch):
+    monkeypatch.setattr(auth_service.operations, "get_user_by_nickname", lambda _: None)
+    calls = []
+    monkeypatch.setattr(
+        auth_service,
+        "verify_password",
+        lambda pwd, hash: calls.append((pwd, hash)) or False,
+    )
+
+    result = auth_service.login_user("unknown", "any-password")
+
+    assert result is None
+    assert len(calls) == 1
+    assert calls[0][0] == "any-password"
+
+
+def test_login_user_runs_dummy_password_check_for_inactive_user(monkeypatch, make_user):
+    user = make_user(user_status=constants.UserStatus.BANNED)
+    monkeypatch.setattr(auth_service.operations, "get_user_by_nickname", lambda _: user)
+    calls = []
+    monkeypatch.setattr(
+        auth_service,
+        "verify_password",
+        lambda pwd, hash: calls.append((pwd, hash)) or False,
+    )
+
+    result = auth_service.login_user("banned", "any-password")
+
+    assert result is None
+    assert len(calls) == 1
+    assert calls[0][0] == "any-password"

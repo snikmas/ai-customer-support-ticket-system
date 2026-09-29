@@ -1,10 +1,13 @@
 from fastapi.testclient import TestClient
 from datetime import datetime, timezone
+from types import SimpleNamespace
 import pytest
 
 from main import app
 from src import constants
 from src.exceptions.domain import (
+    AgentAtCapacityError,
+    AgentUnavailableError,
     AlreadyDeletedError,
     AuthorizationError,
     InvalidAssigneeError,
@@ -130,7 +133,22 @@ def test_agent_list_and_detail_share_support_queue_policy(monkeypatch, make_user
     another_agents = make_ticket(id="someone-elses", assigned_agent_id="agent-b", status=constants.Status.IN_PROGRESS)
     tickets = [assigned, claimable, another_agents]
 
-    monkeypatch.setattr(tickets_service.operations, "get_tickets", lambda *args: tickets)
+    def fake_get_tickets(*args, **kwargs):
+        requester_id = kwargs.get("requester_id")
+        requester_role = kwargs.get("requester_role")
+        if requester_role == constants.Role.AGENT:
+            return [
+                ticket
+                for ticket in tickets
+                if ticket.assigned_agent_id == requester_id
+                or (
+                    ticket.assigned_agent_id is None
+                    and ticket.status == constants.Status.NEW
+                )
+            ]
+        return tickets
+
+    monkeypatch.setattr(tickets_service.operations, "get_tickets", fake_get_tickets)
     visible = tickets_service.get_all_tickets(requester, 20, 0, "created_at", "desc", None, None)
     assert {ticket.id for ticket in visible} == {"assigned", "claimable"}
 
@@ -149,7 +167,7 @@ def test_agent_list_and_detail_share_support_queue_policy(monkeypatch, make_user
 def test_manager_and_readonly_agent_list_all_non_deleted_tickets(monkeypatch, make_user, make_ticket):
     first = make_ticket(id="first")
     second = make_ticket(id="second", assigned_agent_id="agent-b", status=constants.Status.IN_PROGRESS)
-    monkeypatch.setattr(tickets_service.operations, "get_tickets", lambda *args: [first, second])
+    monkeypatch.setattr(tickets_service.operations, "get_tickets", lambda *args, **kwargs: [first, second])
 
     for role in [constants.Role.MANAGER, constants.Role.AGENT_READONLY]:
         requester = make_user(role=role)
@@ -216,6 +234,7 @@ def test_get_tickets_returns_current_service_shape(monkeypatch, make_user, make_
         priority,
         status,
         overdue,
+        **kwargs,
     ):
         captured.update(
             {
@@ -389,6 +408,50 @@ def test_manager_cannot_be_ticket_assignee(monkeypatch, make_user, make_ticket):
         tickets_service.assign_ticket(ticket.id, manager.id, requester)
 
     assert exc_info.value.code == "assignee_must_be_agent"
+
+
+def _stub_claimable_ticket(monkeypatch, make_user, make_ticket, profile):
+    agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    ticket = make_ticket(id="ticket-1", status=constants.Status.NEW, assigned_agent_id=None)
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
+    monkeypatch.setattr(tickets_service, "_require_same_active_department", lambda *_: None)
+    monkeypatch.setattr(tickets_service.operations, "get_agent_profile", lambda _: profile)
+    return agent, ticket
+
+
+def test_claim_ticket_rejects_unavailable_agent(monkeypatch, make_user, make_ticket):
+    profile = SimpleNamespace(
+        availability_status=constants.AvailabilityStatus.OFFLINE,
+        max_active_tickets=3,
+    )
+    agent, ticket = _stub_claimable_ticket(monkeypatch, make_user, make_ticket, profile)
+
+    with pytest.raises(AgentUnavailableError):
+        tickets_service.claim_ticket(ticket.id, agent)
+
+
+def test_claim_ticket_rejects_agent_at_capacity(monkeypatch, make_user, make_ticket):
+    profile = SimpleNamespace(
+        availability_status=constants.AvailabilityStatus.AVAILABLE,
+        max_active_tickets=2,
+    )
+    agent, ticket = _stub_claimable_ticket(monkeypatch, make_user, make_ticket, profile)
+    monkeypatch.setattr(tickets_service.operations, "count_active_assigned_tickets", lambda _: 2)
+
+    with pytest.raises(AgentAtCapacityError):
+        tickets_service.claim_ticket(ticket.id, agent)
+
+
+def test_claim_ticket_allows_agent_below_capacity(monkeypatch, make_user, make_ticket):
+    profile = SimpleNamespace(
+        availability_status=constants.AvailabilityStatus.AVAILABLE,
+        max_active_tickets=2,
+    )
+    agent, ticket = _stub_claimable_ticket(monkeypatch, make_user, make_ticket, profile)
+    monkeypatch.setattr(tickets_service.operations, "count_active_assigned_tickets", lambda _: 1)
+    monkeypatch.setattr(tickets_service.operations, "claim_ticket", lambda *_: ticket)
+
+    assert tickets_service.claim_ticket(ticket.id, agent).id == ticket.id
 
 
 def test_repeated_ticket_delete_is_rejected_before_new_event(monkeypatch, make_user, make_ticket):

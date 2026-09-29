@@ -6,7 +6,7 @@ from src.dependencies.auth import get_current_user
 from src.jobs import service
 router = APIRouter(
     prefix="/jobs",
-    tags=["tickets"]
+    tags=["jobs"]
 )
 
 @router.get("/{job_id}", status_code=200)

@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import pytest
 
 from src import constants
-from src.db import models as db_models
 from src.exceptions.domain import AttachmentValidationError
 from src.services import attachments
 from src.services import comments as comments_service
@@ -35,7 +34,7 @@ async def test_upload_uses_generated_key_and_received_size(monkeypatch, make_use
     ticket = SimpleNamespace(id="ticket-1", deleted_at=None)
     comment = SimpleNamespace(id="comment-1", deleted_at=None)
     saved = {}
-    now = datetime.now(timezone.utc)
+    datetime.now(timezone.utc)
 
     monkeypatch.setattr(tickets_service, "get_ticket", lambda *_: ticket)
     monkeypatch.setattr(comments_service, "get_comment", lambda *_: comment)

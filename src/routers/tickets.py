@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
-from src import models, db, constants
+from src import models, constants
 from src.services import attachments as s_attachments
-from src.services import users as s_users, tickets as s_tickets, comments as s_comments
+from src.services import tickets as s_tickets, comments as s_comments
 from src.services import analysis_results as s_analysis_results
 from src.dependencies.auth import get_current_user
 from typing import Literal
-import inspect
 
 router = APIRouter(
     prefix="/tickets",
@@ -36,39 +35,22 @@ def get_tickets(requester = Depends(get_current_user),
                     category: constants.Category | None = None,
                     tag: constants.Tag | None = None,
                     ):
-    service_parameters = inspect.signature(s_tickets.get_all_tickets).parameters
-    supports_query_contract = (
-        "assigned_to_me" in service_parameters
-        or any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in service_parameters.values())
+    data = s_tickets.get_all_tickets(
+        requester,
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        priority,
+        status,
+        overdue,
+        assigned_to_me=assigned_to_me,
+        department_id=department_id,
+        assignee_id=assignee_id,
+        category=category,
+        tag=tag,
+        search=search,
     )
-    if supports_query_contract:
-        data = s_tickets.get_all_tickets(
-            requester,
-            limit,
-            offset,
-            sort_by,
-            sort_order,
-            priority,
-            status,
-            overdue,
-            assigned_to_me=assigned_to_me,
-            department_id=department_id,
-            assignee_id=assignee_id,
-            category=category,
-            tag=tag,
-            search=search,
-        )
-    else:
-        data = s_tickets.get_all_tickets(
-            requester,
-            limit,
-            offset,
-            sort_by,
-            sort_order,
-            priority,
-            status,
-            overdue,
-        )
     return {"data": data}
 
 

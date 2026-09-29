@@ -6,7 +6,7 @@ from src.core import ROUTING_RECONCILIATION_BATCH_SIZE
 from src.db import get_waiting_ticket_ids
 from src.jobs.queue import get_ticket_jobs_queue, get_ticket_routing_queue
 from src.jobs.tasks import analyze_analysis_result, route_ticket
-from src.models import JobStatusResponse, User, Job
+from src.models import JobStatusResponse, User
 from src.constants import JobStatus, logger, translate_rq_status, Role, raw_job_to_job_response
 from src.exceptions import AuthorizationError, BadRequestError
 
@@ -175,9 +175,12 @@ def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
         from src.services.analysis_results import get_analysis_result
 
         get_analysis_result(analysis_result_id, requester)
-    else:
+    elif raw_job.args:
         ticket_id = raw_job.args[0]
         _get_ticket_for_requester(ticket_id, requester)
+    # Cron-enqueued jobs (e.g., route_waiting_tickets, scan_overdue_tickets)
+    # carry only kwargs, so there is no specific ticket/analysis result to
+    # authorize against beyond the agent role check above.
 
     status = translate_rq_status(raw_job.get_status())
     return JobStatusResponse(
@@ -187,7 +190,7 @@ def get_job(job_id: str, requester: User) -> JobStatusResponse | None:
     )
 
 
-def get_all_jobs(requester: User) -> list[Job] | None:
+def get_all_jobs(requester: User) -> list[JobStatusResponse] | None:
     from src.services.permissions import check_for_access
 
     if check_for_access(requester.role, Role.ADMIN) is False:
@@ -196,7 +199,8 @@ def get_all_jobs(requester: User) -> list[Job] | None:
     queue = get_ticket_jobs_queue()
     
     raw_jobs = queue.get_jobs()
-    if raw_jobs is None: return None
+    if raw_jobs is None:
+        return None
     jobs = []
     for raw_job in raw_jobs:
         jobs.append(raw_job_to_job_response(raw_job))

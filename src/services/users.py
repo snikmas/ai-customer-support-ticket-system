@@ -266,7 +266,7 @@ def create_user(user_data: api_models.UserCreate) -> db_models.User:
         phone=user_data.phone,
         email=user_data.email,
         password = hash_password(user_data.password),
-        role=constants.Role.USER, #? the system after can update the role for agents/etc? how does it work in a big tech companies
+        role=constants.Role.USER,
         updated_at=now,
         created_at=now
     )
@@ -457,7 +457,8 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
         )
     )
 
-    if any(key in updated_info for key in ['updated_at', 'created_at']): return None #no one can change it
+    if any(key in updated_info for key in ['updated_at', 'created_at']):
+        return None  # no one can change it
     if requester.id != updated_info_id:
         if check_for_access(requester.role, constants.Role.ADMIN) is False:
             raise AuthorizationError()
@@ -556,9 +557,31 @@ def delete_user(id: str, requester_user: api_models.User) -> None:
         raise UserNotFoundError()
 
     if requester.id != id:
-        if check_for_access(requester.role, constants.Role.ADMIN) is False: 
+        if check_for_access(requester.role, constants.Role.ADMIN) is False:
             raise AuthorizationError()
-    
+
+    if user.role is constants.Role.SUPER_ADMIN:
+        if requester.role is not constants.Role.SUPER_ADMIN and requester.id != user.id:
+            raise AuthorizationError(
+                "Only a Super Admin can manage another Super Admin",
+                code="super_admin_management_forbidden",
+            )
+        if (
+            user.user_status is constants.UserStatus.ACTIVE
+            and user.deleted_at is None
+            and operations.count_active_superadmins() <= 1
+        ):
+            raise LastSuperAdminError()
+
+    removes_requester_admin_access = (
+        requester.id == id
+        and user.role in {constants.Role.ADMIN, constants.Role.SUPER_ADMIN}
+        and user.user_status is constants.UserStatus.ACTIVE
+        and user.deleted_at is None
+    )
+    if removes_requester_admin_access and operations.count_active_administrators() <= 1:
+        raise FinalAdminAccessError()
+
     now = datetime.now(timezone.utc)
     old_data = {'deleted_at': user.deleted_at, 'updated_at': user.updated_at, 'user_status': user.user_status}
     delete_info = {'deleted_at': now, "updated_at": now, 'user_status': constants.UserStatus.DELETED}
@@ -576,49 +599,3 @@ def delete_user(id: str, requester_user: api_models.User) -> None:
 
     if operations.delete_user(id, delete_info, event) is not True:
         raise InternalOperationError("User could not be deleted", code="user_delete_failed")
-
-
-def delete_all_users(requester: api_models.User) -> int:
-    requester = operations.get_user(requester.id)
-    if requester is None:
-        raise UserNotFoundError()
-    
-    if check_for_access(requester.role, constants.Role.SUPER_ADMIN) is False:
-        raise AuthorizationError()
-
-
-    users = operations.get_users()
-    now = datetime.now(timezone.utc)
-
-    event = api_models.Event(
-        id=constants.generate_id(),
-        entity_type=constants.EntityType.USER,
-        entity_id=None,
-        actor_user_id=requester.id,
-        event_type=constants.EventType.USER_BULK_DELETED,
-        old_value=constants._audit_json({"deleted_at": None}),
-        new_value=constants._audit_json({"deleted_at": now}), # do we need change status? for closed?
-        metadata=None,
-        created_at=now,
-        batch_id=constants.generate_id()
-    )
-    
-    events = [event]
-    if users:
-        for user in users:
-            if user.user_status is not constants.UserStatus.DELETED:
-                event_user = api_models.Event(
-                    id=constants.generate_id(),
-                    entity_type=constants.EntityType.USER,
-                    entity_id=user.id,
-                    actor_user_id=requester.id,
-                    event_type=constants.EventType.USER_DELETED,
-                    old_value=constants._audit_json({"deleted_at": None}),
-                    new_value=constants._audit_json({"deleted_at": now}), # do we need change status? for closed?
-                    metadata=None,
-                    created_at=now,
-                    batch_id=event.batch_id
-                )
-                events.append(event_user)
-
-    return operations.delete_all_users(events)

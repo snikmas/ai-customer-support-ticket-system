@@ -22,16 +22,8 @@ def record_failed_login(identifier: str) -> int:
             return 0
         key = build_login_attempt_key(identifier)
 
-        # the problem with this code: it can run client.incr but git an error in client.expire. result: a key without ttl -> a user could be permamently blocked
-        # this is a redis feature, that's why
-        # attempts = client.incr(key)
-        # if attempts == 1:
-            # client.expire(key, LOGIN_RATE_LIMIT_WINDOW_SECONDS)
-
-
-        # solution.. lua? cuz it runs everything in a single redis operation
-        # okay, just checked some videos. next goal: learn lua
-        # what a beauty langauge: arrays/etc starts from 1 and not 0, okay
+        # Lua runs the increment and TTL set atomically, so a failed EXPIRE
+        # cannot leave a key without a TTL.
         attempts = client.eval(
             RATE_LIMIT_INCREMENT_SCRIPT_LUA, 
             1, 
@@ -58,7 +50,8 @@ def is_login_limited(identifier: str) -> bool:
         logger.exception("Redis unavailable while checking the login rate limit")
         raise CacheUnavailableError() from exc
 
-    if attempts is None: return False
+    if attempts is None:
+        return False
     return int(attempts) >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS
 
 

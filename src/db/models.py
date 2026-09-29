@@ -1,14 +1,13 @@
 from typing import List, Optional
-from sqlalchemy import CheckConstraint, Column, ForeignKey, String, Time, Interval, Enum, DateTime, Table, Text, Index, Integer, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Column, ForeignKey, String, Enum, DateTime, Table, Text, Index, Integer, UniqueConstraint, text
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from src.constants import (
     Role, 
     Category, 
     Priority, 
     Status, 
-    Tag, 
     UserStatus, 
     EventType, 
     EntityType,
@@ -18,7 +17,6 @@ from src.constants import (
     ActorType,
     AvailabilityStatus,
     )
-from sqlalchemy.dialects.postgresql import ARRAY
 
 
 class Base(DeclarativeBase):
@@ -118,7 +116,7 @@ class Ticket(Base):
     title:              Mapped[str] = mapped_column(String(255))
     description:        Mapped[str] = mapped_column(String(32000))
     category:           Mapped[Category] = mapped_column(Enum(Category))
-    tags:               Mapped[str] = mapped_column(String(200), nullable=True)
+    tags:               Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     department_id:      Mapped[Optional[str]] = mapped_column(
         String(36),
         ForeignKey("departments.id", ondelete="RESTRICT"),
@@ -141,7 +139,7 @@ class Ticket(Base):
         nullable=True,
     )
 
-    deleted_at:         Mapped[datetime] = mapped_column(UTCDateTime(), nullable=True)
+    deleted_at:         Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
     requested_skills: Mapped[List["Skill"]] = relationship(
         secondary=ticket_skills,
         lazy="selectin",
@@ -178,10 +176,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True)
     role: Mapped[Role] = mapped_column(Enum(Role))
     password: Mapped[str] = mapped_column(String(255))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
 
-    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
     user_status: Mapped[UserStatus] = mapped_column(Enum(UserStatus))
     agent_profile: Mapped[Optional["AgentProfile"]] = relationship(
         back_populates="user",
@@ -214,12 +212,12 @@ class AgentProfile(Base):
     availability_reason: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     availability_note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     unavailable_until: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     max_active_tickets: Mapped[int] = mapped_column(nullable=False, default=0)
     last_assigned_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     department_id: Mapped[Optional[str]] = mapped_column(
@@ -227,8 +225,8 @@ class AgentProfile(Base):
         ForeignKey("departments.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="agent_profile")
     skills: Mapped[List["Skill"]] = relationship(
@@ -253,7 +251,7 @@ class Event(Base):
     id:             Mapped[str] = mapped_column(String(36), primary_key=True)
 
     entity_type:    Mapped[EntityType] = mapped_column(Enum(EntityType), nullable=False)
-    entity_id:      Mapped[str] = mapped_column(String(36), nullable=True) #whcih exact object changed
+    entity_id:      Mapped[str] = mapped_column(String(36), nullable=True) # which exact object changed
     actor_type:     Mapped[ActorType] = mapped_column(
                         Enum(ActorType),
                         nullable=False,
@@ -403,6 +401,7 @@ class RefreshSession(Base):
                                         ForeignKey('users.id', ondelete='CASCADE')
                                         )
     refresh_token_hash: Mapped[str] = mapped_column(String(255)) 
+    previous_refresh_token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
     revoked_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime())

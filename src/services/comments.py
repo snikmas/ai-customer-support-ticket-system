@@ -99,13 +99,17 @@ def get_comment(ticket_id: str, comment_id: str, requester: api_models.User) -> 
     _check_comment_is_visible(comment, requester)
 
     if requester.role == constants.Role.USER:
-        if ticket.creator_user_id != requester.id: raise AuthorizationError()
+        if ticket.creator_user_id != requester.id:
+            raise AuthorizationError()
+    elif requester.role == constants.Role.AGENT:
+        _check_agent_can_access_ticket(ticket, requester)
     return _to_api_comment(comment)
 
 def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreate, requester: api_models.User) -> api_models.Comment:
     
     ticket = operations.get_ticket(ticket_id)
-    if ticket == None or ticket.deleted_at is not None: raise TicketNotFoundError()
+    if ticket is None or ticket.deleted_at is not None:
+        raise TicketNotFoundError()
 
     # Commenting follows ticket read access: managers anywhere, agents only on
     # their assigned work or the unassigned NEW queue, customers only their own.
@@ -160,7 +164,11 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
     if res is None:
         raise AuditLogError("Comment could not be created", code="comment_create_failed")
 
-    if ticket.assigned_agent_id and ticket.assigned_agent_id != requester.id:
+    if (
+        ticket.assigned_agent_id
+        and ticket.assigned_agent_id != requester.id
+        and comment.visibility != constants.Visibility.PRIVATE_TO_MANAGER
+    ):
         s_notifications.emit(
             ticket.assigned_agent_id,
             "comment_added",
@@ -176,11 +184,13 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
 def update_comment(ticket_id: str, comment_id: str, new_info: api_models.CommentUpdate, requester: api_models.User) -> api_models.Comment:
     
     comment = operations.get_comment(comment_id)
-    if comment is None: raise CommentNotFoundError()
+    if comment is None:
+        raise CommentNotFoundError()
     _check_comment_belongs_to_ticket(comment, ticket_id)
 
     ticket = operations.get_ticket(comment.ticket_id)
-    if ticket is None: raise TicketNotFoundError()
+    if ticket is None:
+        raise TicketNotFoundError()
 
     if comment.deleted_at is not None or ticket.deleted_at is not None: 
         raise CommentNotFoundError()

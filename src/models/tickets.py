@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType, AnalysisStatus
+from src.constants.enums import Status, Category, Tag, Priority, AnalysisStatus
 from .validation import EntityId, LongBody, RefreshToken, TicketTitle
 
 class Ticket(BaseModel):
@@ -37,10 +37,9 @@ class TicketUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tags: list[Tag] | None = Field(default=None, max_length=10)
-    assigned_agent_id: str | None = None 
+    assigned_agent_id: str | None = None
     status: Status | None = None
     priority: Priority | None = None
-    deleted_at: datetime | None = None
     department_id: EntityId | None = None
     skill_ids: list[EntityId] | None = Field(default=None, max_length=20)
 

@@ -10,7 +10,6 @@ from src.db import models as db_models, operations
 from src.exceptions.domain import (
     AttachmentNotFoundError,
     AttachmentValidationError,
-    AuthorizationError,
     InternalOperationError,
 )
 from src.services import comments as comments_service

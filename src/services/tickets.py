@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import inspect
 from sqlalchemy.exc import IntegrityError
 from .permissions import check_for_access
 from src import constants
@@ -7,7 +6,8 @@ from src import models as api_models
 from src.db import models as db_models, operations
 from src.exceptions.domain import (
     AlreadyDeletedError,
-    AuditLogError,
+    AgentAtCapacityError,
+    AgentUnavailableError,
     AuthorizationError,
     EmptyUpdateError,
     InactiveRoutingCatalogError,
@@ -23,10 +23,7 @@ from src.exceptions.domain import (
     RelatedTicketNotFoundError,
 )
 from src.cache import check_ticket as check_cached_ticket, cache_ticket, delete_ticket as delete_cached_ticket
-from src.jobs import (
-    enqueue_ticket_routing_job,
-    get_job as jobs_get_job,
-)
+from src.jobs import enqueue_ticket_routing_job
 from src.services.routing import dispatch_waiting_tickets_after_capacity_event
 from src.services import notifications as s_notifications
 from src.constants import logger
@@ -37,9 +34,26 @@ def _to_api_ticket(
     *,
     now: datetime | None = None,
 ) -> api_models.Ticket:
-    if ticket.tags is None or isinstance(ticket.tags, str):
-        ticket.tags = constants.deserialize_tags(ticket.tags)
-    response = api_models.Ticket.model_validate(ticket, from_attributes=True)
+    tags = ticket.tags
+    if not isinstance(tags, list):
+        tags = constants.deserialize_tags(tags)
+    response = api_models.Ticket.model_validate({
+        "id": ticket.id,
+        "title": ticket.title,
+        "description": ticket.description,
+        "category": ticket.category,
+        "tags": tags,
+        "department_id": ticket.department_id,
+        "skill_ids": ticket.skill_ids,
+        "assigned_agent_id": ticket.assigned_agent_id,
+        "creator_user_id": ticket.creator_user_id,
+        "status": ticket.status,
+        "priority": ticket.priority,
+        "updated_at": ticket.updated_at,
+        "created_at": ticket.created_at,
+        "due_at": ticket.due_at,
+        "deleted_at": ticket.deleted_at,
+    })
     return response.model_copy(update={
         "is_overdue": constants.is_ticket_overdue(
             response.due_at,
@@ -81,6 +95,19 @@ def _require_same_active_department(
             "Assignee department is archived",
             code="assignee_department_inactive",
         )
+
+
+def _require_agent_can_take_ticket(agent_id: str) -> None:
+    profile = operations.get_agent_profile(agent_id)
+    if profile is None:
+        raise InvalidAssigneeError("Assignee not found", code="assignee_not_found")
+    if profile.availability_status is not constants.AvailabilityStatus.AVAILABLE:
+        raise AgentUnavailableError()
+    if (
+        operations.count_active_assigned_tickets(agent_id)
+        >= profile.max_active_tickets
+    ):
+        raise AgentAtCapacityError()
 
 
 def _can_read_ticket(ticket: db_models.Ticket, requester: api_models.User) -> bool:
@@ -390,41 +417,24 @@ def get_all_tickets(
     # Authorization is expressed in SQL before LIMIT/OFFSET. This prevents a
     # page from being shortened by rows the requester cannot see.
     now = constants.utc_now()
-    operation_parameters = inspect.signature(operations.get_tickets).parameters
-    supports_query_contract = (
-        "requester_id" in operation_parameters
-        or any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in operation_parameters.values())
+    tickets = operations.get_tickets(
+        limit,
+        offset,
+        sort_by,
+        sort_order,
+        priority,
+        status,
+        overdue,
+        now,
+        requester_id=requester.id,
+        requester_role=requester.role,
+        assigned_to_me=assigned_to_me,
+        department_id=department_id,
+        assignee_id=assignee_id,
+        category=category,
+        tag=tag,
+        search=search,
     )
-    if supports_query_contract:
-        tickets = operations.get_tickets(
-            limit,
-            offset,
-            sort_by,
-            sort_order,
-            priority,
-            status,
-            overdue,
-            now,
-            requester_id=requester.id,
-            requester_role=requester.role,
-            assigned_to_me=assigned_to_me,
-            department_id=department_id,
-            assignee_id=assignee_id,
-            category=category,
-            tag=tag,
-            search=search,
-        )
-    else:
-        # Compatibility for narrow unit-test doubles and older integrations
-        # that still expose the pre-Stage-10 operation signature. Production
-        # uses the SQL query contract above.
-        legacy_tickets = operations.get_tickets(
-            None, 0, sort_by, sort_order, priority, status, overdue, now
-        )
-        visible_tickets = [
-            ticket for ticket in legacy_tickets if _can_read_ticket(ticket, requester)
-        ]
-        tickets = visible_tickets[offset:offset + limit]
     return [_to_api_ticket(ticket, now=now) for ticket in tickets]
 
 
@@ -526,10 +536,10 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     old_status = ticket.status
     old_assigned_agent_id = ticket.assigned_agent_id
 
-    # ================= STANDARTIZATION PROCESS ========================
-    #for audit logs, json friendly
+    # ================= STANDARDIZATION PROCESS ========================
+    # For audit logs, JSON-friendly.
     audit_new_info = updated_info.model_dump(exclude_unset=True, mode="json")
-    # keeos python objects, for db
+    # Keeps Python objects, for DB.
     updated_info = updated_info.model_dump(exclude_unset=True)
 
     if not updated_info or not audit_new_info:
@@ -537,9 +547,9 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
 
     if 'tags' in updated_info and updated_info['tags'] is not None:
         updated_info['tags'] = constants.serialize_tags(updated_info['tags'])
-        
+
     # =================================================================
-    # ================= ACCESS PROCCESS ===============================
+    # ================= ACCESS PROCESS ===============================
     
     requested_fields = set(updated_info.keys())
     status_was_requested = "status" in requested_fields
@@ -866,6 +876,7 @@ def claim_ticket(ticket_id: str, requester: api_models.User) -> api_models.Ticke
     if ticket.status != constants.Status.NEW:
         raise TicketStatusConflictError("Only new tickets can be claimed")
     _require_same_active_department(ticket, requester.id)
+    _require_agent_can_take_ticket(requester.id)
     
 
     transition_at = constants.utc_now()

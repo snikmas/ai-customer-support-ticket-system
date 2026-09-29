@@ -1,7 +1,6 @@
-from src.models import LoginRequest, TokenResponse, User, RefreshSession, CreatedRefreshSession, Event
+from src.models import TokenResponse, User, RefreshSession, CreatedRefreshSession, Event
 from src import constants
 from src.core.security import hash_password, password_needs_rehash, verify_password, create_access_token, generate_refresh_token, hash_token
-from .permissions import check_for_access
 from src.db import operations
 from src.constants.helpers import generate_id
 from datetime import datetime, timedelta, timezone
@@ -23,17 +22,24 @@ def _refresh_session_audit_data(refresh_session) -> dict:
     }
 
 
+# A valid Argon2 hash used only for timing-masking failed logins. It is never
+# associated with a real user, but verifying against it takes the same code
+# path as a real password check so unknown/inactive accounts do not return
+# measurably faster than active accounts with a wrong password.
+_DUMMY_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$75rznOUOOYJcbpAc0z09Zg$L4uAsy/74E8EK3IevkVb3iWuzip2DDUNL30RCCklVlM"
+
+
 def login_user(identifier: str, password: str) -> User | None:
 
     if '@' in identifier: #its an email
         user = operations.get_user_by_email(identifier)
     else:
         user = operations.get_user_by_nickname(identifier)
-    if user is None:
-        return  None
-    
-    if user.user_status != constants.UserStatus.ACTIVE:
-        return None #no banned/deleted. later add another endpoint for them
+    if user is None or user.user_status != constants.UserStatus.ACTIVE:
+        # Run the same password-verification work as a real account so the
+        # failure timing does not reveal whether the identifier is registered.
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+        return None
 
     # check apssword
     validate_user = verify_password(password, user.password)
@@ -57,7 +63,8 @@ def logout_user(refresh_token_raw: str) -> bool:
     # 1. get session
     hashed_token = hash_token(refresh_token_raw)
     session = operations.get_refresh_session_by_hash_refresh_token(hashed_token)
-    if session is None: return False
+    if session is None:
+        return False
 
     if session.revoked_at is not None:
         return False
@@ -125,6 +132,13 @@ def verify_refresh_session(raw_refresh_token: str) -> RefreshSession | None:
     session = operations.get_refresh_session_by_hash_refresh_token(refresh_hash_token)
     if session is None:
         raise RefreshSessionNotFoundError()
+
+    # Reuse detection: the token matched the previous hash, so it was already
+    # rotated and is being used again. Revoke the whole session family.
+    if session.refresh_token_hash != refresh_hash_token:
+        operations.revoke_refresh_session(session.id, datetime.now(timezone.utc))
+        raise RefreshSessionRevokedError()
+
     if session.revoked_at is not None:
         raise RefreshSessionRevokedError()
     if session.expires_at <= datetime.now(timezone.utc):
@@ -136,7 +150,8 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     now = datetime.now(timezone.utc)
 
     user = operations.get_user(cur_session.user_id)
-    if user is None: return None
+    if user is None:
+        return None
     if user.user_status != constants.UserStatus.ACTIVE:
         return None 
     
@@ -165,6 +180,7 @@ def rotate_refresh_session(cur_session: RefreshSession) -> TokenResponse | None:
     updated_session = operations.rotate_refresh_session(
         cur_session.id,
         current_hash=cur_session.refresh_token_hash,
+        previous_hash=cur_session.refresh_token_hash,
         revoked_at=None,
         expires_at=new_expires_at,
         hash_ref_token=new_refresh_token_hash,

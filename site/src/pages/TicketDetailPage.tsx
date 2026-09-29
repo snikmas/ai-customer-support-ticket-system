@@ -20,6 +20,7 @@ import {
   type Comment,
   type HistoryEvent,
   type Priority,
+  type Role,
   type RoutingCatalog,
   type Ticket,
   type TicketCustomerSummary,
@@ -292,11 +293,7 @@ export function TicketDetailPage() {
     isManager || (isAgent && ticket.assigned_agent_id === identity?.userId);
   const canConfigureRouting =
     isManager && ticket.status === "New" && !ticket.assigned_agent_id;
-  const canComment =
-    !isReadonly &&
-    (isManager ||
-      (isAgent && ticket.assigned_agent_id === identity?.userId) ||
-      (isCustomer && ticket.creator_user_id === identity?.userId));
+  const canComment = computeCanComment(ticket, role, identity?.userId);
   const transitions = allowedTransitions(ticket, role, identity?.userId);
   const latestAnalysis = analyses[0];
 
@@ -885,6 +882,26 @@ export function TicketDetailPage() {
     </>
   );
 }
+
+export function computeCanComment(
+  ticket: Ticket,
+  role: Role | undefined,
+  userId: string | undefined,
+): boolean {
+  const isManager = Boolean(role && MANAGER_ROLES.includes(role));
+  const isAgent = role === "agent";
+  const isReadonly = role === "agent_readonly";
+  const isCustomer = role === "user";
+  return (
+    !isReadonly &&
+    (isManager ||
+      (isAgent &&
+        (ticket.assigned_agent_id === userId ||
+          (ticket.status === "New" && !ticket.assigned_agent_id))) ||
+      (isCustomer && ticket.creator_user_id === userId))
+  );
+}
+
 
 export function allowedTransitions(
   ticket: Ticket,

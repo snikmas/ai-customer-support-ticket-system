@@ -51,6 +51,23 @@ def add_ticket_department_id(engine: Engine) -> None:
         )
 
 
+def add_refresh_session_previous_hash(engine: Engine) -> None:
+    """Add the previous-token hash used for refresh-token reuse detection."""
+    inspector = inspect(engine)
+    if "refresh_sessions" not in inspector.get_table_names():
+        return
+    column_names = {
+        column["name"] for column in inspector.get_columns("refresh_sessions")
+    }
+    if "previous_refresh_token_hash" in column_names:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE refresh_sessions ADD COLUMN previous_refresh_token_hash VARCHAR(255)")
+        )
+
+
 def backfill_legacy_departments(engine: Engine) -> None:
     """Turn old free-form profile department IDs into active catalog rows."""
     inspector = inspect(engine)

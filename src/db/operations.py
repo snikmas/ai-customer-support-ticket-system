@@ -20,7 +20,7 @@ from .models import (
     agent_skills,
     ticket_skills,
 )
-from sqlalchemy import Row, and_, func, or_, select, delete, update
+from sqlalchemy import and_, func, or_, select, update
 from datetime import datetime, timezone
 from src.constants import (
     ActorType,
@@ -189,6 +189,7 @@ def create_refresh_session(old_refresh_session: RefreshSession, event_data: Even
             id=old_refresh_session.id,
             user_id=old_refresh_session.user_id,
             refresh_token_hash=old_refresh_session.refresh_token_hash,
+            previous_refresh_token_hash=old_refresh_session.previous_refresh_token_hash,
             expires_at=old_refresh_session.expires_at,
             revoked_at=old_refresh_session.revoked_at,
             created_at=old_refresh_session.created_at
@@ -205,7 +206,12 @@ def get_refresh_session_by_id(refresh_session_id: str) -> RefreshSession | None:
 
 def get_refresh_session_by_hash_refresh_token(hash_token: str) -> RefreshSession | None:
     with Session(engine) as session:
-        return session.query(RefreshSession).filter_by(refresh_token_hash=hash_token).first()
+        return session.query(RefreshSession).filter(
+            or_(
+                RefreshSession.refresh_token_hash == hash_token,
+                RefreshSession.previous_refresh_token_hash == hash_token,
+            )
+        ).first()
     
 def revoke_refresh_session(session_id: str, revoked_at: datetime | None = None, event_data: Event | None = None) -> bool:
     with Session(engine) as session:
@@ -220,7 +226,7 @@ def revoke_refresh_session(session_id: str, revoked_at: datetime | None = None, 
     
     return True
 
-def rotate_refresh_session(session_id, current_hash, created_at, expires_at, hash_ref_token, revoked_at, event_data: Event | None = None) -> RefreshSession | None:
+def rotate_refresh_session(session_id, current_hash, previous_hash, created_at, expires_at, hash_ref_token, revoked_at, event_data: Event | None = None) -> RefreshSession | None:
     with Session(engine) as session:
         with session.begin():
             result = session.execute(
@@ -233,6 +239,7 @@ def rotate_refresh_session(session_id, current_hash, created_at, expires_at, has
                 )
                 .values(
                     refresh_token_hash=hash_ref_token,
+                    previous_refresh_token_hash=previous_hash,
                     expires_at=expires_at,
                     created_at=created_at,
                     revoked_at=revoked_at,
@@ -823,23 +830,6 @@ def delete_user(id: str, delete_info: dict, event_data: Event | None = None) -> 
 
         return True 
         
-def delete_all_users(event_data: list[Event] | None = None) -> int:
-    with Session(engine) as session:
-        with session.begin():
-            result = session.execute(
-                update(User)
-                .where(User.deleted_at.is_(None))
-                .values(
-                    deleted_at=datetime.now(timezone.utc),
-                    user_status=UserStatus.DELETED
-                )
-            )
-            for event in event_data or []:
-                session.add(_event_from_data(event))
-
-        return result.rowcount
-
-
 # ==============================================================
 # ======================= TICKETS ==============================
 
@@ -1212,7 +1202,8 @@ def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = No
     with Session(engine) as session:
         with session.begin():
             agent = session.get(User, assigned_id)
-            if agent is None: return None
+            if agent is None:
+                return None
 
             now = event_data.created_at if event_data is not None else utc_now()
             ticket_priority = session.scalar(
@@ -1344,7 +1335,8 @@ def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | Non
                 return None
 
             user = session.get(User, assigned_agent_id)
-            if user is None: return None
+            if user is None:
+                return None
 
             old_assignee_id = ticket.assigned_agent_id
             now = event_data.created_at if event_data is not None else utc_now()
@@ -1672,7 +1664,8 @@ def delete_comment_with_event(comment_id: str, delete_info: dict, event_data: Ev
 def create_event(event: Event) -> bool:
     with Session(engine) as session:
         with session.begin():
-            if event is None: return False
+            if event is None:
+                return False
             session.add(_event_from_data(event))
     return True
 

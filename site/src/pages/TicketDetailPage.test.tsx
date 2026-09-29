@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AnalysisResult, Ticket } from "../api/types";
-import { allowedTransitions, AnalysisCard } from "./TicketDetailPage";
+import { allowedTransitions, AnalysisCard, computeCanComment } from "./TicketDetailPage";
 
 const ticket: Ticket = {
   id: "ticket-1",
@@ -42,6 +42,39 @@ const analysis: AnalysisResult = {
   updated_at: "2026-07-24T03:00:00Z",
   status: "pending",
 };
+
+describe("computeCanComment", () => {
+  it("allows an agent to comment on their assigned ticket", () => {
+    expect(computeCanComment(ticket, "agent", "agent-1")).toBe(true);
+  });
+
+  it("allows an agent to comment on an unassigned New ticket", () => {
+    expect(
+      computeCanComment(
+        { ...ticket, status: "New", assigned_agent_id: null },
+        "agent",
+        "agent-1",
+      ),
+    ).toBe(true);
+  });
+
+  it("denies an agent commenting on another agent's active ticket", () => {
+    expect(computeCanComment(ticket, "agent", "other-agent")).toBe(false);
+  });
+
+  it("denies read-only agents entirely", () => {
+    expect(computeCanComment(ticket, "agent_readonly", "agent-1")).toBe(false);
+  });
+
+  it("allows customers to comment on their own ticket", () => {
+    expect(computeCanComment(ticket, "user", "customer-1")).toBe(true);
+  });
+
+  it("denies customers commenting on another user's ticket", () => {
+    expect(computeCanComment(ticket, "user", "another-customer")).toBe(false);
+  });
+});
+
 
 describe("role-aware ticket transitions", () => {
   it("shows normal work transitions only to the assigned agent", () => {

@@ -1,6 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
-from src.constants.enums import Status, Category, Tag, Priority, Role, UserStatus, EventType, Visibility, Source
+from pydantic import BaseModel, ConfigDict
+from src.constants.enums import Visibility, Source
 from .validation import EntityId, LongBody
 
 class Comment(BaseModel):

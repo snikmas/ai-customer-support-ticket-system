@@ -23,17 +23,28 @@ in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
 ## Quick Start (Docker)
 
-The whole stack — PostgreSQL, Redis, migrations, API, worker, cron, and the
-frontend — starts with one project command:
+On a fresh checkout, create the local configuration and an RSA key pair for
+JWT access tokens:
 
 ```bash
-cp .env.example .env   # set POSTGRES_PASSWORD and SUPERADMIN_* values
-./project.sh
+cp .env.example .env
+mkdir -p keys
+umask 077
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/private.pem
+openssl pkey -in keys/private.pem -pubout -out keys/public.pem
 ```
 
-Before the first start, add a private random `REFRESH_TOKEN_SECRET` to `.env`
-(for example, generate one with `openssl rand -hex 32`). Keep it out of Git
-and screenshots.
+Set `POSTGRES_PASSWORD` and the `SUPERADMIN_*` values in `.env`. Also set a
+private random `REFRESH_TOKEN_SECRET`; generate one with `openssl rand -hex 32`.
+Keep `.env` and `keys/private.pem` out of Git and screenshots. If this
+installation used JWT keys before, restore the original pair instead of
+generating a new one. New keys invalidate existing access tokens.
+
+Start PostgreSQL, Redis, migrations, the API, worker, cron, and frontend:
+
+```bash
+./project.sh
+```
 
 Then open `http://localhost:5173` (frontend) or `http://localhost:8000/docs`
 (API docs). The launcher builds the images, starts every service in the

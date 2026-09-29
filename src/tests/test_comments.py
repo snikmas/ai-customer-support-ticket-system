@@ -9,7 +9,7 @@ from main import app
 from src import constants
 from src.db import models as db_models
 from src.db import operations
-from src.exceptions.domain import AlreadyDeletedError, CommentNotFoundError
+from src.exceptions.domain import AlreadyDeletedError, AuthorizationError, CommentNotFoundError
 from src.services import comments as comments_service
 from src.routers import tickets as tickets_router
 
@@ -279,3 +279,84 @@ def test_repeated_comment_delete_is_rejected_before_new_event(monkeypatch, make_
 
     with pytest.raises(AlreadyDeletedError):
         comments_service.delete_comment("ticket-1", "comment-1", requester)
+
+
+def _make_comment(comment_id, ticket_id, author_user_id, visibility):
+    now = datetime.now(timezone.utc)
+    return db_models.Comment(
+        id=comment_id,
+        ticket_id=ticket_id,
+        author_user_id=author_user_id,
+        body="A comment",
+        visibility=visibility,
+        edited_at=None,
+        created_at=now,
+        updated_at=now,
+        deleted_at=None,
+        deleted_by_user_id=None,
+        parent_comment_id=None,
+        attachments_count=0,
+        source=constants.Source.API,
+    )
+
+
+def test_agent_cannot_read_comment_on_ticket_assigned_to_another_agent(monkeypatch, make_user, make_ticket):
+    agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    other_agent = make_user(id="agent-2", role=constants.Role.AGENT)
+    ticket = make_ticket(assigned_agent_id=other_agent.id, status=constants.Status.IN_PROGRESS)
+    comment = _make_comment("comment-1", ticket.id, other_agent.id, constants.Visibility.INTERNAL)
+    monkeypatch.setattr(comments_service.operations, "get_comment", lambda comment_id: comment)
+    monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
+
+    with pytest.raises(AuthorizationError):
+        comments_service.get_comment(ticket.id, comment.id, agent)
+
+
+def test_agent_can_read_comment_on_unassigned_new_ticket(monkeypatch, make_user, make_ticket):
+    agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    ticket = make_ticket(assigned_agent_id=None, status=constants.Status.NEW)
+    comment = _make_comment("comment-1", ticket.id, "user-1", constants.Visibility.INTERNAL)
+    monkeypatch.setattr(comments_service.operations, "get_comment", lambda comment_id: comment)
+    monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
+
+    result = comments_service.get_comment(ticket.id, comment.id, agent)
+
+    assert result.id == comment.id
+
+
+def test_private_to_manager_comment_does_not_notify_assigned_agent(monkeypatch, make_user, make_ticket):
+    manager = make_user(id="manager-1", role=constants.Role.MANAGER)
+    assigned_agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    ticket = make_ticket(assigned_agent_id=assigned_agent.id, status=constants.Status.IN_PROGRESS)
+    monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
+    monkeypatch.setattr(comments_service.operations, "create_comment_with_event", lambda comment, event: comment)
+    emitted = []
+    monkeypatch.setattr(comments_service.s_notifications, "emit", lambda *args, **kwargs: emitted.append((args, kwargs)))
+
+    comment_create = comments_service.api_models.CommentCreate(
+        body="Manager note",
+        visibility=constants.Visibility.PRIVATE_TO_MANAGER,
+    )
+    comments_service.create_ticket_comment(ticket.id, comment_create, manager)
+
+    assert len(emitted) == 0
+
+
+def test_visible_comment_notifies_assigned_agent(monkeypatch, make_user, make_ticket):
+    manager = make_user(id="manager-1", role=constants.Role.MANAGER)
+    assigned_agent = make_user(id="agent-1", role=constants.Role.AGENT)
+    ticket = make_ticket(assigned_agent_id=assigned_agent.id, status=constants.Status.IN_PROGRESS)
+    monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
+    monkeypatch.setattr(comments_service.operations, "create_comment_with_event", lambda comment, event: comment)
+    emitted = []
+    monkeypatch.setattr(comments_service.s_notifications, "emit", lambda *args, **kwargs: emitted.append((args, kwargs)))
+
+    comment_create = comments_service.api_models.CommentCreate(
+        body="Internal note",
+        visibility=constants.Visibility.INTERNAL,
+    )
+    comments_service.create_ticket_comment(ticket.id, comment_create, manager)
+
+    assert len(emitted) == 1
+    assert emitted[0][0][0] == assigned_agent.id
+    assert emitted[0][0][1] == "comment_added"

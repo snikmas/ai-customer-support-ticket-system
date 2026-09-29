@@ -8,9 +8,13 @@ from src import models as api_models
 from src.db import models as db_models
 from src.db import operations
 from src.routers import users as users_router
-from src.exceptions.domain import AuthorizationError
+from src.exceptions.domain import (
+    AuthorizationError,
+    FinalAdminAccessError,
+    LastSuperAdminError,
+    UserAlreadyExistsError,
+)
 from src.services import users as users_service
-from src.exceptions.domain import UserAlreadyExistsError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
@@ -231,22 +235,79 @@ def test_create_user_persists_self_referencing_audit_event(monkeypatch, tmp_path
         assert session.get(db_models.Event, audit_event.id) is not None
 
 
-def test_delete_all_users_is_temporarily_unavailable(monkeypatch, make_user):
+def test_delete_all_users_is_temporarily_unavailable(make_user):
     requester = make_user(role=constants.Role.SUPER_ADMIN)
     app.dependency_overrides[users_router.get_current_user] = lambda: requester
-    service_called = False
-
-    def fake_delete_all_users(_requester):
-        nonlocal service_called
-        service_called = True
-
-    monkeypatch.setattr(users_router.s_users, "delete_all_users", fake_delete_all_users)
 
     response = client.delete("/users/")
 
     assert response.status_code == 503
     assert response.json()["error"]["message"] == "Bulk user deletion is temporarily unavailable"
-    assert service_called is False
+
+
+def test_delete_user_rejects_admin_deleting_super_admin(monkeypatch, make_user):
+    admin = make_user(id="admin", role=constants.Role.ADMIN)
+    target = make_user(id="root", role=constants.Role.SUPER_ADMIN)
+    monkeypatch.setattr(
+        users_service.operations,
+        "get_user",
+        lambda user_id: admin if user_id == admin.id else target,
+    )
+
+    with pytest.raises(AuthorizationError) as exc_info:
+        users_service.delete_user(target.id, admin)
+
+    assert exc_info.value.code == "super_admin_management_forbidden"
+
+
+def test_delete_user_protects_last_active_super_admin(monkeypatch, make_user):
+    requester = make_user(id="root-1", role=constants.Role.SUPER_ADMIN)
+    target = make_user(id="root-2", role=constants.Role.SUPER_ADMIN)
+    monkeypatch.setattr(
+        users_service.operations,
+        "get_user",
+        lambda user_id: requester if user_id == requester.id else target,
+    )
+    monkeypatch.setattr(users_service.operations, "count_active_superadmins", lambda: 1)
+
+    with pytest.raises(LastSuperAdminError):
+        users_service.delete_user(target.id, requester)
+
+
+def test_delete_user_allows_super_admin_when_others_remain(monkeypatch, make_user):
+    requester = make_user(id="root-1", role=constants.Role.SUPER_ADMIN)
+    target = make_user(id="root-2", role=constants.Role.SUPER_ADMIN)
+    monkeypatch.setattr(
+        users_service.operations,
+        "get_user",
+        lambda user_id: requester if user_id == requester.id else target,
+    )
+    monkeypatch.setattr(users_service.operations, "count_active_superadmins", lambda: 2)
+    monkeypatch.setattr(users_service.operations, "delete_user", lambda *_: True)
+
+    users_service.delete_user(target.id, requester)
+
+
+def test_delete_user_protects_final_admin_access_on_self_delete(monkeypatch, make_user):
+    admin = make_user(id="admin", role=constants.Role.ADMIN)
+    monkeypatch.setattr(users_service.operations, "get_user", lambda _: admin)
+    monkeypatch.setattr(users_service.operations, "count_active_administrators", lambda: 1)
+
+    with pytest.raises(FinalAdminAccessError):
+        users_service.delete_user(admin.id, admin)
+
+
+def test_delete_user_allows_ordinary_user_deletion(monkeypatch, make_user):
+    admin = make_user(id="admin", role=constants.Role.ADMIN)
+    target = make_user(id="customer", role=constants.Role.USER)
+    monkeypatch.setattr(
+        users_service.operations,
+        "get_user",
+        lambda user_id: admin if user_id == admin.id else target,
+    )
+    monkeypatch.setattr(users_service.operations, "delete_user", lambda *_: True)
+
+    users_service.delete_user(target.id, admin)
 
 
 def test_concurrent_bootstrap_creates_exactly_one_superadmin(monkeypatch, tmp_path):

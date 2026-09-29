@@ -3,11 +3,16 @@ import subprocess
 import sys
 
 import pytest
+from fastapi.testclient import TestClient
 
+from main import app
 from src import constants
 from src.jobs import service as jobs_service
 from src.jobs import tasks as job_tasks
+from src.routers import jobs as jobs_router
 from src.exceptions import AuthorizationError
+
+client = TestClient(app)
 
 
 @pytest.mark.parametrize(
@@ -127,3 +132,103 @@ def test_worker_task_imports_in_a_fresh_process():
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_get_all_jobs_returns_job_status_responses_for_admin(monkeypatch, make_user):
+    from datetime import datetime, timezone
+    from src.models import JobStatusResponse
+
+    class FakeJob:
+        id = "job-1"
+        func_name = "src.jobs.tasks.analyze_analysis_result"
+        result = {"ticket_id": "ticket-1"}
+        created_at = datetime.now(timezone.utc)
+        enqueued_at = None
+        ended_at = None
+
+        def get_status(self):
+            return "finished"
+
+    class FakeQueue:
+        def get_jobs(self):
+            return [FakeJob()]
+
+    monkeypatch.setattr(jobs_service, "get_ticket_jobs_queue", lambda: FakeQueue())
+
+    response = jobs_service.get_all_jobs(make_user(role=constants.Role.ADMIN))
+
+    assert response is not None
+    assert len(response) == 1
+    assert isinstance(response[0], JobStatusResponse)
+    assert response[0].job_id == "job-1"
+    assert response[0].status == constants.JobStatus.COMPLETED
+    assert response[0].result == {"ticket_id": "ticket-1"}
+
+
+def test_get_all_jobs_rejects_non_admin_before_reading_redis(monkeypatch, make_user):
+    monkeypatch.setattr(
+        jobs_service,
+        "get_ticket_jobs_queue",
+        lambda: pytest.fail("unauthorized users must be rejected before Redis access"),
+    )
+
+    with pytest.raises(AuthorizationError):
+        jobs_service.get_all_jobs(make_user(role=constants.Role.AGENT))
+
+
+def test_get_job_handles_cron_jobs_without_args(monkeypatch, make_user):
+    class FakeCronJob:
+        id = "cron-job-1"
+        args = ()
+        result = {"selected_count": 0}
+        meta = {}
+
+        def get_status(self):
+            return "finished"
+
+    queue = SimpleNamespace(fetch_job=lambda job_id: FakeCronJob() if job_id == FakeCronJob.id else None)
+    monkeypatch.setattr(jobs_service, "get_ticket_jobs_queue", lambda: queue)
+    monkeypatch.setattr(
+        jobs_service,
+        "_get_ticket_for_requester",
+        lambda *_: pytest.fail("cron jobs must not try to authorize a ticket"),
+    )
+
+    response = jobs_service.get_job(FakeCronJob.id, make_user(role=constants.Role.AGENT))
+
+    assert response.job_id == FakeCronJob.id
+    assert response.status == constants.JobStatus.COMPLETED
+    assert response.result == {"selected_count": 0}
+
+
+def test_get_all_jobs_endpoint_returns_valid_response(monkeypatch, make_user):
+    from datetime import datetime, timezone
+
+    class FakeJob:
+        id = "job-1"
+        func_name = "src.jobs.tasks.analyze_analysis_result"
+        result = {"ticket_id": "ticket-1"}
+        created_at = datetime.now(timezone.utc)
+        enqueued_at = None
+        ended_at = None
+
+        def get_status(self):
+            return "finished"
+
+    class FakeQueue:
+        def get_jobs(self):
+            return [FakeJob()]
+
+    monkeypatch.setattr(jobs_service, "get_ticket_jobs_queue", lambda: FakeQueue())
+    app.dependency_overrides[jobs_router.get_current_user] = lambda: make_user(
+        role=constants.Role.ADMIN
+    )
+
+    response = client.get("/jobs/")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["job_id"] == "job-1"
+    assert body[0]["status"] == "completed"
+    assert body[0]["result"] == {"ticket_id": "ticket-1"}

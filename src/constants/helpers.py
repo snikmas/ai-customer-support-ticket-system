@@ -1,16 +1,15 @@
 import logging
 from uuid import uuid4
 from .enums import JobStatus, Priority, Role, Status, Tag
-from src.models.jobs import JobResponse, JobStatusResponse, Job
+from src.models.jobs import JobStatusResponse
 import json
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import asc, desc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def generate_id() -> str:
-    return str(uuid4()) #do we really need this function?
+    return str(uuid4())
 
 COMMENT_BODY_MAX_LENGTH = 32000
 DEFAULT_PAGE_LIMIT = 20
@@ -68,7 +67,7 @@ ROLE_LEVELS = {
     Role.GUEST: 0,          # almost no access
     Role.USER: 1,           # normal client
     Role.AGENT_READONLY: 2, # support viewer/trainee
-    Role.AGENT: 3,          # suppoer worker
+    Role.AGENT: 3,          # support worker
     Role.MANAGER: 4,        # manages support team
     Role.ADMIN: 5,          # manages support/users/settings
     Role.SUPER_ADMIN: 6,    # highest human/admin role
@@ -162,8 +161,10 @@ def _audit_json(data: dict) -> str:
 
 def apply_sort_order(column, sort_order: str):
     match sort_order:
-        case 'desc': return column.desc()
-        case 'asc': return column.asc()
+        case 'desc':
+            return column.desc()
+        case 'asc':
+            return column.asc()
 
 def translate_rq_status(rq_status: str) -> JobStatus:
     status_mapping = {
@@ -181,14 +182,10 @@ def translate_rq_status(rq_status: str) -> JobStatus:
     return status_mapping.get(rq_status, JobStatus.UNKNOWN)
 
 
-def raw_job_to_job_response(raw_job) -> Job:
-    job = Job(
-        id=raw_job.id,
-        func_name=raw_job.func_name,
-        status=raw_job.get_status(),
-        result=raw_job.result,
-        created_at=raw_job.created_at,
-        enqueued_at=raw_job.enqueued_at,
-        ended_at=raw_job.ended_at
+def raw_job_to_job_response(raw_job) -> JobStatusResponse:
+    status = translate_rq_status(raw_job.get_status())
+    return JobStatusResponse(
+        job_id=raw_job.id,
+        status=status,
+        result=raw_job.result if status is JobStatus.COMPLETED else None,
     )
-    return job

@@ -9,7 +9,6 @@ from src.services.auth import (
     rotate_refresh_session,
     verify_refresh_session,
 )
-from datetime import datetime, timezone
 from src.exceptions import (
     InternalOperationError,
     InvalidCredentialsError,
@@ -23,6 +22,18 @@ router = APIRouter(
 )
 
 
+def _get_client_host(request: Request) -> str:
+    # Nginx (the trusted reverse proxy) appends the real client IP to
+    # X-Forwarded-For. Use the rightmost value so rate limits apply per real
+    # client instead of collapsing every request to nginx's container IP.
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[-1].strip()
+    if request.client is not None:
+        return request.client.host
+    return "unknown"
+
+
 @router.post("/login")
 def login(login_request: models.LoginRequest, request: Request) -> models.TokenResponse:
 
@@ -34,7 +45,7 @@ def login(login_request: models.LoginRequest, request: Request) -> models.TokenR
     # Rate-limit key combines the account identifier with the client IP, so an
     # attacker failing logins from their network cannot lock out the
     # legitimate owner signing in from elsewhere.
-    client_host = request.client.host if request.client is not None else "unknown"
+    client_host = _get_client_host(request)
     rate_limit_key = f"{identifier}|{client_host}"
 
     if is_login_limited(rate_limit_key):
@@ -50,14 +61,14 @@ def login(login_request: models.LoginRequest, request: Request) -> models.TokenR
     clear_login_attempts(rate_limit_key)
 
     raw_access_token = security.create_access_token(user)
-    created_refresh_section = create_refresh_session_for_user(user.id)
+    created_refresh_session = create_refresh_session_for_user(user.id)
 
-    if created_refresh_section is None or raw_access_token is None:
+    if created_refresh_session is None or raw_access_token is None:
         raise InternalOperationError("Unable to create login session", code="login_session_creation_failed")
 
     return models.TokenResponse(
         access_token=raw_access_token,
-        refresh_token=created_refresh_section.refresh_token
+        refresh_token=created_refresh_session.refresh_token
     )
 
 

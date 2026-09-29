@@ -41,7 +41,8 @@ def close_redis_client() -> None:
 
 def ping_redis() -> bool:
     client = get_redis_client()
-    if client is None: return False
+    if client is None:
+        return False
 
     try:
         return client.ping()

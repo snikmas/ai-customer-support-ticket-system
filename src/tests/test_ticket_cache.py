@@ -149,6 +149,7 @@ def test_ticket_claim_invalidates_its_cache_entry(monkeypatch, make_user, make_t
     monkeypatch.setattr(ticket_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(ticket_service.operations, "claim_ticket", lambda *_: ticket)
     monkeypatch.setattr(ticket_service, "_require_same_active_department", lambda *_: None)
+    monkeypatch.setattr(ticket_service, "_require_agent_can_take_ticket", lambda *_: None)
     monkeypatch.setattr(
         ticket_service, "delete_cached_ticket", lambda ticket_id: invalidated_ids.append(ticket_id) or True
     )

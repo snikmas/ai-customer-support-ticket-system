@@ -1,7 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, model_validator
 from typing import Any
-from src.constants.enums import ActorType, Status, Category, Tag, Priority, Role, UserStatus, EntityType, EventType
+from src.constants.enums import ActorType, EntityType, EventType
 from .validation import EmailAddress, LoginPassword, Nickname, RefreshToken
 
 
@@ -42,6 +42,7 @@ class RefreshSession(BaseModel):
     id: str
     user_id: str
     refresh_token_hash: str
+    previous_refresh_token_hash: str | None = None
     expires_at: datetime
     revoked_at: datetime | None = None
     created_at: datetime

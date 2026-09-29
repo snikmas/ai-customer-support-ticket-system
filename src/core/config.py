@@ -14,12 +14,7 @@ DATABASE_ECHO = os.getenv("DATABASE_ECHO", "false").strip().lower() in {
     "1", "true", "yes", "on"
 }
 
-DEBUG = None
 LOG_LEVEL = 'INFO'
-
-JWT_SECRET = None
-JWT_ALGORITHM = None
-ACCESS_TOKEN_EXPIRE_MIN = None
 
 REDIS_URL = os.getenv("REDIS_URL")
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").strip().lower() in {

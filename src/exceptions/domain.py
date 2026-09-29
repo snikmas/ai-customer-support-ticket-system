@@ -213,6 +213,18 @@ class InvalidAssigneeError(BadRequestError):
     message = "Invalid assignee"
 
 
+class AgentUnavailableError(ConflictError):
+    status_code = 409  # HTTP 409: agent is not accepting new tickets right now
+    code = "agent_unavailable"
+    message = "The agent is not available for new tickets"
+
+
+class AgentAtCapacityError(ConflictError):
+    status_code = 409  # HTTP 409: agent already has the maximum active tickets
+    code = "agent_at_capacity"
+    message = "The agent has reached the active ticket limit"
+
+
 class CommentNotFoundError(NotFoundError):
     status_code = 404  # HTTP 404: comment id was not found
     code = "comment_not_found"
