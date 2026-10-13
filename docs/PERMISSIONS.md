@@ -18,3 +18,9 @@ Authorization is applied before pagination for ticket and user directory
 queries. A user response never includes password or refresh-session fields.
 The last active Super Admin and an administrator's final administrative access
 are protected by domain conflicts.
+
+Read-only agents (`agent_readonly`) may read the permitted ticket, comment, and
+file subset but never mutate ticket content: they cannot create, edit, or delete
+tickets, comments, or attachments, including on tickets they created themselves.
+This is enforced in the backend write guards and reflected in the hidden controls
+of the staff UI.

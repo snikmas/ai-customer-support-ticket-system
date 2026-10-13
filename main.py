@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi import HTTPException
@@ -6,9 +7,12 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from src.routers import analysis, users, tickets, auth, jobs, routing_catalogs, notifications, ai_settings
-from src.cache import close_redis_client, initialize_redis_client, ping_redis
+from src.cache import close_redis_client, get_redis_client, initialize_redis_client, ping_redis
 from src.core import FRONTEND_ORIGINS, REDIS_ENABLED, setup_logging
+from src.core.logging import request_id_var
+from src.jobs.readiness import collect_readiness
 from src.constants import logger
 from src.db.engine import engine
 from src.db.utils import create_db, ping_database
@@ -56,6 +60,19 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def attach_request_id(request: Request, call_next):
+    """Give every request a correlation ID used by all subsequent log lines."""
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    token = request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(token)
+    response.headers["X-Request-Id"] = request_id
+    return response
+
+
 @app.exception_handler(AppException)
 async def handle_app_exception(request: Request, exc: AppException):
     return JSONResponse(
@@ -71,7 +88,8 @@ async def handle_app_exception(request: Request, exc: AppException):
 
 
 @app.exception_handler(HTTPException)
-async def handle_http_exception(request: Request, exc: HTTPException):
+@app.exception_handler(StarletteHTTPException)
+async def handle_http_exception(request: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -92,7 +110,10 @@ async def handle_validation_exception(request: Request, exc: RequestValidationEr
             "error": {
                 "code": "validation_error",
                 "message": "Invalid request data",
-                "details": jsonable_encoder(exc.errors()),
+                "details": jsonable_encoder([
+                    {key: value for key, value in error.items() if key not in {"input", "ctx"}}
+                    for error in exc.errors()
+                ]),
             }
         },
     )
@@ -150,3 +171,36 @@ def health():
         },
     }
     return JSONResponse(status_code=200 if healthy else 503, content=content)
+
+
+@app.get("/health/ready")
+def readiness():
+    """Background-work readiness, kept separate from API liveness.
+
+    ``/health`` only says the API and its data stores are reachable. This
+    endpoint additionally requires a fresh worker heartbeat, worker
+    subscriptions to every expected queue, and fresh scheduler/cron activity.
+    """
+    database_available = ping_database()
+    redis_available = ping_redis() if REDIS_ENABLED else False
+    try:
+        report = collect_readiness(
+            database_ok=database_available,
+            redis_enabled=REDIS_ENABLED,
+            redis_ok=redis_available,
+            connection=get_redis_client() if REDIS_ENABLED else None,
+        )
+    except Exception:  # noqa: BLE001 - readiness must degrade, never raise
+        logger.exception("Readiness check failed")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "ready": False, "checks": {}},
+        )
+    return JSONResponse(
+        status_code=200 if report.ready else 503,
+        content={
+            "status": "ready" if report.ready else "not_ready",
+            "ready": report.ready,
+            "checks": report.checks,
+        },
+    )

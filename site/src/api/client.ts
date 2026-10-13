@@ -1,4 +1,9 @@
-import { clearTokens, readTokens, writeTokens } from "../auth/session";
+import {
+  clearTokens,
+  currentSessionGeneration,
+  readTokens,
+  writeTokens,
+} from "../auth/session";
 import type { ApiErrorBody, Tokens } from "./types";
 
 export const API_BASE_URL = (
@@ -18,6 +23,12 @@ export class ApiError extends Error {
 }
 
 let refreshInFlight: Promise<Tokens> | null = null;
+
+// Called by login/logout so a refresh that started under a previous session
+// cannot be awaited by a newly signed-in session.
+export function resetRefreshState(): void {
+  refreshInFlight = null;
+}
 
 async function parseError(response: Response): Promise<ApiError> {
   let body: ApiErrorBody = {};
@@ -39,27 +50,46 @@ async function refreshSession(): Promise<Tokens> {
   const tokens = readTokens();
   if (!tokens) throw new ApiError("Your session has expired", 401, "session_missing");
 
-  refreshInFlight = fetch(`${API_BASE_URL}/auth/refresh`, {
+  const generation = currentSessionGeneration();
+  const refreshToken = tokens.refresh_token;
+
+  const pending = fetch(`${API_BASE_URL}/auth/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+    body: JSON.stringify({ refresh_token: refreshToken }),
   })
     .then(async (response) => {
       if (!response.ok) throw await parseError(response);
       const next = (await response.json()) as Tokens;
+      if (
+        generation !== currentSessionGeneration() ||
+        readTokens()?.refresh_token !== refreshToken
+      ) {
+        // A logout or a later login replaced the session while this refresh
+        // was in flight. Never restore the superseded tokens.
+        throw new ApiError(
+          "Your session changed while it was being refreshed",
+          401,
+          "session_superseded",
+        );
+      }
       writeTokens(next);
+      window.dispatchEvent(new Event("resolveai:session-refreshed"));
       return next;
     })
     .catch((error) => {
-      clearTokens();
-      window.dispatchEvent(new Event("resolveai:session-expired"));
+      if (generation === currentSessionGeneration()) {
+        clearTokens();
+        window.dispatchEvent(new Event("resolveai:session-expired"));
+      }
       throw error;
     })
     .finally(() => {
-      refreshInFlight = null;
+      if (refreshInFlight === pending) refreshInFlight = null;
     });
 
-  return refreshInFlight;
+  refreshInFlight = pending;
+  return pending;
 }
 
 interface RequestOptions extends Omit<RequestInit, "body"> {
@@ -113,12 +143,16 @@ export async function apiRequest<T>(
   return payload as T;
 }
 
-export async function downloadFile(path: string): Promise<Blob> {
+export async function downloadFile(path: string, retryUnauthorized = true): Promise<Blob> {
   const tokens = readTokens();
   if (!tokens) throw new ApiError("Please sign in", 401, "session_missing");
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
   });
+  if (response.status === 401 && retryUnauthorized) {
+    await refreshSession();
+    return downloadFile(path, false);
+  }
   if (!response.ok) throw await parseError(response);
   return response.blob();
 }

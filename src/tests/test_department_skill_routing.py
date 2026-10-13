@@ -192,3 +192,26 @@ def test_other_department_is_never_used_as_fallback(monkeypatch, tmp_path):
     result = operations.try_route_ticket("ticket")
     assert result.outcome is constants.TicketRoutingOutcome.NO_ELIGIBLE_AGENT
     assert result.assigned_agent_id is None
+
+
+def test_claim_rechecks_capacity_inside_write_transaction(monkeypatch, tmp_path):
+    import pytest
+    from src.exceptions.domain import AgentAtCapacityError
+    engine = _seed(monkeypatch, tmp_path, [("agent", "support", [])], [])
+    with Session(engine) as session, session.begin():
+        session.get(db_models.AgentProfile, "agent").max_active_tickets = 0
+    with pytest.raises(AgentAtCapacityError):
+        operations.claim_ticket("ticket", "agent")
+
+
+def test_priority_sort_uses_urgency_not_database_enum_order(monkeypatch, tmp_path):
+    engine = _seed(monkeypatch, tmp_path, [("agent", "support", [])], [])
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session, session.begin():
+        session.get(db_models.Ticket, "ticket").priority = constants.Priority.NORMAL
+        for priority in (constants.Priority.LOW, constants.Priority.HIGH, constants.Priority.CRITICAL):
+            ticket = _ticket(priority.name, now, "support", [])
+            ticket.priority = priority
+            session.add(ticket)
+    result = operations.get_tickets(sort_by="priority", sort_order="desc", requester_role=constants.Role.ADMIN)
+    assert [ticket.priority.value for ticket in result] == [4, 3, 2, 1]

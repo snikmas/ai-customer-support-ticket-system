@@ -32,7 +32,7 @@ def test_local_storage_rejects_path_traversal(tmp_path):
 async def test_upload_uses_generated_key_and_received_size(monkeypatch, make_user):
     requester = make_user(id="agent-1", role=constants.Role.AGENT)
     ticket = SimpleNamespace(id="ticket-1", deleted_at=None)
-    comment = SimpleNamespace(id="comment-1", deleted_at=None)
+    comment = SimpleNamespace(id="comment-1", deleted_at=None, author_user_id="agent-1")
     saved = {}
     datetime.now(timezone.utc)
 
@@ -46,8 +46,8 @@ async def test_upload_uses_generated_key_and_received_size(monkeypatch, make_use
     )
     monkeypatch.setattr(
         attachments.operations,
-        "create_attachment",
-        lambda attachment, event: attachment,
+        "create_attachment_guarded",
+        lambda attachment, event, **_: attachment,
     )
 
     result = await attachments.upload_attachment(
@@ -68,7 +68,7 @@ async def test_upload_uses_generated_key_and_received_size(monkeypatch, make_use
 async def test_upload_rejects_disallowed_type_before_persistence(monkeypatch, make_user):
     requester = make_user(id="agent-1", role=constants.Role.AGENT)
     monkeypatch.setattr(tickets_service, "get_ticket", lambda *_: SimpleNamespace(deleted_at=None))
-    monkeypatch.setattr(comments_service, "get_comment", lambda *_: SimpleNamespace(deleted_at=None))
+    monkeypatch.setattr(comments_service, "get_comment", lambda *_: SimpleNamespace(deleted_at=None, author_user_id="agent-1"))
     monkeypatch.setattr(attachments.operations, "count_comment_attachments", lambda *_: 0)
 
     with pytest.raises(AttachmentValidationError) as exc_info:
@@ -80,3 +80,14 @@ async def test_upload_rejects_disallowed_type_before_persistence(monkeypatch, ma
         )
 
     assert exc_info.value.code == "attachment_type_not_allowed"
+
+
+@pytest.mark.anyio
+async def test_readonly_agent_cannot_upload(monkeypatch, make_user):
+    from src.exceptions.domain import AuthorizationError
+    requester = make_user(role=constants.Role.AGENT_READONLY)
+    monkeypatch.setattr(tickets_service, "get_ticket", lambda *_: SimpleNamespace(deleted_at=None))
+    monkeypatch.setattr(comments_service, "get_comment", lambda *_: SimpleNamespace(deleted_at=None))
+    monkeypatch.setattr(attachments.operations, "count_comment_attachments", lambda *_: pytest.fail("must reject before upload"))
+    with pytest.raises(AuthorizationError):
+        await attachments.upload_attachment("ticket", "comment", FakeUpload("test.txt", "text/plain", b"hello"), requester)

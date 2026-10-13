@@ -69,3 +69,28 @@ def test_unexpected_exception_returns_safe_500(monkeypatch, make_user):
     assert body["error"]["code"] == "internal_server_error"
     # Low-level details are logged, never returned to clients.
     assert "sensitive internal detail" not in response.text
+
+
+def test_unknown_route_uses_shared_envelope():
+    response = client.get("/this-route-does-not-exist")
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["error"]["code"] == "http_404"
+    assert body["error"]["message"]
+    # The framework's raw payload and internals must not leak.
+    assert "detail" not in body
+    assert "starlette" not in response.text.lower()
+    assert "traceback" not in response.text.lower()
+
+
+def test_unsupported_method_uses_shared_envelope_and_preserves_allow_header():
+    response = client.delete("/health")
+
+    assert response.status_code == 405
+    # Starlette sets the Allow header on 405; the envelope must keep it.
+    assert response.headers["allow"] == "GET"
+    body = response.json()
+    assert body["error"]["code"] == "http_405"
+    assert body["error"]["message"]
+    assert "detail" not in body

@@ -16,6 +16,12 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Append-only persistence for the local demo. Durability of queued work is
+    # still best-effort: SQL is the source of truth and the Phase E reconciler
+    # re-dispatches work whose Redis job was lost. See docs/OPERATIONS.md.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -51,7 +57,10 @@ services:
       - ./keys:/app/keys:ro
       - attachments:/app/uploads
     ports:
-      - "8000:8000"
+      # Loopback by default. The demo must not be reachable from other hosts
+      # until the separate public-hosting gates (TLS, proxy trust, abuse
+      # controls) pass. See docs/OPERATIONS.md.
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -68,7 +77,7 @@ services:
 
   worker:
     build: .
-    command: ["rq", "worker", "ticket_routing", "ticket_jobs", "--url", "redis://redis:6379/0"]
+    command: ["rq", "worker", "ticket_jobs", "ticket_routing", "--with-scheduler", "--url", "redis://redis:6379/0"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:?}@db:5432/tickets
@@ -102,7 +111,7 @@ services:
       args:
         VITE_API_BASE_URL: /api
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     depends_on:
       api:
         condition: service_started
@@ -111,3 +120,4 @@ services:
 volumes:
   pgdata:
   attachments:
+  redisdata:

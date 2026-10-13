@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
 from src import models, constants
+from src.exceptions.domain import AuthorizationError
 from src.services import attachments as s_attachments
 from src.services import tickets as s_tickets, comments as s_comments
 from src.services import analysis_results as s_analysis_results
+from src.services.permissions import can_write_ticket_content
 from src.dependencies.auth import get_current_user
 from typing import Literal
 
@@ -11,6 +13,18 @@ router = APIRouter(
     prefix="/tickets",
     tags=["tickets"]
 )
+
+
+def require_content_writer(requester: models.User = Depends(get_current_user)) -> models.User:
+    """Reject read-only/guest roles before any whole-ticket mutation.
+
+    Comment and attachment writes are gated in their services; ticket creation
+    and deletion are gated here because a read-only user may otherwise be the
+    original creator of the ticket and pass the ownership check.
+    """
+    if not can_write_ticket_content(requester.role):
+        raise AuthorizationError(code="read_only_role_cannot_write")
+    return requester
 
 # This router intentionally uses normal `def` handlers because SQLAlchemy,
 # Redis, and RQ are synchronous in the current stack. A later end-to-end async
@@ -69,7 +83,7 @@ def get_ticket_customer(
 
 
 @router.post("/", status_code=201)
-def create_ticket(cur_ticket: models.TicketCreate, requester = Depends(get_current_user)):
+def create_ticket(cur_ticket: models.TicketCreate, requester = Depends(require_content_writer)):
     
     ticket = s_tickets.create_ticket(cur_ticket, requester)
     
@@ -84,7 +98,7 @@ def update_ticket(ticket_id: str, new_info: models.TicketUpdate, requester = Dep
 
     
 @router.delete("/{id}", status_code=200)
-def delete_ticket(id: str, requester = Depends(get_current_user)):
+def delete_ticket(id: str, requester = Depends(require_content_writer)):
 
     data = s_tickets.delete_ticket(id, requester)
     return {'data': data}

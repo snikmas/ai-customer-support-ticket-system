@@ -63,6 +63,13 @@ class UserUpdate(BaseModel):
     email: EmailAddress | None = None
     user_status: UserStatus | None = None
 
+    @field_validator("nickname", "first_name", "last_name", "password", "role", "phone", "email", "user_status")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("user_field_cannot_be_null")
+        return value
+
 class UserResponse(BaseModel):
     id: str
     nickname: str
@@ -105,6 +112,13 @@ class AgentAvailabilityUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=200)
     unavailable_until: datetime | None = None
 
+    @field_validator("unavailable_until")
+    @classmethod
+    def require_timezone(cls, value):
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("unavailable_until_requires_timezone")
+        return value
+
 
 class AgentProfileManagementUpdate(BaseModel):
     """Routing settings reserved for managers and administrators."""
@@ -114,6 +128,13 @@ class AgentProfileManagementUpdate(BaseModel):
     max_active_tickets: int | None = Field(default=None, ge=0, le=100)
     department_id: EntityId | None = None
     skill_ids: list[EntityId] | None = Field(default=None, max_length=50)
+
+    @field_validator("max_active_tickets", "department_id", "skill_ids")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("agent_profile_field_cannot_be_null")
+        return value
 
     @field_validator("skill_ids")
     @classmethod
@@ -137,3 +158,22 @@ class AgentProfileResponse(BaseModel):
     can_receive_new_tickets: bool
     created_at: datetime
     updated_at: datetime
+
+
+class AssignmentCandidate(BaseModel):
+    """A live agent already eligible for manual assignment.
+
+    Only managers and administrators may request this list. Every returned
+    agent is an active member of a live department with availability AVAILABLE
+    and spare capacity in the same department as the target ticket.
+    """
+
+    user_id: str
+    nickname: str
+    first_name: str
+    last_name: str
+    department_id: str | None = None
+    availability_status: AvailabilityStatus
+    current_active_tickets: int
+    max_active_tickets: int
+    can_receive_new_tickets: bool

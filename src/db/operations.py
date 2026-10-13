@@ -20,10 +20,11 @@ from .models import (
     agent_skills,
     ticket_skills,
 )
-from sqlalchemy import and_, func, or_, select, update
-from datetime import datetime, timezone
+from sqlalchemy import and_, case, func, or_, select, update
+from datetime import datetime, timedelta, timezone
 from src.constants import (
     ActorType,
+    ANALYSIS_EXECUTION_LEASE_SECONDS,
     AnalysisStatus,
     AvailabilityStatus,
     EntityType,
@@ -31,6 +32,7 @@ from src.constants import (
     Role,
     StartWorkOutcome,
     Status,
+    TICKET_ASSIGNABLE_STATUSES,
     TicketRoutingOutcome,
     Visibility,
     calculate_sla_due_at,
@@ -43,7 +45,19 @@ from src.constants import (
     generate_id,
     Priority,
 )
-from src.exceptions.domain import AgentHasActiveTicketsError, AgentProfileNotFoundError
+from src.exceptions.domain import (
+    AgentAtCapacityError,
+    AgentHasActiveTicketsError,
+    AgentProfileNotFoundError,
+    AgentUnavailableError,
+    AttachmentValidationError,
+    FinalAdminAccessError,
+    InactiveRoutingCatalogError,
+    InvalidAssigneeError,
+    LastSuperAdminError,
+    TicketDeletedError,
+    TicketStatusConflictError,
+)
 
 
 ACTIVE_TICKET_STATUSES = (
@@ -53,6 +67,23 @@ ACTIVE_TICKET_STATUSES = (
     Status.ON_HOLD,
     Status.REOPENED,
 )
+
+
+# Ticket-mutation lock order (must stay consistent across claim / routing /
+# start-work / update / assign):
+#
+#     Ticket  ->  Department  ->  AgentProfile
+#
+# The ticket row is always the first row locked, so two writers that touch the
+# same ticket serialize before either reads shared state. A department lock then
+# serializes automatic/manual assignment decisions for one queue, and the
+# AgentProfile lock is taken last so workload/eligibility reads cannot interleave
+# with a competing assignment. Never take these locks in the reverse order:
+# doing so can deadlock two writers that touch the same ticket and department.
+#
+# PostgreSQL relies on SELECT ... FOR UPDATE. SQLite ignores row locks, so the
+# write transaction first runs "BEGIN IMMEDIATE" to acquire the database write
+# lock before any read; this gives SQLite the same single-writer boundary.
 
 
 @dataclass(frozen=True)
@@ -72,6 +103,167 @@ class StartWorkResult:
 class AnalysisReservation:
     result: AnalysisResult
     created: bool
+
+
+@dataclass(frozen=True)
+class TicketAccessState:
+    creator_user_id: str
+    assigned_agent_id: str | None
+    status: Status
+    deleted_at: datetime | None
+
+
+def get_ticket_access_state(ticket_id: str) -> TicketAccessState | None:
+    """Read authorization fields from SQL even when ticket content is cached."""
+    with Session(engine) as session:
+        row = session.execute(select(
+            Ticket.creator_user_id, Ticket.assigned_agent_id,
+            Ticket.status, Ticket.deleted_at,
+        ).where(Ticket.id == ticket_id)).first()
+        return TicketAccessState(*row) if row is not None else None
+
+
+@dataclass(frozen=True)
+class TicketMutationGuard:
+    """Snapshot of the state a service decision depended on.
+
+    A caller that read a ticket and authorized a mutation passes the fields it
+    based that decision on. The mutation transaction re-reads the locked row and
+    rejects the write with a conflict when any guarded field has changed, so a
+    stale writer cannot overwrite a concurrent reassignment, status change, or
+    deletion.
+    """
+
+    assigned_agent_id: str | None
+    status: Status
+    department_id: str | None
+    deleted_at: datetime | None
+
+
+@dataclass(frozen=True)
+class UserLifecycleGuards:
+    """Count-based protections enforced in the same transaction as the write.
+
+    ``protect_last_super_admin`` is set by every path that can remove an active
+    Super Admin. ``protect_final_admin_access`` is set only when the acting user
+    changes their own administrative access, matching the rule that an
+    administrator may not strand an installation without any administrator.
+
+    The decision spans several user rows, so a per-target row lock cannot make
+    it safe. Both flags are re-checked after the shared lifecycle lock below is
+    held, never from a value read before the transaction began.
+    """
+
+    protect_last_super_admin: bool = False
+    protect_final_admin_access: bool = False
+
+
+def _require_sqlite_write_lock(session: Session) -> None:
+    """Acquire SQLite's write lock before reading (no effective row locks)."""
+    if session.get_bind().dialect.name == "sqlite":
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+
+# One fixed lock key serializes every user-lifecycle mutation whose decision
+# spans several user rows (the last active Super Admin, final administrative
+# access) and the role/profile transition itself. SQLite already has a single
+# writer boundary in BEGIN IMMEDIATE; PostgreSQL gets the same boundary from a
+# transaction-level advisory lock that is released automatically on
+# commit/rollback. Never gate this on a value read before the lock is held.
+_USER_LIFECYCLE_LOCK_KEY = 0x75736572  # arbitrary fixed key
+
+
+def _acquire_user_lifecycle_lock(session: Session) -> None:
+    if session.get_bind().dialect.name == "sqlite":
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    else:
+        session.connection().exec_driver_sql(
+            f"SELECT pg_advisory_xact_lock({_USER_LIFECYCLE_LOCK_KEY})"
+        )
+
+
+def _lock_ticket_row(session: Session, ticket_id: str) -> Ticket | None:
+    return session.scalar(
+        select(Ticket).where(Ticket.id == ticket_id).with_for_update()
+    )
+
+
+def _require_expected_ticket_state(
+    ticket: Ticket,
+    expected: TicketMutationGuard,
+) -> None:
+    if (
+        ticket.assigned_agent_id != expected.assigned_agent_id
+        or ticket.status != expected.status
+        or ticket.department_id != expected.department_id
+        or ticket.deleted_at != expected.deleted_at
+    ):
+        raise TicketStatusConflictError(
+            "Ticket changed since it was read",
+            code="ticket_state_conflict",
+        )
+
+
+def _lock_department(session: Session, department_id: str | None) -> None:
+    if department_id is None:
+        return
+    session.execute(
+        select(Department.id)
+        .where(Department.id == department_id)
+        .with_for_update()
+    )
+
+
+def _lock_and_validate_department(
+    session: Session,
+    department_id: str | None,
+) -> None:
+    _lock_department(session, department_id)
+    if department_id is None:
+        return
+    department = session.get(Department, department_id)
+    if department is None or department.deleted_at is not None:
+        raise InactiveRoutingCatalogError(
+            "Ticket department is missing or archived"
+        )
+
+
+def _lock_and_validate_assignee(
+    session: Session,
+    department_id: str | None,
+    agent_id: str | None,
+) -> None:
+    """Lock and validate a receiving agent against the destination department.
+
+    Follows the documented lock order: the ticket row is already locked, the
+    department is locked next, and the agent profile last. A department is only
+    compared when the ticket has one, which keeps direct database callers that
+    seed a ticket without routing metadata working.
+    """
+    _lock_department(session, department_id)
+    profile = session.scalar(
+        select(AgentProfile)
+        .where(AgentProfile.user_id == agent_id)
+        .with_for_update()
+    )
+    agent = session.get(User, agent_id)
+    if (
+        agent is None
+        or agent.role != Role.AGENT
+        or agent.user_status != UserStatus.ACTIVE
+        or agent.deleted_at is not None
+        or profile is None
+        or profile.availability_status != AvailabilityStatus.AVAILABLE
+    ):
+        raise InvalidAssigneeError()
+    if department_id is not None:
+        department = session.get(Department, department_id)
+        if (
+            department is None
+            or department.deleted_at is not None
+            or profile.department_id != department_id
+        ):
+            raise InvalidAssigneeError(code="assignee_department_mismatch")
 
 
 def _new_global_ai_setting(now: datetime) -> AISetting:
@@ -350,26 +542,34 @@ def get_active_user_ids_by_roles(roles: set[Role]) -> list[str]:
         ).all())
 
 
+def _count_active_superadmins(session: Session) -> int:
+    return session.scalar(
+        select(func.count(User.id)).where(
+            User.role == Role.SUPER_ADMIN,
+            User.user_status == UserStatus.ACTIVE,
+            User.deleted_at.is_(None),
+        )
+    ) or 0
+
+
+def _count_active_administrators(session: Session) -> int:
+    return session.scalar(
+        select(func.count(User.id)).where(
+            User.role.in_((Role.ADMIN, Role.SUPER_ADMIN)),
+            User.user_status == UserStatus.ACTIVE,
+            User.deleted_at.is_(None),
+        )
+    ) or 0
+
+
 def count_active_superadmins() -> int:
     with Session(engine) as session:
-        return session.scalar(
-            select(func.count(User.id)).where(
-                User.role == Role.SUPER_ADMIN,
-                User.user_status == UserStatus.ACTIVE,
-                User.deleted_at.is_(None),
-            )
-        ) or 0
+        return _count_active_superadmins(session)
 
 
 def count_active_administrators() -> int:
     with Session(engine) as session:
-        return session.scalar(
-            select(func.count(User.id)).where(
-                User.role.in_((Role.ADMIN, Role.SUPER_ADMIN)),
-                User.user_status == UserStatus.ACTIVE,
-                User.deleted_at.is_(None),
-            )
-        ) or 0
+        return _count_active_administrators(session)
 
 
 def create_notification(
@@ -662,6 +862,73 @@ def get_least_loaded_eligible_agent(ticket_id: str) -> User | None:
         return _get_least_loaded_eligible_agent(session, ticket)
 
 
+def get_assignment_candidates(
+    department_id: str | None = None,
+    *,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[tuple[User, AgentProfile, int]]:
+    """Agents a manager may manually assign, with their current workload.
+
+    Manual assignment requires a live (AVAILABLE) agent in a live department.
+    Capacity is deliberately NOT a filter here: the accepted policy lets a
+    manager override capacity with an explicit assignment, so at-capacity
+    agents remain selectable. Automatic routing still enforces capacity.
+    The department filter is optional so administrators can still page through
+    candidates when triaging before routing.
+    """
+
+    active_ticket_count = (
+        select(func.count(Ticket.id))
+        .where(
+            Ticket.assigned_agent_id == User.id,
+            Ticket.deleted_at.is_(None),
+            Ticket.status.in_(ACTIVE_TICKET_STATUSES),
+        )
+        .correlate(User)
+        .scalar_subquery()
+    )
+    statement = (
+        select(User, AgentProfile, active_ticket_count)
+        .join(AgentProfile, AgentProfile.user_id == User.id)
+        .join(Department, Department.id == AgentProfile.department_id)
+        .where(
+            User.role == Role.AGENT,
+            User.user_status == UserStatus.ACTIVE,
+            User.deleted_at.is_(None),
+            AgentProfile.availability_status == AvailabilityStatus.AVAILABLE,
+            Department.deleted_at.is_(None),
+        )
+    )
+    if department_id is not None:
+        statement = statement.where(AgentProfile.department_id == department_id)
+    if search and search.strip():
+        pattern = f"%{search.strip()}%"
+        statement = statement.where(
+            or_(
+                User.nickname.ilike(pattern),
+                User.first_name.ilike(pattern),
+                User.last_name.ilike(pattern),
+                User.email.ilike(pattern),
+            )
+        )
+    statement = (
+        statement.order_by(
+            active_ticket_count.asc(),
+            AgentProfile.last_assigned_at.asc().nulls_first(),
+            User.id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    with Session(engine) as session:
+        return [
+            (user, profile, workload)
+            for user, profile, workload in session.execute(statement).all()
+        ]
+
+
 def update_agent_profile(
     user_id: str,
     new_info: dict,
@@ -701,19 +968,39 @@ def _count_active_assigned_tickets(session: Session, agent_user_id: str) -> int:
     return session.scalar(statement) or 0
 
 
-def _apply_agent_role_lifecycle(
+def _lock_agent_profile(session: Session, user_id: str) -> AgentProfile | None:
+    """Lock the AgentProfile row following the Department -> AgentProfile order.
+
+    The department is locked first so this never inverts the ticket-mutation
+    lock order. SQLite ignores row locks but the surrounding transaction has
+    already taken BEGIN IMMEDIATE, which gives the same single-writer boundary.
+    """
+    profile = session.get(AgentProfile, user_id)
+    if profile is not None:
+        _lock_department(session, profile.department_id)
+    return session.scalar(
+        select(AgentProfile)
+        .where(AgentProfile.user_id == user_id)
+        .with_for_update()
+    )
+
+
+def _ensure_non_routing_agent_profile(
     session: Session,
-    user: User,
-    new_role: Role,
+    user_id: str,
     now: datetime,
 ) -> None:
-    old_role = user.role
+    """Create or repair exactly one AgentProfile that cannot receive work yet.
 
-    if old_role == Role.USER and new_role == Role.AGENT:
-        profile = session.get(AgentProfile, user.id)
-        if profile is None:
-            profile = AgentProfile(
-                user_id=user.id,
+    A freshly promoted agent is OFFLINE with no department and zero capacity
+    until a manager configures it, so routing can never select an unconfigured
+    profile.
+    """
+    profile = session.get(AgentProfile, user_id)
+    if profile is None:
+        session.add(
+            AgentProfile(
+                user_id=user_id,
                 availability_status=AvailabilityStatus.OFFLINE,
                 availability_reason="profile_setup_required",
                 availability_note=None,
@@ -724,24 +1011,56 @@ def _apply_agent_role_lifecycle(
                 created_at=now,
                 updated_at=now,
             )
-            session.add(profile)
-        else:
-            profile.availability_status = AvailabilityStatus.OFFLINE
-            profile.availability_reason = "profile_setup_required"
-            profile.updated_at = now
+        )
+        return
+    profile.availability_status = AvailabilityStatus.OFFLINE
+    profile.availability_reason = "profile_setup_required"
+    profile.availability_note = None
+    profile.unavailable_until = None
+    profile.max_active_tickets = 0
+    profile.department_id = None
+    profile.updated_at = now
 
-    if old_role == Role.AGENT and new_role == Role.MANAGER:
+
+def _apply_agent_role_lifecycle(
+    session: Session,
+    user: User,
+    new_role: Role,
+    new_status: UserStatus,
+    new_deleted: datetime | None,
+    now: datetime,
+) -> None:
+    """Keep the AgentProfile consistent with every role/status change.
+
+    Leaving the Agent role (or becoming inactive/deleted) is rejected while the
+    user still owns active tickets, and the profile is taken offline. Entering
+    the Agent role creates or repairs a safe non-routing profile. The profile
+    row is locked before the workload count so a concurrent router cannot slip
+    an assignment between the check and the role write.
+    """
+    old_role = user.role
+
+    leaves_agent = old_role is Role.AGENT and (
+        new_role is not Role.AGENT
+        or new_status is not UserStatus.ACTIVE
+        or new_deleted is not None
+    )
+    if leaves_agent:
+        profile = _lock_agent_profile(session, user.id)
         active_ticket_count = _count_active_assigned_tickets(session, user.id)
         if active_ticket_count:
             raise AgentHasActiveTicketsError(active_ticket_count)
-
-        profile = session.get(AgentProfile, user.id)
+        reason = (
+            "role_changed_to_manager"
+            if new_role is Role.MANAGER
+            else "role_changed"
+        )
         if profile is None:
             # Supports agents created before AgentProfile existed.
             profile = AgentProfile(
                 user_id=user.id,
                 availability_status=AvailabilityStatus.OFFLINE,
-                availability_reason="role_changed_to_manager",
+                availability_reason=reason,
                 availability_note=None,
                 unavailable_until=None,
                 max_active_tickets=0,
@@ -753,22 +1072,113 @@ def _apply_agent_role_lifecycle(
             session.add(profile)
         else:
             profile.availability_status = AvailabilityStatus.OFFLINE
-            profile.availability_reason = "role_changed_to_manager"
+            profile.availability_reason = reason
             profile.unavailable_until = None
             profile.updated_at = now
+        return
 
-def update_user(id: str, new_info: dict, event_data: Event | None = None) -> User | None:
+    if old_role is not Role.AGENT and new_role is Role.AGENT:
+        _ensure_non_routing_agent_profile(session, user.id, now)
+
+
+def _enforce_user_lifecycle_guards(
+    session: Session,
+    user: User,
+    *,
+    new_role: Role,
+    new_status: UserStatus,
+    new_deleted: datetime | None,
+    guards: UserLifecycleGuards | None,
+) -> None:
+    """Re-check the count-based protections under the shared lifecycle lock."""
+    if guards is None:
+        return
+
+    removes_super_admin = user.role is Role.SUPER_ADMIN and (
+        new_role is not Role.SUPER_ADMIN
+        or new_status is not UserStatus.ACTIVE
+        or new_deleted is not None
+    )
+    if (
+        removes_super_admin
+        and guards.protect_last_super_admin
+        and _count_active_superadmins(session) <= 1
+    ):
+        raise LastSuperAdminError()
+
+    removes_admin_access = user.role in {Role.ADMIN, Role.SUPER_ADMIN} and (
+        new_role not in {Role.ADMIN, Role.SUPER_ADMIN}
+        or new_status is not UserStatus.ACTIVE
+        or new_deleted is not None
+    )
+    if (
+        removes_admin_access
+        and guards.protect_final_admin_access
+        and _count_active_administrators(session) <= 1
+    ):
+        raise FinalAdminAccessError()
+
+
+def _revoke_all_user_refresh_sessions(
+    session: Session,
+    user_id: str,
+    revoked_at: datetime,
+) -> None:
+    """Revoke every live refresh session for a user in the caller's transaction.
+
+    The conditional UPDATE races safely with refresh rotation: whichever writer
+    reaches the row first wins, and a rotation that commits first is still
+    revoked because it leaves ``revoked_at`` NULL until then.
+    """
+    session.execute(
+        update(RefreshSession)
+        .where(
+            RefreshSession.user_id == user_id,
+            RefreshSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=revoked_at)
+    )
+
+
+def update_user(
+    id: str,
+    new_info: dict,
+    event_data: Event | None = None,
+    guards: UserLifecycleGuards | None = None,
+    revoke_refresh_sessions: bool = False,
+) -> User | None:
     with Session(engine) as session:
         with session.begin():
-            user = session.get(User, id)
+            _acquire_user_lifecycle_lock(session)
 
+            user = session.get(User, id)
             if user is None:
                 return None
 
             now = datetime.now(timezone.utc)
-            new_role = new_info.get("role")
-            if new_role is not None and new_role != user.role:
-                _apply_agent_role_lifecycle(session, user, new_role, now)
+            new_role = new_info.get("role", user.role)
+            new_status = new_info.get("user_status", user.user_status)
+            new_deleted = new_info.get("deleted_at", user.deleted_at)
+
+            _enforce_user_lifecycle_guards(
+                session,
+                user,
+                new_role=new_role,
+                new_status=new_status,
+                new_deleted=new_deleted,
+                guards=guards,
+            )
+            _apply_agent_role_lifecycle(
+                session,
+                user,
+                new_role,
+                new_status,
+                new_deleted,
+                now,
+            )
+
+            if revoke_refresh_sessions and "password" in new_info:
+                _revoke_all_user_refresh_sessions(session, user.id, now)
 
             for field, value in new_info.items():
                 setattr(user, field, value)
@@ -776,7 +1186,6 @@ def update_user(id: str, new_info: dict, event_data: Event | None = None) -> Use
             if event_data is not None:
                 session.add(_event_from_data(event_data))
 
-        
         session.refresh(user)
 
         return user
@@ -816,19 +1225,47 @@ def create_staff_user(
         return user
 
 
-def delete_user(id: str, delete_info: dict, event_data: Event | None = None) -> bool:
+def delete_user(
+    id: str,
+    delete_info: dict,
+    event_data: Event | None = None,
+    guards: UserLifecycleGuards | None = None,
+) -> bool:
     with Session(engine) as session:
         with session.begin():
+            _acquire_user_lifecycle_lock(session)
+
             user = session.get(User, id)
             if user is None:
                 return False
+
+            now = datetime.now(timezone.utc)
+            new_status = delete_info.get("user_status", user.user_status)
+            new_deleted = delete_info.get("deleted_at", user.deleted_at)
+
+            _enforce_user_lifecycle_guards(
+                session,
+                user,
+                new_role=user.role,
+                new_status=new_status,
+                new_deleted=new_deleted,
+                guards=guards,
+            )
+            _apply_agent_role_lifecycle(
+                session,
+                user,
+                user.role,
+                new_status,
+                new_deleted,
+                now,
+            )
 
             for field, value in delete_info.items():
                 setattr(user, field, value)
             if event_data is not None:
                 session.add(_event_from_data(event_data))
 
-        return True 
+        return True
         
 # ==============================================================
 # ======================= TICKETS ==============================
@@ -963,7 +1400,10 @@ def get_tickets(
             'created_at': Ticket.created_at,
             'updated_at': Ticket.updated_at,
             'status': Ticket.status,
-            'priority': Ticket.priority,
+            'priority': case(
+                *((Ticket.priority == priority, priority.value) for priority in Priority),
+                else_=0,
+            ),
         }
         sort_col = sort_columns[sort_by]
         order_exp = apply_sort_order(sort_col, sort_order)
@@ -1039,7 +1479,22 @@ def get_tickets(
 
 
 def get_waiting_ticket_ids(limit: int) -> list[str]:
-    """Return one bounded, deterministic reconciliation page.
+    """Return one bounded, deterministic, fair reconciliation page.
+
+    Fairness: waiting tickets are ordered by ``routing_attempted_at`` with NULLs
+    (never attempted) first, then by ``created_at`` and ``id``. The dispatcher
+    stamps each ticket it enqueues, so a ticket that cannot be assigned now
+    rotates behind both never-attempted tickets and tickets attempted longer
+    ago. With ``W`` waiting tickets and batch size ``B``, a stable waiting set
+    is fully visited once per ``ceil(W / B)`` reconciliation passes, which is the
+    finite recovery bound. The order is persisted on the ticket, so it survives
+    a process restart and is never an in-memory cursor.
+
+    New tickets enter with a NULL attempt time (first), then are stamped on
+    their first pass, so a bounded arrival rate cannot reset progress. If
+    arrivals exceed ``B`` per pass the waiting set grows and no bounded scanner
+    can guarantee a finite wait; that is a capacity limit, not a correctness
+    bug. Deleted or assigned tickets simply leave the predicate.
 
     The session is closed before callers enqueue work, so Redis operations never
     extend the lifetime of this database read transaction.
@@ -1055,11 +1510,44 @@ def get_waiting_ticket_ids(limit: int) -> list[str]:
             Ticket.assigned_agent_id.is_(None),
             Ticket.department_id.is_not(None),
         )
-        .order_by(Ticket.created_at.asc(), Ticket.id.asc())
+        .order_by(
+            Ticket.routing_attempted_at.asc().nulls_first(),
+            Ticket.created_at.asc(),
+            Ticket.id.asc(),
+        )
         .limit(limit)
     )
     with Session(engine) as session:
         return list(session.scalars(statement).all())
+
+
+def record_routing_attempts(ticket_ids: list[str], now: datetime) -> int:
+    """Stamp one bounded page of tickets as routed-through the reconciler.
+
+    The write is a single UPDATE restricted to the given ids and to tickets that
+    are still waiting, so it never resurrects assigned/deleted work and never
+    scans the whole table. Callers invoke it after the read session is closed,
+    so no database session spans the Redis enqueue. Recording an attempt only
+    changes rotation order, never ticket state, so a lost or delayed write can
+    delay a retry by at most one rotation, never drop it.
+    """
+    if not ticket_ids:
+        return 0
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Routing attempt time must be timezone-aware")
+
+    with Session(engine) as session, session.begin():
+        result = session.execute(
+            update(Ticket)
+            .where(
+                Ticket.id.in_(ticket_ids),
+                Ticket.deleted_at.is_(None),
+                Ticket.status == Status.NEW,
+                Ticket.assigned_agent_id.is_(None),
+            )
+            .values(routing_attempted_at=now)
+        )
+    return result.rowcount
 
 
 def record_overdue_ticket_events(limit: int, now: datetime) -> list[str]:
@@ -1127,16 +1615,44 @@ def record_overdue_ticket_events(limit: int, now: datetime) -> list[str]:
             raise
 
 
-def update_ticket(id: str, new_info: dict, event_data: Event | None = None) -> Ticket | None:
+def update_ticket(
+    id: str,
+    new_info: dict,
+    event_data: Event | None = None,
+    expected: TicketMutationGuard | None = None,
+) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
-            ticket = session.get(Ticket, id)
+            _require_sqlite_write_lock(session)
+            ticket = _lock_ticket_row(session, id)
 
             if ticket is None:
                 return None
 
+            # Re-run the correctness-critical checks inside the same
+            # transaction that performs the mutation. A caller passes the
+            # state it authorized against; if it changed, the stale write loses.
+            if expected is not None:
+                _require_expected_ticket_state(ticket, expected)
+
             old_assignee_id = ticket.assigned_agent_id
             now = event_data.created_at if event_data is not None else utc_now()
+
+            if "assigned_agent_id" in new_info and new_info["assigned_agent_id"] is not None:
+                if ticket.status not in TICKET_ASSIGNABLE_STATUSES:
+                    raise TicketStatusConflictError(
+                        "Terminal tickets must be reopened before assignment",
+                    )
+                # Validate the proposed assignee against the *proposed*
+                # destination department, not the ticket's old department.
+                _lock_and_validate_assignee(
+                    session,
+                    new_info.get("department_id", ticket.department_id),
+                    new_info["assigned_agent_id"],
+                )
+            elif "department_id" in new_info:
+                _lock_and_validate_department(session, new_info["department_id"])
+
             skill_ids = new_info.pop("skill_ids", None)
             # The service layer computes due_at itself; only derive it here for
             # callers that change status/priority without providing one.
@@ -1201,9 +1717,25 @@ def delete_all_tickets(event_data: list[Event] | None = None) -> int:
 def claim_ticket(ticket_id: str, assigned_id: str, event_data: Event | None = None) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
-            agent = session.get(User, assigned_id)
-            if agent is None:
+            if session.get_bind().dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            ticket = session.scalar(select(Ticket).where(Ticket.id == ticket_id).with_for_update())
+            if ticket is None or ticket.deleted_at is not None or ticket.status != Status.NEW or ticket.assigned_agent_id is not None:
                 return None
+            if ticket.department_id:
+                session.execute(select(Department.id).where(Department.id == ticket.department_id).with_for_update())
+            profile = session.scalar(select(AgentProfile).where(AgentProfile.user_id == assigned_id).with_for_update())
+            agent = session.get(User, assigned_id)
+            if agent is None or agent.role != Role.AGENT or agent.user_status != UserStatus.ACTIVE or agent.deleted_at is not None or profile is None:
+                raise InvalidAssigneeError()
+            department = session.get(Department, ticket.department_id) if ticket.department_id else None
+            if department is None or department.deleted_at is not None or profile.department_id != ticket.department_id:
+                raise InvalidAssigneeError(code="assignee_department_mismatch")
+            if profile.availability_status != AvailabilityStatus.AVAILABLE:
+                raise AgentUnavailableError()
+            workload = session.scalar(select(func.count()).select_from(Ticket).where(Ticket.assigned_agent_id == assigned_id, Ticket.deleted_at.is_(None), Ticket.status.in_(ACTIVE_TICKET_STATUSES)))
+            if workload >= profile.max_active_tickets:
+                raise AgentAtCapacityError()
 
             now = event_data.created_at if event_data is not None else utc_now()
             ticket_priority = session.scalar(
@@ -1270,6 +1802,16 @@ def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
                     ticket_id=ticket_id,
                 )
 
+            if session.get_bind().dialect.name != "sqlite" and ticket.department_id:
+                # Lock before the workload query starts. Locking a candidate
+                # inside that query can retain a count from before it waited.
+                # One department serializes competing automatic assignments.
+                session.execute(
+                    select(Department.id)
+                    .where(Department.id == ticket.department_id)
+                    .with_for_update()
+                )
+
             agent = _get_least_loaded_eligible_agent(
                 session,
                 ticket,
@@ -1327,12 +1869,31 @@ def try_route_ticket(ticket_id: str) -> TicketRoutingResult:
             raise
 
 
-def assign_ticket(ticket_id: str, assigned_agent_id:str, event_data: Event | None = None) -> Ticket | None:
+def assign_ticket(
+    ticket_id: str,
+    assigned_agent_id: str,
+    event_data: Event | None = None,
+    expected: TicketMutationGuard | None = None,
+) -> Ticket | None:
     with Session(engine) as session:
         with session.begin():
-            ticket = session.get(Ticket, ticket_id)
+            _require_sqlite_write_lock(session)
+            ticket = _lock_ticket_row(session, ticket_id)
             if ticket is None:
                 return None
+
+            if expected is not None:
+                _require_expected_ticket_state(ticket, expected)
+            if ticket.deleted_at is not None:
+                raise TicketDeletedError()
+            if ticket.status not in TICKET_ASSIGNABLE_STATUSES:
+                raise TicketStatusConflictError(
+                    "Terminal tickets must be reopened before assignment",
+                )
+
+            # Ticket row already locked; validate the receiving agent against
+            # the ticket department while holding Department then AgentProfile.
+            _lock_and_validate_assignee(session, ticket.department_id, assigned_agent_id)
 
             user = session.get(User, assigned_agent_id)
             if user is None:
@@ -1529,24 +2090,89 @@ def count_comment_attachments(comment_id: str) -> int:
         ) or 0
 
 
-def create_attachment(attachment: Attachment, event_data: Event) -> Attachment:
-    with Session(engine) as session:
+def create_attachment_guarded(
+    attachment: Attachment,
+    event_data: Event,
+    *,
+    max_attachments: int,
+    authorize: Callable[[Comment | None, Ticket | None, User | None], None],
+) -> Attachment:
+    """Commit one attachment while holding the per-comment write boundary.
+
+    All upload paths serialize on the comment row: PostgreSQL takes
+    ``SELECT ... FOR UPDATE`` and SQLite takes its single-writer
+    ``BEGIN IMMEDIATE`` lock before the counter is read. The cap check, the
+    ``authorize`` re-check (deletion, visibility, author, current ticket access,
+    account state, write permission) and the counter increment therefore run in
+    the same transaction as the insert.
+
+    ``authorize`` receives the freshly locked comment and ticket rows plus the
+    actor's current user row, and must raise a domain exception to reject.
+    Because the blob is written before this transaction, the caller is
+    responsible for removing an uncommitted blob when this function raises.
+    """
+    with Session(engine, expire_on_commit=False) as session:
         with session.begin():
+            _require_sqlite_write_lock(session)
+            comment = session.scalar(
+                select(Comment)
+                .where(Comment.id == attachment.comment_id)
+                .with_for_update()
+            )
+            ticket = None
+            if comment is not None:
+                ticket = session.scalar(
+                    select(Ticket)
+                    .where(Ticket.id == comment.ticket_id)
+                    .with_for_update()
+                )
+
+            actor = (
+                session.get(User, attachment.created_by_user_id)
+                if attachment.created_by_user_id
+                else None
+            )
+            authorize(comment, ticket, actor)
+
+            current_count = session.scalar(
+                select(func.count(Attachment.id)).where(
+                    Attachment.comment_id == attachment.comment_id,
+                    Attachment.deleted_at.is_(None),
+                )
+            ) or 0
+            if current_count >= max_attachments:
+                raise AttachmentValidationError(
+                    f"A comment can have at most {max_attachments} files",
+                    code="attachment_count_exceeded",
+                )
+
             session.add(attachment)
             session.add(_event_from_data(event_data))
-            comment = session.get(Comment, attachment.comment_id)
             if comment is not None:
-                # Keep the counter update inside the same transaction as the
-                # attachment insert.  Opening a second Session here can read
-                # a snapshot that does not include the new attachment.
-                comment.attachments_count = (comment.attachments_count or 0) + 1
-        session.refresh(attachment)
+                # Atomic increment: a read-modify-write here would lose updates
+                # when two uploads for the same comment interleave.
+                session.execute(
+                    update(Comment)
+                    .where(Comment.id == comment.id)
+                    .values(attachments_count=Comment.attachments_count + 1)
+                )
+
         return attachment
 
 
 def get_attachment(attachment_id: str) -> Attachment | None:
     with Session(engine) as session:
         return session.get(Attachment, attachment_id)
+
+
+def get_all_attachment_storage_keys() -> set[str]:
+    """Every storage key referenced by a committed attachment row.
+
+    Deleted rows are included on purpose: a cleanup command must never remove
+    bytes that any attachment metadata row still points at.
+    """
+    with Session(engine) as session:
+        return set(session.scalars(select(Attachment.storage_key)).all())
 
 
 def get_comment_attachments(comment_id: str) -> list[Attachment]:
@@ -1612,12 +2238,48 @@ def update_comment(comment_id: str, new_info: dict) -> Comment | None:
         session.refresh(comment)
         return comment
 
-def update_comment_with_event(comment_id: str, new_info: dict, event_data: Event) -> Comment | None:
-    with Session(engine) as session:
+def update_comment_with_event(
+    comment_id: str,
+    mutate: Callable[[Comment, Ticket | None, User | None], tuple[dict, Event]],
+    *,
+    actor_user_id: str | None = None,
+) -> Comment | None:
+    """Apply one comment update and its audit event in a single transaction.
+
+    ``mutate`` runs inside the write transaction with the freshly locked comment
+    and ticket rows plus the actor's current persisted user row. It must re-check
+    current authorization against those rows and raise a domain exception to
+    reject, then return the fields to apply and an audit event built from the
+    locked state. Because the re-check, the write, and the event share one
+    transaction and one row lock, a request that read a public comment before it
+    was restricted can no longer republish it.
+
+    ``actor_user_id`` loads the requester's row ``FOR UPDATE`` so a role change
+    or ban committed before this boundary is seen instead of trusting the role
+    claim captured when the request first arrived. The user row is locked first,
+    matching the user-lifecycle lock order, so a comment write cannot deadlock
+    against a role or profile transition.
+    """
+    with Session(engine, expire_on_commit=False) as session:
         with session.begin():
-            comment = session.get(Comment, comment_id)
+            _require_sqlite_write_lock(session)
+            actor = (
+                session.scalar(
+                    select(User).where(User.id == actor_user_id).with_for_update()
+                )
+                if actor_user_id is not None
+                else None
+            )
+            comment = session.scalar(
+                select(Comment).where(Comment.id == comment_id).with_for_update()
+            )
             if comment is None:
                 return None
+            ticket = session.scalar(
+                select(Ticket).where(Ticket.id == comment.ticket_id).with_for_update()
+            )
+
+            new_info, event_data = mutate(comment, ticket, actor)
 
             for field, value in new_info.items():
                 setattr(comment, field, value)
@@ -1833,10 +2495,129 @@ def attach_analysis_job(
     return _run_analysis_transition(statement)
 
 
+def mark_analysis_dispatched(
+    analysis_result_id: str,
+    job_id: str,
+    now: datetime,
+    *,
+    expected_status: AnalysisStatus = AnalysisStatus.PENDING,
+) -> AnalysisResult | None:
+    """Record one dispatch attempt on a not-yet-running row.
+
+    Guarded by ``expected_status`` so a reconciler that raced a worker which
+    already started the provider call cannot re-label the row. The dispatch
+    identity is stable, so two reconcilers writing the same ``job_id`` is
+    harmless.
+    """
+    statement = (
+        update(AnalysisResult)
+        .where(
+            AnalysisResult.id == analysis_result_id,
+            AnalysisResult.status == expected_status,
+        )
+        .values(
+            job_id=job_id,
+            dispatch_count=AnalysisResult.dispatch_count + 1,
+            updated_at=now,
+        )
+        .returning(AnalysisResult)
+    )
+    return _run_analysis_transition(statement)
+
+
+def get_reconcilable_analysis_results(
+    limit: int,
+    now: datetime,
+) -> list[AnalysisResult]:
+    """Return work the bounded reconciler must look at, oldest first.
+
+    This deliberately selects only two shapes:
+
+    * PENDING rows, whose provider call has either not happened or is known to
+      have failed, and
+    * RUNNING rows whose lease is missing or expired, i.e. abandoned work.
+
+    A RUNNING row with a live lease is not returned. Terminal rows are never
+    returned, so the reconciler cannot rerun completed work just because an RQ
+    result expired.
+
+    Fairness: rows are ordered by ``reconciliation_attempted_at`` with NULLs
+    (never considered) first, then by ``created_at`` and ``id``. The reconciler
+    stamps every row it considers, so a PENDING row whose RQ job is still live
+    rotates behind never-considered and older-considered rows instead of
+    permanently occupying the first page. With ``W`` recoverable rows and batch
+    size ``B``, a stable set is fully visited once per ``ceil(W / B)`` passes:
+    that is the finite recovery bound. The order is persisted on the row, so it
+    survives a restart and is never an in-memory cursor.
+    """
+    statement = (
+        select(AnalysisResult)
+        .where(
+            or_(
+                AnalysisResult.status == AnalysisStatus.PENDING,
+                and_(
+                    AnalysisResult.status == AnalysisStatus.RUNNING,
+                    or_(
+                        AnalysisResult.lease_expires_at.is_(None),
+                        AnalysisResult.lease_expires_at <= now,
+                    ),
+                ),
+            )
+        )
+        .order_by(
+            AnalysisResult.reconciliation_attempted_at.asc().nulls_first(),
+            AnalysisResult.created_at.asc(),
+            AnalysisResult.id.asc(),
+        )
+        .limit(limit)
+    )
+    with Session(engine) as session:
+        return list(session.scalars(statement).all())
+
+
+def record_analysis_reconciliation_attempts(
+    analysis_result_ids: list[str],
+    now: datetime,
+) -> int:
+    """Stamp one bounded page of analysis rows as considered by the reconciler.
+
+    A single UPDATE restricted to the given ids, so it never scans the table and
+    never changes analysis state -- only rotation order. Callers invoke it after
+    the read session and enqueue work are done, so no database session spans
+    Redis. Recording an attempt only changes the order in which a later pass
+    sees the row, never whether the row is dispatched, so a lost or delayed
+    write can defer a retry by at most one rotation and never drop it.
+    """
+    if not analysis_result_ids:
+        return 0
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Reconciliation attempt time must be timezone-aware")
+
+    with Session(engine) as session, session.begin():
+        result = session.execute(
+            update(AnalysisResult)
+            .where(AnalysisResult.id.in_(analysis_result_ids))
+            .values(reconciliation_attempted_at=now)
+        )
+    return result.rowcount
+
+
 def start_analysis_attempt(
     analysis_result_id: str,
     now: datetime,
+    *,
+    execution_id: str | None = None,
+    lease_seconds: int | None = None,
 ) -> AnalysisResult | None:
+    """Claim a PENDING row for one provider attempt under a bounded lease.
+
+    ``attempt_count`` counts PROVIDER attempts and is capped at 3. The lease is
+    a separate, longer wall-clock deadline that lets the reconciler distinguish
+    a healthy slow call from an abandoned one.
+    """
+    lease_seconds = (
+        ANALYSIS_EXECUTION_LEASE_SECONDS if lease_seconds is None else lease_seconds
+    )
     statement = (
         update(AnalysisResult)
         .where(
@@ -1848,6 +2629,8 @@ def start_analysis_attempt(
             status=AnalysisStatus.RUNNING,
             attempt_count=AnalysisResult.attempt_count + 1,
             started_at=func.coalesce(AnalysisResult.started_at, now),
+            execution_id=execution_id or generate_id(),
+            lease_expires_at=now + timedelta(seconds=lease_seconds),
             updated_at=now,
         )
         .returning(AnalysisResult)
@@ -1858,15 +2641,30 @@ def start_analysis_attempt(
 def return_analysis_to_pending(
     analysis_result_id: str,
     now: datetime,
+    *,
+    execution_id: str | None = None,
 ) -> AnalysisResult | None:
+    """Release a RUNNING row back to PENDING after a known provider failure.
+
+    When ``execution_id`` is supplied the write only succeeds for the worker
+    that still owns the row. A stale worker cannot send new work back to PENDING.
+    """
+    conditions = [
+        AnalysisResult.id == analysis_result_id,
+        AnalysisResult.status == AnalysisStatus.RUNNING,
+        AnalysisResult.attempt_count < 3,
+    ]
+    if execution_id is not None:
+        conditions.append(AnalysisResult.execution_id == execution_id)
     statement = (
         update(AnalysisResult)
-        .where(
-            AnalysisResult.id == analysis_result_id,
-            AnalysisResult.status == AnalysisStatus.RUNNING,
-            AnalysisResult.attempt_count < 3,
+        .where(*conditions)
+        .values(
+            status=AnalysisStatus.PENDING,
+            execution_id=None,
+            lease_expires_at=None,
+            updated_at=now,
         )
-        .values(status=AnalysisStatus.PENDING, updated_at=now)
         .returning(AnalysisResult)
     )
     return _run_analysis_transition(statement)
@@ -1879,13 +2677,25 @@ def complete_analysis_result(
     *,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    execution_id: str | None = None,
 ) -> AnalysisResult | None:
+    """Store a provider result only for the current, non-expired owner.
+
+    When ``execution_id`` is supplied, both the owner token and a live lease
+    must match. This rejects a late completion from an expired worker and a
+    completion from an obsolete execution after recovery restarted the row.
+    """
+    conditions = [
+        AnalysisResult.id == analysis_result_id,
+        AnalysisResult.status == AnalysisStatus.RUNNING,
+    ]
+    if execution_id is not None:
+        conditions.append(AnalysisResult.execution_id == execution_id)
+        conditions.append(AnalysisResult.lease_expires_at.is_not(None))
+        conditions.append(AnalysisResult.lease_expires_at > now)
     statement = (
         update(AnalysisResult)
-        .where(
-            AnalysisResult.id == analysis_result_id,
-            AnalysisResult.status == AnalysisStatus.RUNNING,
-        )
+        .where(*conditions)
         .values(
             status=AnalysisStatus.COMPLETED,
             summary=summary,
@@ -1894,6 +2704,7 @@ def complete_analysis_result(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             completed_at=now,
+            lease_expires_at=None,
             updated_at=now,
         )
         .returning(AnalysisResult)
@@ -1908,19 +2719,76 @@ def fail_analysis_result(
     error_code: str,
     error_message: str,
     now: datetime,
+    execution_id: str | None = None,
 ) -> AnalysisResult | None:
+    """Move a row to FAILED under an optional owner/lease guard.
+
+    The API-side enqueue failure passes no ``execution_id`` because no execution
+    exists yet. A worker-owned permanent failure passes its token so a stale
+    worker cannot fail a row that has since been recovered or restarted.
+    """
+    conditions = [
+        AnalysisResult.id == analysis_result_id,
+        AnalysisResult.status.in_(expected_statuses),
+    ]
+    if execution_id is not None:
+        conditions.append(AnalysisResult.execution_id == execution_id)
+        conditions.append(AnalysisResult.lease_expires_at.is_not(None))
+        conditions.append(AnalysisResult.lease_expires_at > now)
     statement = (
         update(AnalysisResult)
-        .where(
-            AnalysisResult.id == analysis_result_id,
-            AnalysisResult.status.in_(expected_statuses),
-        )
+        .where(*conditions)
         .values(
             status=AnalysisStatus.FAILED,
             summary=None,
             error_code=error_code,
             error_message=error_message,
             completed_at=now,
+            lease_expires_at=None,
+            updated_at=now,
+        )
+        .returning(AnalysisResult)
+    )
+    return _run_analysis_transition(statement)
+
+
+def abandon_expired_analysis_result(
+    analysis_result_id: str,
+    *,
+    execution_id: str | None,
+    error_code: str,
+    error_message: str,
+    now: datetime,
+) -> AnalysisResult | None:
+    """Move an expired worker attempt to FAILED, but only the observed owner.
+
+    The reconciler passes the ``execution_id`` it actually selected and the
+    conditions require the row to still be RUNNING under that same owner with a
+    still-expired lease. If a new live attempt took over between the read and
+    this write, zero rows match and the newer attempt is untouched.
+    """
+    conditions = [
+        AnalysisResult.id == analysis_result_id,
+        AnalysisResult.status == AnalysisStatus.RUNNING,
+        or_(
+            AnalysisResult.lease_expires_at.is_(None),
+            AnalysisResult.lease_expires_at <= now,
+        ),
+    ]
+    if execution_id is None:
+        conditions.append(AnalysisResult.execution_id.is_(None))
+    else:
+        conditions.append(AnalysisResult.execution_id == execution_id)
+    statement = (
+        update(AnalysisResult)
+        .where(*conditions)
+        .values(
+            status=AnalysisStatus.FAILED,
+            summary=None,
+            error_code=error_code,
+            error_message=error_message,
+            completed_at=now,
+            lease_expires_at=None,
             updated_at=now,
         )
         .returning(AnalysisResult)

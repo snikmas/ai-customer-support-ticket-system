@@ -10,13 +10,14 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiRequest, downloadFile, toErrorMessage } from "../api/client";
+import { ApiError, apiRequest, downloadFile, toErrorMessage } from "../api/client";
 import {
   MANAGER_ROLES,
   PRIORITY_LABELS,
   STATUS_TRANSITIONS,
-  type Attachment,
   type AnalysisResult,
+  type AssignmentCandidate,
+  type Attachment,
   type Comment,
   type HistoryEvent,
   type Priority,
@@ -30,9 +31,16 @@ import {
   type Visibility,
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { AttachmentList, failedPanel, loadedPanel, loadingPanel, type PanelState } from "../components/AttachmentList";
 import { StatePanel } from "../components/StatePanel";
 import { useToast } from "../components/ToastContext";
+import { createLatestGuard } from "../lib/latest";
 import { formatDate, initials, priorityLabel, relativeTime, roleLabel } from "../lib/format";
+
+const COMMENT_PAGE_SIZE = 50;
+const HISTORY_PAGE_SIZE = 50;
+const CANDIDATE_PAGE_SIZE = 20;
+const MAX_POLL_RETRIES = 4;
 
 interface DetailData {
   ticket: Ticket;
@@ -53,6 +61,7 @@ export function TicketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [mutationError, setMutationError] = useState("");
+  const [mutationConflict, setMutationConflict] = useState(false);
   const [busy, setBusy] = useState("");
   const [commentBody, setCommentBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("Public");
@@ -72,8 +81,113 @@ export function TicketDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState("");
-  const [attachmentsByComment, setAttachmentsByComment] = useState<Record<string, Attachment[]>>({});
+  const [attachmentsByComment, setAttachmentsByComment] = useState<
+    Record<string, PanelState<Attachment>>
+  >({});
   const [downloadingAttachment, setDownloadingAttachment] = useState("");
+  const [commentsHasMore, setCommentsHasMore] = useState(false);
+  const [commentsLoadingMore, setCommentsLoadingMore] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [candidates, setCandidates] = useState<AssignmentCandidate[]>([]);
+  const [candidateSearch, setCandidateSearch] = useState("");
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesError, setCandidatesError] = useState("");
+  const [candidatesHasMore, setCandidatesHasMore] = useState(false);
+  const [analysisPollError, setAnalysisPollError] = useState("");
+  const [analysisPolling, setAnalysisPolling] = useState(false);
+
+  // Every ticket-scoped request captures an epoch. A ticket change or a fresh
+  // `load()` advances it, so a response for an old ticket can never overwrite
+  // the panels of the ticket now on screen.
+  const requestEpoch = useRef(0);
+  const candidatesOffset = useRef(0);
+  const beginRequestEpoch = useCallback(() => ++requestEpoch.current, []);
+  const snapshotRequestEpoch = useCallback(() => requestEpoch.current, []);
+  const isCurrentEpoch = useCallback((epoch: number) => epoch === requestEpoch.current, []);
+
+  const loadAttachments = useCallback(
+    (targets: Comment[], epoch: number) => {
+      setAttachmentsByComment((current) => {
+        const next = { ...current };
+        for (const comment of targets) {
+          if (!next[comment.id] || next[comment.id].status === "error") {
+            next[comment.id] = loadingPanel<Attachment>();
+          }
+        }
+        return next;
+      });
+      for (const comment of targets) {
+        apiRequest<Attachment[]>(
+          `/tickets/${ticketId}/comments/${comment.id}/attachments`,
+        )
+          .then((items) => {
+            if (isCurrentEpoch(epoch)) {
+              setAttachmentsByComment((current) => ({
+                ...current,
+                [comment.id]: loadedPanel(items),
+              }));
+            }
+          })
+          .catch((caught) => {
+            if (isCurrentEpoch(epoch)) {
+              setAttachmentsByComment((current) => ({
+                ...current,
+                [comment.id]: failedPanel<Attachment>(toErrorMessage(caught)),
+              }));
+            }
+          });
+      }
+    },
+    [isCurrentEpoch, ticketId],
+  );
+
+  const loadCandidates = useCallback(
+    async (
+      departmentId: string | null,
+      search: string,
+      append: boolean,
+      epoch: number,
+    ) => {
+      if (!departmentId) {
+        setCandidates([]);
+        setCandidatesHasMore(false);
+        setCandidatesError("");
+        return;
+      }
+      setCandidatesLoading(true);
+      if (!append) setCandidatesError("");
+      const offset = append ? candidatesOffset.current : 0;
+      const query = new URLSearchParams({
+        department_id: departmentId,
+        limit: String(CANDIDATE_PAGE_SIZE),
+        offset: String(offset),
+      });
+      if (search.trim()) query.set("search", search.trim());
+      try {
+        const page = await apiRequest<AssignmentCandidate[]>(
+          `/users/assignment-candidates?${query}`,
+        );
+        if (!isCurrentEpoch(epoch)) return;
+        candidatesOffset.current = offset + page.length;
+        setCandidates((current) => (append ? [...current, ...page] : page));
+        setCandidatesHasMore(page.length === CANDIDATE_PAGE_SIZE);
+        setCandidatesError("");
+        if (!append) {
+          setSelectedAgent((current) =>
+            page.some((candidate) => candidate.user_id === current)
+              ? current
+              : page[0]?.user_id ?? "",
+          );
+        }
+      } catch (caught) {
+        if (isCurrentEpoch(epoch)) setCandidatesError(toErrorMessage(caught));
+      } finally {
+        if (isCurrentEpoch(epoch)) setCandidatesLoading(false);
+      }
+    },
+    [isCurrentEpoch],
+  );
 
   const role = identity?.role;
   const isManager = Boolean(role && MANAGER_ROLES.includes(role));
@@ -81,102 +195,198 @@ export function TicketDetailPage() {
   const isReadonly = role === "agent_readonly";
   const isCustomer = role === "user";
 
+  // A ticket change makes every in-flight request for the previous ticket
+  // stale. Running this effect before the loader effect bumps the epoch first.
+  useEffect(() => {
+    requestEpoch.current += 1;
+  }, [ticketId]);
+
   const load = useCallback(async () => {
+    const epoch = beginRequestEpoch();
     setLoading(true);
     setError("");
+    setMutationConflict(false);
     try {
-      const [ticket, comments, history, departments, skills] = await Promise.all([
+      const [ticket, commentPage, historyPage, departments, skills] = await Promise.all([
         apiRequest<Ticket>(`/tickets/${ticketId}`),
-        apiRequest<Comment[]>(`/tickets/${ticketId}/comments?limit=100&sort_order=asc`),
-        apiRequest<HistoryEvent[]>(`/tickets/${ticketId}/history?limit=100`),
+        apiRequest<Comment[]>(
+          `/tickets/${ticketId}/comments?limit=${COMMENT_PAGE_SIZE}&sort_order=desc`,
+        ),
+        apiRequest<HistoryEvent[]>(`/tickets/${ticketId}/history?limit=${HISTORY_PAGE_SIZE}`),
         apiRequest<RoutingCatalog[]>("/departments/"),
         apiRequest<RoutingCatalog[]>("/skills/"),
       ]);
-      setData({ ticket, comments, history, departments, skills });
-      const attachmentEntries = await Promise.all(
-        comments.map(async (comment) => {
-          try {
-            return [
-              comment.id,
-              await apiRequest<Attachment[]>(
-                `/tickets/${ticketId}/comments/${comment.id}/attachments`,
-              ),
-            ] as const;
-          } catch {
-            return [comment.id, []] as const;
-          }
-        }),
-      );
-      setAttachmentsByComment(Object.fromEntries(attachmentEntries));
+      if (!isCurrentEpoch(epoch)) return;
+      const comments = [...commentPage].reverse();
+      setData({ ticket, comments, history: historyPage, departments, skills });
+      setCommentsHasMore(commentPage.length === COMMENT_PAGE_SIZE);
+      setHistoryHasMore(historyPage.length === HISTORY_PAGE_SIZE);
       setSelectedDepartment(ticket.department_id ?? departments[0]?.id ?? "");
       setSelectedSkillIds(ticket.skill_ids);
+      loadAttachments(comments, epoch);
 
       const maySeeAnalysis =
         isManager || (isAgent && ticket.assigned_agent_id === identity?.userId);
-      const optionalRequests: Promise<void>[] = [];
       if (maySeeAnalysis) {
-        optionalRequests.push(
-          apiRequest<AnalysisResult[]>(`/tickets/${ticketId}/analysis-results?limit=20`)
-            .then(setAnalyses)
-            .catch(() => setAnalyses([])),
-        );
+        apiRequest<AnalysisResult[]>(`/tickets/${ticketId}/analysis-results?limit=20`)
+          .then((items) => {
+            if (isCurrentEpoch(epoch)) setAnalyses(items);
+          })
+          .catch(() => {
+            if (isCurrentEpoch(epoch)) setAnalyses([]);
+          });
       } else {
         setAnalyses([]);
       }
       if (isManager) {
-        optionalRequests.push(
-          apiRequest<User[]>("/users/?limit=100&sort_by=first_name&sort_order=asc")
-            .then((items) => {
-              setUsers(items);
-              const firstAgent = items.find((item) => item.role === "agent");
-              if (firstAgent) setSelectedAgent(firstAgent.id);
-            })
-            .catch(() => setUsers([])),
-        );
+        apiRequest<User[]>("/users/?limit=100&sort_by=first_name&sort_order=asc")
+          .then((items) => {
+            if (isCurrentEpoch(epoch)) setUsers(items);
+          })
+          .catch(() => {
+            if (isCurrentEpoch(epoch)) setUsers([]);
+          });
+        void loadCandidates(ticket.department_id, "", false, epoch);
       } else {
         setUsers(user ? [user] : []);
+        setCandidates([]);
+        setCandidatesError("");
       }
-      await Promise.all(optionalRequests);
     } catch (caught) {
-      setError(toErrorMessage(caught));
+      if (isCurrentEpoch(epoch)) setError(toErrorMessage(caught));
     } finally {
-      setLoading(false);
+      if (isCurrentEpoch(epoch)) setLoading(false);
     }
-  }, [identity?.userId, isAgent, isManager, ticketId, user]);
+  }, [
+    beginRequestEpoch,
+    identity?.userId,
+    isAgent,
+    isCurrentEpoch,
+    isManager,
+    loadAttachments,
+    loadCandidates,
+    ticketId,
+    user,
+  ]);
 
   useEffect(() => void load(), [load]);
 
+  const loadOlderComments = useCallback(async () => {
+    const epoch = snapshotRequestEpoch();
+    const loaded = data?.comments.length ?? 0;
+    setCommentsLoadingMore(true);
+    try {
+      const page = await apiRequest<Comment[]>(
+        `/tickets/${ticketId}/comments?limit=${COMMENT_PAGE_SIZE}&sort_order=desc&offset=${loaded}`,
+      );
+      if (!isCurrentEpoch(epoch)) return;
+      const older = [...page].reverse();
+      setData((current) =>
+        current ? { ...current, comments: [...older, ...current.comments] } : current,
+      );
+      setCommentsHasMore(page.length === COMMENT_PAGE_SIZE);
+      loadAttachments(older, epoch);
+    } catch (caught) {
+      if (isCurrentEpoch(epoch)) setMutationError(toErrorMessage(caught));
+    } finally {
+      if (isCurrentEpoch(epoch)) setCommentsLoadingMore(false);
+    }
+  }, [data?.comments.length, isCurrentEpoch, loadAttachments, snapshotRequestEpoch, ticketId]);
+
+  const loadMoreHistory = useCallback(async () => {
+    const epoch = snapshotRequestEpoch();
+    const loaded = data?.history.length ?? 0;
+    setHistoryLoadingMore(true);
+    try {
+      const page = await apiRequest<HistoryEvent[]>(
+        `/tickets/${ticketId}/history?limit=${HISTORY_PAGE_SIZE}&offset=${loaded}`,
+      );
+      if (!isCurrentEpoch(epoch)) return;
+      setData((current) =>
+        current ? { ...current, history: [...current.history, ...page] } : current,
+      );
+      setHistoryHasMore(page.length === HISTORY_PAGE_SIZE);
+    } catch (caught) {
+      if (isCurrentEpoch(epoch)) setMutationError(toErrorMessage(caught));
+    } finally {
+      if (isCurrentEpoch(epoch)) setHistoryLoadingMore(false);
+    }
+  }, [data?.history.length, isCurrentEpoch, snapshotRequestEpoch, ticketId]);
+
+  const retryAttachment = useCallback(
+    (commentId: string) => {
+      const epoch = snapshotRequestEpoch();
+      setAttachmentsByComment((current) => ({
+        ...current,
+        [commentId]: loadingPanel<Attachment>(),
+      }));
+      apiRequest<Attachment[]>(
+        `/tickets/${ticketId}/comments/${commentId}/attachments`,
+      )
+        .then((items) => {
+          if (isCurrentEpoch(epoch)) {
+            setAttachmentsByComment((current) => ({
+              ...current,
+              [commentId]: loadedPanel(items),
+            }));
+          }
+        })
+        .catch((caught) => {
+          if (isCurrentEpoch(epoch)) {
+            setAttachmentsByComment((current) => ({
+              ...current,
+              [commentId]: failedPanel<Attachment>(toErrorMessage(caught)),
+            }));
+          }
+        });
+    },
+    [isCurrentEpoch, snapshotRequestEpoch, ticketId],
+  );
+
   const loadCustomer = useCallback(async () => {
+    const epoch = snapshotRequestEpoch();
     setCustomerLoading(true);
     setCustomerError("");
     try {
-      setCustomer(await apiRequest<TicketCustomerSummary>(`/tickets/${ticketId}/customer`));
+      const summary = await apiRequest<TicketCustomerSummary>(`/tickets/${ticketId}/customer`);
+      if (isCurrentEpoch(epoch)) setCustomer(summary);
     } catch (caught) {
-      setCustomerError(toErrorMessage(caught));
+      if (isCurrentEpoch(epoch)) setCustomerError(toErrorMessage(caught));
     } finally {
-      setCustomerLoading(false);
+      if (isCurrentEpoch(epoch)) setCustomerLoading(false);
     }
-  }, [ticketId]);
+  }, [isCurrentEpoch, snapshotRequestEpoch, ticketId]);
 
   useEffect(() => {
     if (activeTab === "customer") void loadCustomer();
   }, [activeTab, loadCustomer]);
 
   const loadRelated = useCallback(async () => {
+    const epoch = snapshotRequestEpoch();
     setRelatedLoading(true);
     setRelatedError("");
     try {
-      setRelated(await apiRequest<RelatedTicket[]>(`/tickets/${ticketId}/related`));
+      const items = await apiRequest<RelatedTicket[]>(`/tickets/${ticketId}/related`);
+      if (isCurrentEpoch(epoch)) setRelated(items);
     } catch (caught) {
-      setRelatedError(toErrorMessage(caught));
+      if (isCurrentEpoch(epoch)) setRelatedError(toErrorMessage(caught));
     } finally {
-      setRelatedLoading(false);
+      if (isCurrentEpoch(epoch)) setRelatedLoading(false);
     }
-  }, [ticketId]);
+  }, [isCurrentEpoch, snapshotRequestEpoch, ticketId]);
 
   useEffect(() => {
     if (activeTab === "related") void loadRelated();
   }, [activeTab, loadRelated]);
+
+  const searchCandidates = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void loadCandidates(ticket.department_id, candidateSearch, false, snapshotRequestEpoch());
+  };
+
+  const loadMoreCandidates = () => {
+    void loadCandidates(ticket.department_id, candidateSearch, true, snapshotRequestEpoch());
+  };
 
   const searchRelated = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -227,29 +437,81 @@ export function TicketDetailPage() {
   const activeAnalysis = analyses.find(
     (item) => item.status === "pending" || item.status === "running",
   );
+  const activeAnalysisId = activeAnalysis?.id;
+
   useEffect(() => {
-    if (!activeAnalysis) return;
-    const timer = window.setInterval(() => {
-      apiRequest<AnalysisResult>(`/analysis-results/${activeAnalysis.id}`)
-        .then((updated) => {
-          setAnalyses((items) =>
-            items.map((item) => (item.id === updated.id ? updated : item)),
+    if (!activeAnalysisId) {
+      setAnalysisPolling(false);
+      setAnalysisPollError("");
+      return;
+    }
+    let cancelled = false;
+    let attempt = 0;
+    let timer: number | undefined;
+
+    const schedule = (delay: number) => {
+      timer = window.setTimeout(poll, delay);
+    };
+    const poll = async () => {
+      if (cancelled) return;
+      setAnalysisPolling(true);
+      try {
+        const updated = await apiRequest<AnalysisResult>(
+          `/analysis-results/${activeAnalysisId}`,
+        );
+        if (cancelled) return;
+        attempt = 0;
+        setAnalysisPollError("");
+        setAnalyses((items) =>
+          items.map((item) => (item.id === updated.id ? updated : item)),
+        );
+        if (updated.status === "pending" || updated.status === "running") {
+          schedule(2000);
+        } else {
+          setAnalysisPolling(false);
+        }
+      } catch (caught) {
+        if (cancelled) return;
+        if (
+          caught instanceof ApiError &&
+          (caught.status === 401 || caught.status === 403)
+        ) {
+          // Signed out or lost permission: stop quietly.
+          setAnalysisPolling(false);
+          return;
+        }
+        attempt += 1;
+        if (attempt > MAX_POLL_RETRIES) {
+          setAnalysisPolling(false);
+          setAnalysisPollError(
+            "Live analysis updates stopped after repeated failures. Reload the ticket to retry.",
           );
-        })
-        .catch(() => window.clearInterval(timer));
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [activeAnalysis]);
+          return;
+        }
+        setAnalysisPollError(`Reconnecting to analysis status… (retry ${attempt})`);
+        schedule(Math.min(15000, 2000 * 2 ** (attempt - 1)));
+      }
+    };
+    schedule(2000);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [activeAnalysisId, ticketId]);
 
   const perform = async (label: string, action: () => Promise<unknown>) => {
     setBusy(label);
     setMutationError("");
+    setMutationConflict(false);
     try {
       await action();
       await load();
       notify(`${label} completed.`);
     } catch (caught) {
       setMutationError(toErrorMessage(caught));
+      if (caught instanceof ApiError && caught.status === 409) {
+        setMutationConflict(true);
+      }
     } finally {
       setBusy("");
     }
@@ -283,7 +545,6 @@ export function TicketDetailPage() {
   const assignedAgent = ticket.assigned_agent_id
     ? userMap.get(ticket.assigned_agent_id)
     : undefined;
-  const agents = users.filter((item) => item.role === "agent" && item.user_status === "Active");
   const canClaim = isAgent && ticket.status === "New" && !ticket.assigned_agent_id;
   const canStart =
     isAgent &&
@@ -390,6 +651,16 @@ export function TicketDetailPage() {
       {mutationError && (
         <div className="alert error" role="alert">
           <AlertCircle size={17} /> {mutationError}
+          {mutationConflict && (
+            <>
+              {" "}
+              The ticket changed on the server. Reload it before retrying; this
+              action was not replayed automatically.
+              <button className="button secondary compact" onClick={() => void load()}>
+                Reload ticket
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -404,6 +675,8 @@ export function TicketDetailPage() {
             <AnalysisCard
               result={latestAnalysis}
               busy={busy === "Analysis"}
+              polling={analysisPolling}
+              pollError={analysisPollError}
               onRun={() =>
                 void perform("Analysis", async () => {
                   const result = await apiRequest<AnalysisResult>(
@@ -466,28 +739,27 @@ export function TicketDetailPage() {
                               </time>
                             </header>
                             <p>{comment.body}</p>
-                            {(attachmentsByComment[comment.id] || []).length > 0 && (
-                              <ul className="comment-attachments">
-                                {(attachmentsByComment[comment.id] || []).map((attachment) => (
-                                  <li key={attachment.id}>
-                                    <button
-                                      type="button"
-                                      onClick={() => void downloadAttachment(attachment)}
-                                      disabled={downloadingAttachment === attachment.id}
-                                    >
-                                      {downloadingAttachment === attachment.id ? "Downloading…" : attachment.original_filename}
-                                    </button>
-                                    <span>{Math.max(1, Math.round(attachment.size_bytes / 1024))} KB</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
+                            <AttachmentList
+                              state={attachmentsByComment[comment.id]}
+                              downloadingId={downloadingAttachment}
+                              onDownload={(attachment) => void downloadAttachment(attachment)}
+                              onRetry={() => retryAttachment(comment.id)}
+                            />
                           </div>
                         </article>
                       );
                     })
                   )}
                 </div>
+                {commentsHasMore && (
+                  <button
+                    className="button secondary"
+                    disabled={commentsLoadingMore}
+                    onClick={() => void loadOlderComments()}
+                  >
+                    {commentsLoadingMore ? "Loading earlier comments…" : "Load earlier comments"}
+                  </button>
+                )}
                 {canComment && (
                   <form className="reply-form" onSubmit={(event) => void addComment(event)}>
                     <div className="reply-toolbar">
@@ -633,17 +905,28 @@ export function TicketDetailPage() {
             {history.length === 0 ? (
               <p className="muted">No visible history events.</p>
             ) : (
-              <ol>
-                {history.map((event) => (
-                  <li key={event.id}>
-                    <i />
-                    <div>
-                      <strong>{event.event_type}</strong>
-                      <span>{formatDate(event.created_at)}</span>
-                    </div>
-                  </li>
-                ))}
-              </ol>
+              <>
+                <ol>
+                  {history.map((event) => (
+                    <li key={event.id}>
+                      <i />
+                      <div>
+                        <strong>{event.event_type}</strong>
+                        <span>{formatDate(event.created_at)}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+                {historyHasMore && (
+                  <button
+                    className="button secondary"
+                    disabled={historyLoadingMore}
+                    onClick={() => void loadMoreHistory()}
+                  >
+                    {historyLoadingMore ? "Loading newer activity…" : "Load newer activity"}
+                  </button>
+                )}
+              </>
             )}
           </section>
         </div>
@@ -732,29 +1015,90 @@ export function TicketDetailPage() {
                 Claim ticket
               </button>
             )}
-            {isManager && agents.length > 0 && ticket.department_id && (
-              <div className="inline-action">
-                <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)}>
-                  {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.first_name} {agent.last_name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="button secondary"
-                  disabled={!selectedAgent || Boolean(busy)}
-                  onClick={() =>
-                    void perform("Assignment", () =>
-                      apiRequest(`/tickets/${ticket.id}/assign`, {
-                        method: "POST",
-                        body: { agent_id: selectedAgent },
-                      }),
-                    )
-                  }
-                >
-                  Assign
-                </button>
+            {isManager && (
+              <div className="assignment-picker">
+                <strong>Assign to agent</strong>
+                {!ticket.department_id ? (
+                  <p className="muted">
+                    Route the ticket to a department before assigning an agent.
+                  </p>
+                ) : (
+                  <>
+                    <form className="candidate-search" onSubmit={searchCandidates}>
+                      <label>
+                        Search eligible agents
+                        <input
+                          value={candidateSearch}
+                          onChange={(event) => setCandidateSearch(event.target.value)}
+                          placeholder="Name, nickname, or email"
+                        />
+                      </label>
+                      <button className="button subtle">Search</button>
+                    </form>
+                    {candidatesError ? (
+                      <p className="field-error" role="alert">
+                        {candidatesError}{" "}
+                        <button
+                          type="button"
+                          className="button subtle"
+                          onClick={loadMoreCandidates}
+                        >
+                          Try again
+                        </button>
+                      </p>
+                    ) : candidatesLoading && candidates.length === 0 ? (
+                      <p className="muted">Loading eligible agents…</p>
+                    ) : candidates.length === 0 ? (
+                      <p className="muted">
+                        No live agent in this department is available right now.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="inline-action">
+                          <select
+                            aria-label="Assign to agent"
+                            value={selectedAgent}
+                            onChange={(event) => setSelectedAgent(event.target.value)}
+                          >
+                            {candidates.map((agent) => (
+                              <option key={agent.user_id} value={agent.user_id}>
+                                {agent.first_name} {agent.last_name} (
+                                {agent.current_active_tickets}/{agent.max_active_tickets}
+                                {agent.current_active_tickets >= agent.max_active_tickets
+                                  ? " · at capacity"
+                                  : ""}
+                                )
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="button secondary"
+                            disabled={!selectedAgent || Boolean(busy)}
+                            onClick={() =>
+                              void perform("Assignment", () =>
+                                apiRequest(`/tickets/${ticket.id}/assign`, {
+                                  method: "POST",
+                                  body: { agent_id: selectedAgent },
+                                }),
+                              )
+                            }
+                          >
+                            Assign
+                          </button>
+                        </div>
+                        {candidatesHasMore && (
+                          <button
+                            className="button subtle"
+                            disabled={candidatesLoading}
+                            onClick={loadMoreCandidates}
+                          >
+                            {candidatesLoading ? "Loading agents…" : "Load more agents"}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
               </div>
             )}
             {canStart && (
@@ -938,12 +1282,17 @@ export function allowedTransitions(
 export function AnalysisCard({
   result,
   busy,
+  polling = false,
+  pollError,
   onRun,
 }: {
   result?: AnalysisResult;
   busy: boolean;
+  polling?: boolean;
+  pollError?: string;
   onRun: () => void;
 }) {
+  const live = result?.status === "pending" || result?.status === "running";
   return (
     <section className={`card analysis-card analysis-${result?.status ?? "empty"}`}>
       <header>
@@ -1003,6 +1352,16 @@ export function AnalysisCard({
             </button>
           </footer>
         </div>
+      )}
+      {pollError && live && (
+        <p className="muted small" role="status">
+          <AlertTriangle size={13} /> {pollError}
+        </p>
+      )}
+      {polling && live && !pollError && (
+        <p className="muted small" role="status">
+          Checking for analysis updates…
+        </p>
       )}
     </section>
   );

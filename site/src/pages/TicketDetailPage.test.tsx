@@ -136,4 +136,18 @@ describe("analysis states", () => {
     expect(screen.getByText("The analysis worker is unavailable.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /retry/i })).toBeEnabled();
   });
+
+  it("shows a visible reconnecting status while polling retries a transient failure", () => {
+    render(
+      <AnalysisCard
+        result={{ ...analysis, status: "running" }}
+        busy={false}
+        polling
+        pollError="Reconnecting to analysis status… (retry 2)"
+        onRun={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/reconnecting to analysis status/i)).toBeInTheDocument();
+  });
 });

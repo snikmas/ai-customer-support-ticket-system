@@ -305,6 +305,8 @@ def create_staff_user(
         constants.Role.SUPER_ADMIN,
     }:
         raise AuthorizationError()
+    if user_data.role is constants.Role.SUPER_ADMIN and requester.role is not constants.Role.SUPER_ADMIN:
+        raise AuthorizationError(code="super_admin_management_forbidden")
     department, active_skills = operations.active_routing_catalog_selection(
         user_data.department_id,
         user_data.skill_ids,
@@ -426,6 +428,49 @@ def get_all_users(requester: api_models.User,
         search=search,
     )
 
+
+def get_assignment_candidates(
+    requester: api_models.User,
+    department_id: str | None,
+    *,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[api_models.AssignmentCandidate]:
+    """List live agents eligible for manual assignment.
+
+    Manual assignment is a manager/admin action, so the same roles gate this
+    read. Each returned candidate already satisfies the assignment eligibility
+    rule (active agent, live department, AVAILABLE, spare capacity).
+    """
+
+    stored_requester = operations.get_user(requester.id)
+    if stored_requester is None:
+        raise UserNotFoundError()
+    if stored_requester.role not in PROFILE_MANAGER_ROLES:
+        raise AuthorizationError()
+
+    rows = operations.get_assignment_candidates(
+        department_id,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+    return [
+        api_models.AssignmentCandidate(
+            user_id=user.id,
+            nickname=user.nickname,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            department_id=profile.department_id,
+            availability_status=profile.availability_status,
+            current_active_tickets=workload,
+            max_active_tickets=profile.max_active_tickets,
+            can_receive_new_tickets=True,
+        )
+        for user, profile, workload in rows
+    ]
+
 def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, requester: api_models.User) -> db_models.User:
     requester = operations.get_user(requester.id)
     if requester is None:
@@ -439,6 +484,11 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
     updated_info = updated_info.model_dump(exclude_unset=True)
     if not updated_info:
         raise EmptyUpdateError()
+    if requester.role is not constants.Role.SUPER_ADMIN and (
+        user.role is constants.Role.SUPER_ADMIN
+        or updated_info.get("role") is constants.Role.SUPER_ADMIN
+    ):
+        raise AuthorizationError(code="super_admin_management_forbidden")
     routing_eligibility_may_change = bool(
         {"role", "user_status"} & updated_info.keys()
     )
@@ -497,6 +547,16 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
         raise FinalAdminAccessError()
 
     if 'password' in updated_info:
+        # A password change revokes every refresh session for this user in the
+        # same transaction (see revoke_refresh_sessions below), so no refresh
+        # token issued before the change can mint a new session. Already-issued
+        # access JWTs are not revoked; they keep their documented maximum
+        # 15-minute lifetime (src/core/security.py). Immediate access-token
+        # invalidation would need a separate session-version mechanism.
+        #
+        # UX dependency (Phase H, out of scope here): the frontend should sign
+        # the user out after a successful password change. The backend already
+        # rejects the revoked refresh tokens, so the session cannot be renewed.
         updated_info['password'] = hash_password(updated_info['password'])
         audit_new_info['password'] = "<changed>"
 
@@ -520,7 +580,19 @@ def update_user(updated_info_id: str, updated_info: api_models.UserUpdate, reque
         created_at=datetime.now(timezone.utc)
     )
 
-    user = operations.update_user(updated_info_id, updated_info, event)
+    try:
+        user = operations.update_user(
+            updated_info_id,
+            updated_info,
+            event,
+            guards=operations.UserLifecycleGuards(
+                protect_last_super_admin=True,
+                protect_final_admin_access=(requester.id == user.id),
+            ),
+            revoke_refresh_sessions=("password" in updated_info),
+        )
+    except IntegrityError as exc:
+        raise UserAlreadyExistsError() from exc
     if user is None:
         raise InternalOperationError("User could not be updated", code="user_update_failed")
 
@@ -597,5 +669,13 @@ def delete_user(id: str, requester_user: api_models.User) -> None:
         created_at=now
     )
 
-    if operations.delete_user(id, delete_info, event) is not True:
+    if operations.delete_user(
+        id,
+        delete_info,
+        event,
+        guards=operations.UserLifecycleGuards(
+            protect_last_super_admin=True,
+            protect_final_admin_access=(requester.id == id),
+        ),
+    ) is not True:
         raise InternalOperationError("User could not be deleted", code="user_delete_failed")

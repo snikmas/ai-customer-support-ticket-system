@@ -16,12 +16,22 @@ def _validate_http_url(value: str) -> str:
     return value
 
 
-def _strip(value: str) -> str:
-    return value.strip()
+def _require_string(value: object) -> str:
+    # BeforeValidators run before type coercion, so a raw non-string (int, list,
+    # dict, bool, ...) would reach .strip() and raise AttributeError, which
+    # Pydantic does not convert into a ValidationError. Reject it explicitly so
+    # the request fails with a 422 instead of a 500.
+    if not isinstance(value, str):
+        raise ValueError("value_must_be_a_string")
+    return value
 
 
-def _normalize_nickname(value: str) -> str:
-    return value.strip().lower()
+def _strip(value: object) -> str:
+    return _require_string(value).strip()
+
+
+def _normalize_nickname(value: object) -> str:
+    return _require_string(value).strip().lower()
 
 
 Nickname = Annotated[

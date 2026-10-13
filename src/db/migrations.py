@@ -51,6 +51,28 @@ def add_ticket_department_id(engine: Engine) -> None:
         )
 
 
+def add_ticket_routing_attempted_at(engine: Engine) -> None:
+    """Add the durable fairness timestamp and its supporting index once."""
+    inspector = inspect(engine)
+    if "tickets" not in inspector.get_table_names():
+        return
+    column_names = {column["name"] for column in inspector.get_columns("tickets")}
+    if "routing_attempted_at" in column_names:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE tickets ADD COLUMN routing_attempted_at DATETIME")
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_tickets_waiting_scan ON tickets "
+                "(deleted_at, status, assigned_agent_id, routing_attempted_at, "
+                "created_at, id)"
+            )
+        )
+
+
 def add_refresh_session_previous_hash(engine: Engine) -> None:
     """Add the previous-token hash used for refresh-token reuse detection."""
     inspector = inspect(engine)
@@ -241,6 +263,16 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
         "prompt_version": "VARCHAR(50)",
         "input_tokens": "INTEGER",
         "output_tokens": "INTEGER",
+        # Execution ownership added by the interrupted-analysis recovery work.
+        # A legacy RUNNING row has no live owner, so dispatch_count starts at 0
+        # and the lease stays NULL until the recovery migration expires it.
+        "dispatch_count": "INTEGER NOT NULL DEFAULT 0",
+        "execution_id": "VARCHAR(36)",
+        "lease_expires_at": "DATETIME",
+        # Durable fairness marker for the bounded reconciler (Phase E follow-up).
+        # Existing rows start NULL, meaning "never considered", so they are
+        # scanned first after the upgrade.
+        "reconciliation_attempted_at": "DATETIME",
     }
     lifecycle_current = (
         lifecycle_columns.issubset(columns)
@@ -260,6 +292,15 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
                 for name, sql_type in missing_provenance:
                     connection.execute(text(
                         f"ALTER TABLE analysis_result ADD COLUMN {name} {sql_type}"
+                    ))
+                # Pre-existing RUNNING rows cannot be attributed to a live
+                # worker after the upgrade. Expire their lease so the bounded
+                # reconciler moves them to a safe terminal state instead of
+                # leaving them RUNNING forever.
+                if "lease_expires_at" not in columns:
+                    connection.execute(text(
+                        "UPDATE analysis_result SET lease_expires_at = CURRENT_TIMESTAMP "
+                        "WHERE status = 'RUNNING' AND lease_expires_at IS NULL"
                     ))
         return
     if engine.dialect.name != "sqlite":
@@ -295,6 +336,10 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
                     input_tokens INTEGER,
                     output_tokens INTEGER,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
+                    dispatch_count INTEGER NOT NULL DEFAULT 0,
+                    execution_id VARCHAR(36),
+                    lease_expires_at DATETIME,
+                    reconciliation_attempted_at DATETIME,
                     created_at DATETIME NOT NULL,
                     started_at DATETIME,
                     completed_at DATETIME,
@@ -347,15 +392,17 @@ def migrate_analysis_result_contract(engine: Engine) -> None:
                 INSERT INTO analysis_result__contract_migration (
                     id, input_snapshot, summary, error_code, error_message,
                     ticket_id, job_id, requester_id, provider, model,
-                    prompt_version, input_tokens, output_tokens, attempt_count, created_at,
-                    started_at, completed_at, updated_at, status
+                    prompt_version, input_tokens, output_tokens, attempt_count,
+                    dispatch_count, execution_id, lease_expires_at,
+                    reconciliation_attempted_at,
+                    created_at, started_at, completed_at, updated_at, status
                 )
                 SELECT
                     id, ?, NULL, 'legacy_contract_migrated',
                     'Legacy analysis could not be resumed',
                     ticket_id, job_id, requester_id, NULL, NULL,
-                    NULL, NULL, NULL, 0, created_at,
-                    NULL, created_at, created_at, 'FAILED'
+                    NULL, NULL, NULL, 0, 0, NULL, NULL, NULL,
+                    created_at, NULL, created_at, created_at, 'FAILED'
                 FROM analysis_result
                 """,
                 (legacy_snapshot,),

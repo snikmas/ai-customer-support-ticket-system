@@ -1,0 +1,130 @@
+# Task-owned full-stack stack for the Phase I HTTP smoke gate.
+#
+# This is deliberately separate from compose.yaml so the smoke never reads a
+# developer's private .env, never reuses the normal project volumes, and never
+# binds the normal ports. All credentials below are synthetic throwaway values.
+#
+# Run it through scripts/smoke_http_stack.py, which generates throwaway JWT
+# keys into scripts/nginx_smoke/keys/ (gitignored) before starting.
+name: resolveai-smoke
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: smoke-postgres-password
+      POSTGRES_DB: tickets
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tickets"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      PYTHON_DOTENV_DISABLED: "1"
+      DATABASE_URL: postgresql+psycopg://postgres:smoke-postgres-password@db:5432/tickets
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment:
+      PYTHON_DOTENV_DISABLED: "1"
+      DATABASE_URL: postgresql+psycopg://postgres:smoke-postgres-password@db:5432/tickets
+      REDIS_ENABLED: "true"
+      REDIS_URL: redis://redis:6379/0
+      FRONTEND_ORIGINS: http://127.0.0.1:${SMOKE_WEB_PORT:-18080}
+      JWT_ALGORITHM: RS256
+      JWT_PRIVATE_KEY_PATH: keys/private.pem
+      JWT_PUBLIC_KEY_PATH: keys/public.pem
+      REFRESH_TOKEN_SECRET: smoke-refresh-token-secret-not-for-production
+      ATTACHMENTS_DIR: /app/uploads
+      ANALYZER_PROVIDER: fake
+      FAKE_ANALYZER_DELAY_SECONDS: "0"
+      FAKE_ANALYZER_FAILURE_MODE: none
+    volumes:
+      - ./scripts/nginx_smoke/keys:/app/keys:ro
+      - smoke_attachments:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  worker:
+    build: .
+    command: ["rq", "worker", "ticket_jobs", "ticket_routing", "--with-scheduler", "--url", "redis://redis:6379/0"]
+    environment:
+      PYTHON_DOTENV_DISABLED: "1"
+      DATABASE_URL: postgresql+psycopg://postgres:smoke-postgres-password@db:5432/tickets
+      REDIS_ENABLED: "true"
+      REDIS_URL: redis://redis:6379/0
+      ANALYZER_PROVIDER: fake
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The retry scheduler is embedded in the worker above (--with-scheduler); this
+  # separate cron service provides the recurring recovery schedule that
+  # /health/ready checks. Both are required for the positive readiness gate.
+  cron:
+    build: .
+    command: ["rq", "cron", "src/jobs/cron.py", "--url", "redis://redis:6379/0"]
+    environment:
+      PYTHON_DOTENV_DISABLED: "1"
+      DATABASE_URL: postgresql+psycopg://postgres:smoke-postgres-password@db:5432/tickets
+      REDIS_ENABLED: "true"
+      REDIS_URL: redis://redis:6379/0
+      ANALYZER_PROVIDER: fake
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./site
+      args:
+        VITE_API_BASE_URL: /api
+    ports:
+      - "127.0.0.1:${SMOKE_WEB_PORT:-18080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  smoke_attachments:

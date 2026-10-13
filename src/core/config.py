@@ -42,11 +42,23 @@ ROUTING_RECONCILIATION_INTERVAL_SECONDS = int(
 )
 OVERDUE_SCAN_BATCH_SIZE = int(os.getenv("OVERDUE_SCAN_BATCH_SIZE", "100"))
 OVERDUE_SCAN_INTERVAL_SECONDS = int(os.getenv("OVERDUE_SCAN_INTERVAL_SECONDS", "60"))
+ANALYSIS_RECONCILIATION_BATCH_SIZE = int(
+    os.getenv("ANALYSIS_RECONCILIATION_BATCH_SIZE", "50")
+)
+ANALYSIS_RECONCILIATION_INTERVAL_SECONDS = int(
+    os.getenv("ANALYSIS_RECONCILIATION_INTERVAL_SECONDS", "60")
+)
 LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = 900
 ANALYSIS_RATE_LIMIT_MAX_REQUESTS = 5
 ANALYSIS_RATE_LIMIT_WINDOW_SECONDS = 60
 ANALYZER_PROVIDER = os.getenv("ANALYZER_PROVIDER", "fake").strip().lower()
+# Hard cap on provider output tokens so a single analysis cannot run up an
+# unbounded bill. A summary is at most 300 characters, so 400 tokens is generous.
+try:
+    ANALYZER_MAX_OUTPUT_TOKENS = int(os.getenv("ANALYZER_MAX_OUTPUT_TOKENS", "400"))
+except ValueError as exc:
+    raise RuntimeError("ANALYZER_MAX_OUTPUT_TOKENS must be an integer") from exc
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv(
     "OPENROUTER_MODEL",
@@ -98,11 +110,21 @@ def validate_routing_reconciliation_settings() -> None:
         raise RuntimeError("OVERDUE_SCAN_BATCH_SIZE must be greater than zero")
     if OVERDUE_SCAN_INTERVAL_SECONDS <= 0:
         raise RuntimeError("OVERDUE_SCAN_INTERVAL_SECONDS must be greater than zero")
+    if ANALYSIS_RECONCILIATION_BATCH_SIZE <= 0:
+        raise RuntimeError(
+            "ANALYSIS_RECONCILIATION_BATCH_SIZE must be greater than zero"
+        )
+    if ANALYSIS_RECONCILIATION_INTERVAL_SECONDS <= 0:
+        raise RuntimeError(
+            "ANALYSIS_RECONCILIATION_INTERVAL_SECONDS must be greater than zero"
+        )
 
 
 def validate_analyzer_settings() -> None:
     if ANALYZER_PROVIDER not in {"fake", "openrouter", "deepseek"}:
         raise RuntimeError("ANALYZER_PROVIDER must be fake, openrouter, or deepseek")
+    if ANALYZER_MAX_OUTPUT_TOKENS <= 0:
+        raise RuntimeError("ANALYZER_MAX_OUTPUT_TOKENS must be greater than zero")
     if OPENROUTER_TIMEOUT_SECONDS <= 0:
         raise RuntimeError("OPENROUTER_TIMEOUT_SECONDS must be greater than zero")
     if DEEPSEEK_TIMEOUT_SECONDS <= 0:

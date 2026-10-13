@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 def generate_id() -> str:
     return str(uuid4())
 
+# How long a worker owns a RUNNING analysis execution before the reconciler
+# may treat it as abandoned. It must exceed the RQ job timeout so a healthy
+# in-flight provider call is never mistaken for dead work.
+ANALYSIS_EXECUTION_LEASE_SECONDS = 300
+
 COMMENT_BODY_MAX_LENGTH = 32000
 DEFAULT_PAGE_LIMIT = 20
 MAX_PAGE_LIMIT = 100

@@ -23,12 +23,8 @@ router = APIRouter(
 
 
 def _get_client_host(request: Request) -> str:
-    # Nginx (the trusted reverse proxy) appends the real client IP to
-    # X-Forwarded-For. Use the rightmost value so rate limits apply per real
-    # client instead of collapsing every request to nginx's container IP.
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[-1].strip()
+    # Uvicorn applies forwarded headers only from configured trusted peers.
+    # Never trust a raw header supplied directly by an HTTP client here.
     if request.client is not None:
         return request.client.host
     return "unknown"

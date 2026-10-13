@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from src.constants.enums import Visibility, Source
 from .validation import EntityId, LongBody
 
@@ -33,6 +33,13 @@ class CommentUpdate(BaseModel):
 
     body: LongBody | None = None
     visibility: Visibility | None = None
+
+    @field_validator("body", "visibility")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("comment_field_cannot_be_null")
+        return value
 
 
 class AttachmentResponse(BaseModel):

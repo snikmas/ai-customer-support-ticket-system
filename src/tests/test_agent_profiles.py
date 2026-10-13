@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from main import app
 from src import constants
 from src.db import models as db_models
 from src.db import operations
+from src.exceptions import InvalidAssigneeError
 from src.routers import users as users_router
 
 
@@ -192,6 +194,92 @@ def test_routing_query_uses_only_current_hard_eligibility_pool(
 
     assert selected is not None
     assert selected.id == "eligible"
+
+
+def test_manual_assignment_requires_available_but_overrides_capacity(
+    monkeypatch, tmp_path
+):
+    engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session, session.begin():
+        session.add_all(
+            [
+                _user("customer", constants.Role.USER, now),
+                _user("online", constants.Role.AGENT, now),
+                _user("full", constants.Role.AGENT, now),
+                _user("offline", constants.Role.AGENT, now),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                _profile("online", now, capacity=3),
+                _profile("full", now, capacity=0),
+                _profile("offline", now, status=constants.AvailabilityStatus.OFFLINE),
+            ]
+        )
+        session.add(_ticket("assignment-ticket", "customer", now))
+
+    # An Offline agent is rejected at the transactional write boundary.
+    with pytest.raises(InvalidAssigneeError):
+        operations.assign_ticket("assignment-ticket", "offline")
+
+    # Available-but-at-capacity is allowed: the manager overrides capacity.
+    assigned = operations.assign_ticket("assignment-ticket", "full")
+    assert assigned is not None
+    assert assigned.assigned_agent_id == "full"
+
+
+def test_manual_candidates_require_available_but_allow_at_capacity(
+    monkeypatch, tmp_path
+):
+    engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session, session.begin():
+        session.add_all(
+            [
+                _user("customer", constants.Role.USER, now),
+                _user("below", constants.Role.AGENT, now),
+                _user("full", constants.Role.AGENT, now),
+                _user("offline", constants.Role.AGENT, now),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                _profile("below", now, capacity=3),
+                _profile("full", now, capacity=0),
+                _profile("offline", now, status=constants.AvailabilityStatus.OFFLINE),
+            ]
+        )
+        session.add(_ticket("candidate-ticket", "customer", now))
+
+    candidates = operations.get_assignment_candidates("support")
+    candidate_ids = {user.id for user, _profile_row, _workload in candidates}
+    assert candidate_ids == {"below", "full"}
+    assert "offline" not in candidate_ids
+
+
+def test_manual_candidates_pagination_reaches_later_pages(monkeypatch, tmp_path):
+    engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session, session.begin():
+        session.add(_user("customer", constants.Role.USER, now))
+        session.flush()
+        for index in range(5):
+            session.add(_user(f"agent-{index}", constants.Role.AGENT, now))
+        session.flush()
+        for index in range(5):
+            session.add(_profile(f"agent-{index}", now))
+        session.add(_ticket("paging-ticket", "customer", now))
+
+    first = operations.get_assignment_candidates("support", limit=2, offset=0)
+    second = operations.get_assignment_candidates("support", limit=2, offset=2)
+    third = operations.get_assignment_candidates("support", limit=2, offset=4)
+    assert [len(page) for page in (first, second, third)] == [2, 2, 1]
+
+    search = operations.get_assignment_candidates("support", search="agent-4")
+    assert {user.id for user, _profile_row, _workload in search} == {"agent-4"}
 
 
 def test_never_assigned_agent_wins_equal_workload_tie(monkeypatch, tmp_path):

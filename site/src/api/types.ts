@@ -119,6 +119,18 @@ export interface AgentProfile {
   updated_at: string;
 }
 
+export interface AssignmentCandidate {
+  user_id: string;
+  nickname: string;
+  first_name: string;
+  last_name: string;
+  department_id: string | null;
+  availability_status: AgentProfile["availability_status"];
+  current_active_tickets: number;
+  max_active_tickets: number;
+  can_receive_new_tickets: boolean;
+}
+
 export interface TicketCustomerSummary {
   user_id: string;
   display_name: string;

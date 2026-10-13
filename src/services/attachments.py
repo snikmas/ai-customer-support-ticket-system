@@ -3,6 +3,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from src import constants, models
 from src.core.config import ATTACHMENTS_DIR
@@ -10,10 +11,13 @@ from src.db import models as db_models, operations
 from src.exceptions.domain import (
     AttachmentNotFoundError,
     AttachmentValidationError,
+    AuthorizationError,
+    CommentNotFoundError,
     InternalOperationError,
 )
 from src.services import comments as comments_service
 from src.services import tickets as tickets_service
+from src.services.permissions import can_write_ticket_content
 from src.storage import LocalAttachmentStorage
 
 MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024
@@ -51,36 +55,94 @@ def _response(attachment: db_models.Attachment) -> models.AttachmentResponse:
     return models.AttachmentResponse.model_validate(attachment, from_attributes=True)
 
 
-async def upload_attachment(
+def _best_effort_delete(storage_key: str) -> None:
+    """Remove a blob we generated but did not commit.
+
+    The key is a fresh UUID created for this request, so it can never belong to
+    an already-committed attachment. A storage failure here must not mask the
+    original error.
+    """
+    try:
+        storage.delete(storage_key)
+    except Exception:  # noqa: BLE001 - cleanup is best-effort
+        pass
+
+
+def _recheck_access(
+    comment: db_models.Comment | None,
+    ticket: db_models.Ticket | None,
+    requester: models.User,
+    actor: db_models.User | None = None,
+) -> None:
+    """Re-run the authorization policy against the locked rows.
+
+    This runs inside the reservation transaction, so a comment deleted or
+    restricted, a ticket reassigned, or an account deactivated after the initial
+    read cannot be extended with a new file. ``actor`` is the requester's
+    current database row, so a stale request cannot rely on a role or status
+    that has since changed.
+    """
+    if (
+        comment is None
+        or ticket is None
+        or comment.deleted_at is not None
+        or ticket.deleted_at is not None
+    ):
+        raise AttachmentNotFoundError()
+
+    effective_role = actor.role if actor is not None else requester.role
+    if actor is not None and (
+        actor.deleted_at is not None
+        or actor.user_status != constants.UserStatus.ACTIVE
+    ):
+        raise AuthorizationError(code="account_inactive")
+    if not can_write_ticket_content(effective_role):
+        raise AuthorizationError()
+    if comment.author_user_id != requester.id:
+        raise AuthorizationError(code="attachment_author_required")
+
+    # Ticket access is required in addition to authorship: a customer must still
+    # own the ticket and an agent must still be its assignee. Otherwise a stale
+    # upload could append files after reassignment.
+    if effective_role == constants.Role.USER:
+        if ticket.creator_user_id != requester.id:
+            raise AuthorizationError()
+    elif effective_role == constants.Role.AGENT:
+        if ticket.assigned_agent_id != requester.id:
+            raise AuthorizationError()
+
+    try:
+        comments_service._check_comment_is_visible(comment, requester)
+    except CommentNotFoundError as exc:
+        raise AttachmentNotFoundError() from exc
+
+
+def _persist_attachment(
     ticket_id: str,
     comment_id: str,
-    upload: UploadFile,
+    filename: str,
+    extension: str,
+    content_type: str,
+    received: bytes,
     requester: models.User,
 ) -> models.AttachmentResponse:
+    """Run all blocking authorization, storage, and SQL work off the event loop.
+
+    The bytes were already read and size/type-validated by the caller, so no
+    long-lived database lock is held while the upload body is being consumed.
+    """
+    if not can_write_ticket_content(requester.role):
+        raise AuthorizationError()
     # Both checks are intentional: the ticket check applies ticket visibility,
     # while the comment check applies comment visibility.
     tickets_service.get_ticket(ticket_id, requester)
     comment = comments_service.get_comment(ticket_id, comment_id, requester)
     if comment.deleted_at is not None:
         raise AttachmentNotFoundError()
-    if operations.count_comment_attachments(comment_id) >= MAX_ATTACHMENTS_PER_COMMENT:
-        raise AttachmentValidationError(
-            f"A comment can have at most {MAX_ATTACHMENTS_PER_COMMENT} files",
-            code="attachment_count_exceeded",
-        )
-
-    filename, extension, content_type = _safe_filename(upload.filename)
-    received = await upload.read(MAX_ATTACHMENT_SIZE + 1)
-    if len(received) > MAX_ATTACHMENT_SIZE:
-        raise AttachmentValidationError(
-            f"Each attachment must be at most {MAX_ATTACHMENT_SIZE // (1024 * 1024)} MiB",
-            code="attachment_size_exceeded",
-        )
-    if upload.content_type and upload.content_type != content_type:
-        raise AttachmentValidationError(
-            "The declared MIME type does not match the filename extension",
-            code="attachment_mime_mismatch",
-        )
+    # Reading a comment never implies permission to append files to it. Only
+    # the author may upload, and only while they still have current access.
+    if comment.author_user_id != requester.id:
+        raise AuthorizationError(code="attachment_author_required")
 
     now = constants.utc_now()
     attachment = db_models.Attachment(
@@ -94,7 +156,6 @@ async def upload_attachment(
         created_at=now,
         deleted_at=None,
     )
-    storage.save(attachment.storage_key, received)
     event = models.Event(
         id=constants.generate_id(),
         entity_type=constants.EntityType.ATTACHMENT,
@@ -110,15 +171,75 @@ async def upload_attachment(
         metadata=None,
         created_at=now,
     )
+
+    # Write the blob first, then commit metadata. If the write fails or leaves a
+    # partial file, remove it (no metadata references this key yet).
     try:
-        return _response(operations.create_attachment(attachment, event))
+        storage.save(attachment.storage_key, received)
     except Exception as exc:
-        # Metadata insertion failed, so do not leave an unreferenced local blob.
-        storage.delete(attachment.storage_key)
+        _best_effort_delete(attachment.storage_key)
         raise InternalOperationError(
             "Attachment could not be saved",
             code="attachment_save_failed",
         ) from exc
+
+    try:
+        committed = operations.create_attachment_guarded(
+            attachment,
+            event,
+            max_attachments=MAX_ATTACHMENTS_PER_COMMENT,
+            authorize=lambda locked_comment, locked_ticket, actor: _recheck_access(
+                locked_comment, locked_ticket, requester, actor
+            ),
+        )
+    except (AttachmentValidationError, AttachmentNotFoundError, AuthorizationError):
+        # Rejected by the cap or the locked re-check: no metadata was committed,
+        # so the blob is unreferenced and safe to remove.
+        _best_effort_delete(attachment.storage_key)
+        raise
+    except Exception as exc:
+        # Metadata insertion/commit failed, so do not leave an unreferenced blob.
+        _best_effort_delete(attachment.storage_key)
+        raise InternalOperationError(
+            "Attachment could not be saved",
+            code="attachment_save_failed",
+        ) from exc
+
+    return _response(committed)
+
+
+async def upload_attachment(
+    ticket_id: str,
+    comment_id: str,
+    upload: UploadFile,
+    requester: models.User,
+) -> models.AttachmentResponse:
+    # Validate filename/type and spool the body before any database lock is
+    # taken. The async read stays on the event loop; every blocking SQL and
+    # filesystem call then runs in a worker thread.
+    filename, extension, content_type = _safe_filename(upload.filename)
+    received = await upload.read(MAX_ATTACHMENT_SIZE + 1)
+    if len(received) > MAX_ATTACHMENT_SIZE:
+        raise AttachmentValidationError(
+            f"Each attachment must be at most {MAX_ATTACHMENT_SIZE // (1024 * 1024)} MiB",
+            code="attachment_size_exceeded",
+        )
+    if upload.content_type and upload.content_type != content_type:
+        raise AttachmentValidationError(
+            "The declared MIME type does not match the filename extension",
+            code="attachment_mime_mismatch",
+        )
+
+    return await run_in_threadpool(
+        _persist_attachment,
+        ticket_id,
+        comment_id,
+        filename,
+        extension,
+        content_type,
+        received,
+        requester,
+    )
 
 
 def list_attachments(

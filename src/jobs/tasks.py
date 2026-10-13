@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 from src.cache import delete_ticket as delete_cached_ticket
+from src.core.logging import correlation_context
 from src.db import (
     complete_analysis_result,
     fail_analysis_result,
@@ -84,6 +85,7 @@ def _fail_analysis_permanently(
     *,
     error_code: str,
     error_message: str,
+    execution_id: str | None = None,
 ) -> None:
     fail_analysis_result(
         analysis_result_id,
@@ -91,6 +93,7 @@ def _fail_analysis_permanently(
         error_code=error_code,
         error_message=error_message,
         now=utc_now(),
+        execution_id=execution_id,
     )
     _disable_current_job_retries()
     _notify_analysis_owner(
@@ -102,6 +105,15 @@ def _fail_analysis_permanently(
 
 def analyze_analysis_result(analysis_result_id: str) -> dict:
     """Run one attempt and persist every lifecycle transition on one SQL row."""
+    current_job = get_current_job()
+    with correlation_context(
+        analysis_result_id=analysis_result_id,
+        job_id=getattr(current_job, "id", None),
+    ):
+        return _analyze_analysis_result(analysis_result_id)
+
+
+def _analyze_analysis_result(analysis_result_id: str) -> dict:
     logger.info(
         "Analysis attempt started",
         extra={"analysis_result_id": analysis_result_id},
@@ -126,6 +138,7 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
             analysis_result_id,
             error_code="ticket_deleted",
             error_message="Ticket was deleted before analysis",
+            execution_id=running.execution_id,
         )
         logger.warning(
             "Analysis permanently failed because its ticket was deleted",
@@ -148,7 +161,11 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
         ).analyze(snapshot)
     except RetryableAnalysisError as exc:
         if running.attempt_count < 3:
-            return_analysis_to_pending(analysis_result_id, utc_now())
+            return_analysis_to_pending(
+                analysis_result_id,
+                utc_now(),
+                execution_id=running.execution_id,
+            )
             logger.warning(
                 "Analysis attempt will be retried",
                 extra={
@@ -162,6 +179,7 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
             analysis_result_id,
             error_code=exc.code,
             error_message=exc.safe_message,
+            execution_id=running.execution_id,
         )
         logger.warning(
             "Analysis retry budget exhausted",
@@ -173,6 +191,7 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
             analysis_result_id,
             error_code="invalid_analysis_snapshot",
             error_message="Stored analysis input is invalid",
+            execution_id=running.execution_id,
         )
         logger.warning(
             "Analysis snapshot validation failed",
@@ -184,6 +203,7 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
             analysis_result_id,
             error_code=exc.code,
             error_message=exc.safe_message,
+            execution_id=running.execution_id,
         )
         logger.warning(
             "Analysis permanently rejected its input",
@@ -192,12 +212,17 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
         raise
     except Exception:
         if running.attempt_count < 3:
-            return_analysis_to_pending(analysis_result_id, utc_now())
+            return_analysis_to_pending(
+                analysis_result_id,
+                utc_now(),
+                execution_id=running.execution_id,
+            )
             raise RetryableAnalysisError("temporary analyzer failure") from None
         _fail_analysis_permanently(
             analysis_result_id,
             error_code="provider_unavailable",
             error_message="Analysis provider temporarily unavailable",
+            execution_id=running.execution_id,
         )
         raise RetryableAnalysisError("analysis retry budget exhausted") from None
 
@@ -207,6 +232,7 @@ def analyze_analysis_result(analysis_result_id: str) -> dict:
         utc_now(),
         input_tokens=output.input_tokens,
         output_tokens=output.output_tokens,
+        execution_id=running.execution_id,
     )
     if completed is None:
         raise PermanentAnalysisError("analysis completion transition failed")
@@ -232,6 +258,12 @@ def route_ticket(ticket_id: str) -> dict:
     Normal domain outcomes are returned instead of raised, so RQ retries only
     unexpected technical failures from the database/task infrastructure.
     """
+    current_job = get_current_job()
+    with correlation_context(ticket_id=ticket_id, job_id=getattr(current_job, "id", None)):
+        return _route_ticket(ticket_id)
+
+
+def _route_ticket(ticket_id: str) -> dict:
     logger.info("Ticket routing started", extra={"ticket_id": ticket_id})
     try:
         result = try_route_ticket(ticket_id)

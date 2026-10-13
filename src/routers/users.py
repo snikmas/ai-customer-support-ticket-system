@@ -16,6 +16,26 @@ router = APIRouter(
 # should these handlers become `async def` and await those operations.
 
 
+# This route must be declared before `/{id}` so the literal path is not
+# captured as a user id.
+@router.get("/assignment-candidates", status_code=200)
+def list_assignment_candidates(
+    requester=Depends(get_current_user),
+    department_id: str | None = None,
+    search: str | None = Query(None, max_length=200),
+    limit: int = Query(50, ge=1, le=constants.MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+):
+    data = s_users.get_assignment_candidates(
+        requester,
+        department_id,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+    return {"data": data}
+
+
 @router.get("/{id}", status_code=200)
 def get_user(id: str, requester = Depends(get_current_user)):
     data = s_users.get_user(id, requester)

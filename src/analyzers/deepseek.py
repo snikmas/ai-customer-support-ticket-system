@@ -12,6 +12,7 @@ from .base import (
     PermanentAnalysisError,
     RetryableAnalysisError,
 )
+from src.core.config import ANALYZER_MAX_OUTPUT_TOKENS
 
 
 DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
@@ -191,6 +192,7 @@ class DeepSeekAnalyzer:
             ],
             "response_format": {"type": "json_object"},
             "stream": False,
+            "max_tokens": ANALYZER_MAX_OUTPUT_TOKENS,
         }
 
     def analyze(self, snapshot: AnalysisInputSnapshot) -> AnalysisOutput:

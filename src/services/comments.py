@@ -1,5 +1,26 @@
+"""Comment authorization.
+
+Action matrix for a comment on a ticket the requester may currently access.
+"own" means the requester authored the comment. A dash means denied.
+
+| Action            | customer            | assigned agent        | other agent | read-only | manager+ |
+|-------------------|---------------------|-----------------------|-------------|-----------|----------|
+| list / detail     | own ticket, public  | assigned/NEW, +internal | NEW, +internal | public+internal | all |
+| attachment list   | own ticket, public  | assigned/NEW, +internal | NEW, +internal | public+internal | all |
+| attachment download| own ticket, public | assigned/NEW, +internal | NEW, +internal | public+internal | all |
+| edit body         | own & public only   | own, not manager-private | -         | -         | -        |
+| change visibility | own public -> public | own, public/internal | -           | -         | any      |
+| delete            | own                 | own                   | -           | -         | any      |
+| upload file       | own comment only    | own comment only      | -           | -         | own comment only |
+| create comment    | own ticket, public  | assigned/NEW          | NEW         | -         | any      |
+
+Body editing and file upload are author-only for every role: managers/admins
+may change visibility or soft-delete, but never replace another author's body.
+Read-only users may never create, update, or delete content.
+"""
+
 from datetime import datetime, timezone
-from .permissions import check_for_access
+from .permissions import can_write_ticket_content, check_for_access
 from src import constants
 
 from src import models as api_models
@@ -26,7 +47,9 @@ def _check_comment_is_visible(comment: db_models.Comment, requester: api_models.
         raise AuthorizationError()
     if check_for_access(requester.role, constants.Role.MANAGER):
         return
-    if check_for_access(requester.role, constants.Role.AGENT):
+    # Read-only staff share the agent visibility subset (public + internal) so
+    # the list and direct-detail endpoints agree. Manager-private stays denied.
+    if check_for_access(requester.role, constants.Role.AGENT_READONLY):
         if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER:
             raise AuthorizationError()
         return
@@ -111,6 +134,9 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
     if ticket is None or ticket.deleted_at is not None:
         raise TicketNotFoundError()
 
+    if not can_write_ticket_content(requester.role):
+        raise AuthorizationError()
+
     # Commenting follows ticket read access: managers anywhere, agents only on
     # their assigned work or the unassigned NEW queue, customers only their own.
     if check_for_access(requester.role, constants.Role.MANAGER):
@@ -181,75 +207,132 @@ def create_ticket_comment(ticket_id: str, comment_create:api_models.CommentCreat
 
 
 
-def update_comment(ticket_id: str, comment_id: str, new_info: api_models.CommentUpdate, requester: api_models.User) -> api_models.Comment:
-    
-    comment = operations.get_comment(comment_id)
+def _authorize_comment_update(
+    ticket_id: str,
+    comment: db_models.Comment | None,
+    ticket: db_models.Ticket | None,
+    updated_info: dict,
+    requester: api_models.User,
+    actor: db_models.User | None,
+) -> None:
+    """Re-check the update policy against the currently locked rows.
+
+    Runs authoritatively inside the write transaction. Any condition that could
+    have changed since the request's first read (visibility, deletion,
+    authorship, ticket access, and the actor's role/account state) is
+    re-evaluated here so a stale request cannot undo a newer restriction.
+
+    ``requester`` carries the token identity (its subject is stable), but the
+    role and account state come from the freshly locked ``actor`` row, never
+    from the role claim captured when the request arrived. If the actor row is
+    missing, banned, or soft-deleted the write is denied.
+    """
     if comment is None:
         raise CommentNotFoundError()
     _check_comment_belongs_to_ticket(comment, ticket_id)
-
-    ticket = operations.get_ticket(comment.ticket_id)
     if ticket is None:
         raise TicketNotFoundError()
-
-    if comment.deleted_at is not None or ticket.deleted_at is not None: 
+    if comment.deleted_at is not None or ticket.deleted_at is not None:
         raise CommentNotFoundError()
-    if requester.role == constants.Role.USER:
-        if comment.author_user_id != requester.id:
+
+    if (
+        actor is None
+        or actor.deleted_at is not None
+        or actor.user_status != constants.UserStatus.ACTIVE
+    ):
+        raise AuthorizationError()
+
+    current_role = actor.role
+    if not can_write_ticket_content(current_role):
+        raise AuthorizationError()
+
+    is_author = comment.author_user_id == requester.id
+    has_manager_rights = check_for_access(current_role, constants.Role.MANAGER)
+
+    if current_role == constants.Role.USER:
+        if ticket.creator_user_id != requester.id:
             raise AuthorizationError()
-    elif requester.role == constants.Role.AGENT:
-        # Agents edit only their own comments, on their own tickets, and never
-        # manager-private notes they are not allowed to read.
+        if comment.visibility != constants.Visibility.PUBLIC:
+            raise AuthorizationError()
+    elif current_role == constants.Role.AGENT:
         if ticket.assigned_agent_id != requester.id:
-            raise AuthorizationError()
-        if comment.author_user_id != requester.id:
             raise AuthorizationError()
         if comment.visibility == constants.Visibility.PRIVATE_TO_MANAGER:
             raise AuthorizationError()
-    elif check_for_access(requester.role, constants.Role.MANAGER):
+    elif has_manager_rights:
         pass
     else:
         raise AuthorizationError()
-    
-    
-    audit_new_info = new_info.model_dump(exclude_unset=True, mode="json")
-    updated_info = new_info.model_dump(exclude_unset=True)
 
-    if not updated_info:
-        raise EmptyUpdateError()
-    if "body" in updated_info and updated_info["body"] is not None:
-        updated_info["body"] = constants.validate_required_text(updated_info["body"], "comment_body", constants.COMMENT_BODY_MAX_LENGTH)
-        audit_new_info["body"] = updated_info["body"]
-    if requester.role == constants.Role.USER and "visibility" in updated_info and updated_info["visibility"] != constants.Visibility.PUBLIC:
+    if "body" in updated_info and not is_author:
         raise AuthorizationError()
-    if updated_info.get("visibility") == constants.Visibility.PRIVATE_TO_MANAGER:
-        if check_for_access(requester.role, constants.Role.MANAGER) is False:
+
+    if "visibility" in updated_info:
+        requested_visibility = updated_info["visibility"]
+        if not is_author and not has_manager_rights:
+            raise AuthorizationError()
+        if (
+            requested_visibility == constants.Visibility.PRIVATE_TO_MANAGER
+            and not has_manager_rights
+        ):
+            raise AuthorizationError()
+        if (
+            current_role == constants.Role.USER
+            and requested_visibility != constants.Visibility.PUBLIC
+        ):
             raise AuthorizationError()
 
-    old_info = {}
-    for field in updated_info:
-        old_value = getattr(comment, field)
-        old_info[field] = constants._audit_value(old_value)
 
+def update_comment(ticket_id: str, comment_id: str, new_info: api_models.CommentUpdate, requester: api_models.User) -> api_models.Comment:
 
-    event = api_models.Event(
-        id=constants.generate_id(),
-        entity_type=constants.EntityType.COMMENT,
-        entity_id=comment_id,
-        actor_user_id=requester.id,
-        event_type=constants.EventType.COMMENT_UPDATED,
-        old_value=json.dumps(old_info),
-        new_value=json.dumps(audit_new_info), #?
-        metadata=None,
-        created_at=datetime.now(timezone.utc)
+    updated_info = new_info.model_dump(exclude_unset=True)
+    audit_new_info = new_info.model_dump(exclude_unset=True, mode="json")
+    if not updated_info:
+        raise EmptyUpdateError()
+
+    if "body" in updated_info and updated_info["body"] is not None:
+        updated_info["body"] = constants.validate_required_text(
+            updated_info["body"], "comment_body", constants.COMMENT_BODY_MAX_LENGTH
+        )
+        audit_new_info["body"] = updated_info["body"]
+
+    def mutate(comment, ticket, actor):
+        # Authoritative re-check against the locked rows and the actor's current
+        # persisted state, then build the audit event from the state actually
+        # modified in this transaction.
+        _authorize_comment_update(
+            ticket_id, comment, ticket, updated_info, requester, actor
+        )
+
+        old_info = {}
+        for field in updated_info:
+            old_info[field] = constants._audit_value(getattr(comment, field))
+        # History needs the visibility at the time of each body snapshot.
+        old_info["visibility"] = constants._audit_value(comment.visibility)
+        audit_new_info["visibility"] = constants._audit_value(
+            updated_info.get("visibility", comment.visibility)
+        )
+
+        event = api_models.Event(
+            id=constants.generate_id(),
+            entity_type=constants.EntityType.COMMENT,
+            entity_id=comment_id,
+            actor_user_id=requester.id,
+            event_type=constants.EventType.COMMENT_UPDATED,
+            old_value=json.dumps(old_info),
+            new_value=json.dumps(audit_new_info),
+            metadata=None,
+            created_at=datetime.now(timezone.utc),
+        )
+        return updated_info, event
+
+    updated_comment = operations.update_comment_with_event(
+        comment_id, mutate, actor_user_id=requester.id
     )
-
-    updated_comment = operations.update_comment_with_event(comment_id, updated_info, event)
     if updated_comment is None:
-        raise AuditLogError("Comment could not be updated", code="comment_update_failed")
+        raise CommentNotFoundError()
 
     return _to_api_comment(updated_comment)
-
 # delete 
 def delete_comment(ticket_id: str, comment_id: str, requester: api_models.User) -> bool:
     
@@ -260,8 +343,11 @@ def delete_comment(ticket_id: str, comment_id: str, requester: api_models.User) 
     if comment.deleted_at is not None:
         raise AlreadyDeletedError()
 
+    if not can_write_ticket_content(requester.role):
+        raise AuthorizationError()
+
     if comment.author_user_id != requester.id:
-        if check_for_access(requester.role, constants.Role.ADMIN) is False:
+        if check_for_access(requester.role, constants.Role.MANAGER) is False:
             raise AuthorizationError()
         
     now = datetime.now(timezone.utc)

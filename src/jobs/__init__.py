@@ -4,6 +4,7 @@ from .service import (
     enqueue_ticket_routing_job,
     enqueue_analysis_result_job,
     get_job,
+    reconcile_analysis_results,
     route_waiting_tickets,
 )
 
@@ -16,5 +17,6 @@ __all__ = [
     "enqueue_ticket_routing_job",
     "enqueue_analysis_result_job",
     "get_job",
+    "reconcile_analysis_results",
     "route_waiting_tickets",
 ]

@@ -72,19 +72,28 @@ def test_analysis_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
     captured = {}
 
     class FakeJob:
-        id = "job-1"
+        def __init__(self, job_id):
+            self.id = job_id
 
-        def get_status(self):
+        def get_status(self, refresh=False):
             return "queued"
 
     class FakeQueue:
-        def enqueue(self, function, analysis_result_id, **settings):
+        def __init__(self):
+            self.jobs = {}
+
+        def fetch_job(self, job_id):
+            return self.jobs.get(job_id)
+
+        def enqueue(self, function, analysis_result_id, *, job_id=None, unique=False, **settings):
             captured.update(
                 function=function,
                 analysis_result_id=analysis_result_id,
-                settings=settings,
+                settings={"job_id": job_id, "unique": unique, **settings},
             )
-            return FakeJob()
+            job = FakeJob(job_id)
+            self.jobs[job_id] = job
+            return job
 
     monkeypatch.setattr(jobs_service, "get_ticket_jobs_queue", lambda: FakeQueue())
     caplog.set_level("INFO")
@@ -95,6 +104,8 @@ def test_analysis_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
         "function": job_tasks.analyze_analysis_result,
         "analysis_result_id": "result-1",
         "settings": {
+            "job_id": "analyze-result-result-1",
+            "unique": True,
             "job_timeout": 180,
             "result_ttl": 600,
             "failure_ttl": 86400,
@@ -104,7 +115,7 @@ def test_analysis_job_uses_bounded_rq_settings_and_logs(monkeypatch, caplog):
     }
     assert captured["settings"]["retry"].max == 2
     assert captured["settings"]["retry"].intervals == [10, 60]
-    assert job.id == "job-1"
+    assert job.id == "analyze-result-result-1"
     assert "Analysis job enqueued" in caplog.text
 
 

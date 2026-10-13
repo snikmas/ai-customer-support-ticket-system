@@ -325,8 +325,7 @@ def test_mutation_rolls_back_when_its_audit_event_cannot_be_saved(
         else:
             operations.update_comment_with_event(
                 comment_id,
-                {"body": "Changed"},
-                event_data,
+                lambda comment, ticket, actor: ({"body": "Changed"}, event_data),
             )
 
     with Session(test_engine) as session:
@@ -402,3 +401,15 @@ def test_manager_must_assign_instead_of_claiming(
         tickets_service.claim_ticket(ticket.id, manager)
 
     assert exc_info.value.code == "only_agents_can_claim"
+
+
+def test_publicized_comment_does_not_expose_its_previous_internal_body(monkeypatch, tmp_path, make_user):
+    test_engine = _prepare_database(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    _seed_history(test_engine, now)
+    with Session(test_engine) as session, session.begin():
+        comment = session.get(db_models.Comment, "internal-comment")
+        comment.visibility = constants.Visibility.PUBLIC
+        comment.body = "Safe public replacement"
+    history = tickets_service.get_ticket_history("ticket", make_user(id="customer"), 20, 0)
+    assert "Internal note" not in str([item.model_dump() for item in history])

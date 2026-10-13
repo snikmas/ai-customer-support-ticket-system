@@ -111,6 +111,17 @@ class Ticket(Base):
         Index("ix_tickets_assignee_status_updated", "assigned_agent_id", "status", "updated_at"),
         Index("ix_tickets_department_status_updated", "department_id", "status", "updated_at"),
         Index("ix_tickets_deleted_due", "deleted_at", "due_at"),
+        # Supports the fair routing reconciliation scan: the waiting predicate
+        # plus the least-recently-attempted ordering.
+        Index(
+            "ix_tickets_waiting_scan",
+            "deleted_at",
+            "status",
+            "assigned_agent_id",
+            "routing_attempted_at",
+            "created_at",
+            "id",
+        ),
     )
     id:                 Mapped[str] = mapped_column(String(36), primary_key=True)
     title:              Mapped[str] = mapped_column(String(255))
@@ -135,6 +146,13 @@ class Ticket(Base):
     updated_at:         Mapped[datetime] = mapped_column(UTCDateTime())
     created_at:         Mapped[datetime] = mapped_column(UTCDateTime())
     due_at:             Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    # Last time the routing reconciler enqueued an attempt for this ticket.
+    # NULL means "never attempted". The fair scan orders this column NULLS
+    # FIRST so a repeatedly-unassignable ticket rotates behind the rest.
+    routing_attempted_at: Mapped[Optional[datetime]] = mapped_column(
         UTCDateTime(),
         nullable=True,
     )
@@ -488,6 +506,25 @@ class AnalysisResult(Base):
         nullable=True,
     )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dispatch_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    execution_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    # Durable fairness marker for the bounded reconciler. NULL means "never
+    # considered", which sorts first; each pass stamps the rows it looked at so
+    # a live row cannot hide later recoverable work behind it. Mirrors
+    # ``tickets.routing_attempted_at``.
+    reconciliation_attempted_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)

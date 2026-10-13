@@ -13,6 +13,11 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install --upgrade pip
+      # requirements*.txt pins every dependency with `==` (no floating ranges).
+      # `--require-hashes` is intentionally not used: it needs a hash-pinned
+      # lock covering the full transitive set, which this project does not yet
+      # generate. Pinning is verified in scripts/verify_release.py and reviewed
+      # here; hash pinning is tracked as a follow-up.
       - run: pip install -r requirements-dev.txt
       - run: ruff check main.py src scripts bootstrap_superadmin.py
       - run: python -m pytest -q
@@ -34,7 +39,140 @@ jobs:
       - run: npm ci
       - run: npm test -- --run
       - run: npm run build
+      # Gate on the FULL audit, not just runtime deps. Hiding a development-only
+      # advisory behind --omit=dev is how the source-map-js finding was missed.
+      - run: npm audit
       - run: npm audit --omit=dev
+
+  # Python advisory audit. The pinned dependency set is currently clean
+  # (pip-audit against requirements.txt reports no known vulnerabilities), so
+  # this is a blocking gate. It stays visible so any future advisory fails CI.
+  python-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-dev.txt pip-audit
+      - run: pip-audit -r requirements.txt
+
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: resolve
+          POSTGRES_DB: tickets_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:resolve@127.0.0.1:5432/tickets_test
+      REDIS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-dev.txt
+      - run: alembic upgrade head
+      - run: alembic current
+      # Prove the migrated schema is actually queryable, not just "no error".
+      - run: |
+          python - <<'PY'
+          from sqlalchemy import create_engine, text
+          from src.core.config import DATABASE_URL
+
+          engine = create_engine(DATABASE_URL)
+          with engine.connect() as connection:
+              tables = connection.execute(text(
+                  "SELECT table_name FROM information_schema.tables "
+                  "WHERE table_schema = 'public' ORDER BY table_name"
+              )).scalars().all()
+          print("public tables:", ", ".join(tables))
+          assert "tickets" in tables
+          assert "analysis_result" in tables
+          PY
+
+  postgres-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: resolve
+          POSTGRES_DB: tickets_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_POSTGRES_URL: postgresql+psycopg://postgres:resolve@127.0.0.1:5432/tickets_test
+      # Explicit opt-in: the concurrency fixture runs Base.metadata.drop_all,
+      # so it refuses any target not declared task-owned and disposable.
+      TEST_POSTGRES_ALLOW_DESTRUCTIVE: "1"
+      REDIS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-dev.txt
+      # Runs the whole suite; with TEST_POSTGRES_URL set this includes the
+      # PostgreSQL concurrency regressions from Phases C, D, F, and G:
+      #   test_ticket_mutation_concurrency.py, test_user_role_lifecycle_concurrency.py,
+      #   test_attachment_concurrency.py, test_routing_fairness.py, and the
+      #   engine-parametrised cases in test_analysis_recovery.py (Phase E).
+      - run: python -m pytest -q
+      - run: python -m pytest -q -k "concurrency or reconciliation or fairness"
+      # Prove the migration paths with existing data, not just an empty schema.
+      - run: python scripts/verify_migrations.py
+
+  redis-rq-smoke:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SMOKE_REDIS_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-dev.txt
+      - run: python scripts/smoke_redis_rq.py
+
+  nginx-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-dev.txt
+      - run: python scripts/smoke_http_stack.py
 
   compose:
     runs-on: ubuntu-latest
@@ -42,3 +180,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
       - run: docker compose config --quiet
+      - run: docker compose -f compose.smoke.yaml config --quiet

@@ -79,9 +79,14 @@ def _validate_routing_catalog_selection(
 def _require_same_active_department(
     ticket: db_models.Ticket,
     agent_id: str,
+    *,
+    department_id: str | None = None,
 ) -> None:
+    target_department_id = (
+        ticket.department_id if department_id is None else department_id
+    )
     profile = operations.get_agent_profile(agent_id)
-    if profile is None or profile.department_id != ticket.department_id:
+    if profile is None or profile.department_id != target_department_id:
         raise InvalidAssigneeError(
             "Assignee must belong to the ticket department",
             code="assignee_department_mismatch",
@@ -108,6 +113,19 @@ def _require_agent_can_take_ticket(agent_id: str) -> None:
         >= profile.max_active_tickets
     ):
         raise AgentAtCapacityError()
+
+
+def _require_agent_available(agent_id: str) -> None:
+    """Manual-assignment rule: a live (AVAILABLE) agent is required.
+
+    Managers may override capacity with an explicit assignment, but never the
+    agent's availability: an Offline agent cannot silently receive new work.
+    """
+    profile = operations.get_agent_profile(agent_id)
+    if profile is None:
+        raise InvalidAssigneeError("Assignee not found", code="assignee_not_found")
+    if profile.availability_status is not constants.AvailabilityStatus.AVAILABLE:
+        raise AgentUnavailableError()
 
 
 def _can_read_ticket(ticket: db_models.Ticket, requester: api_models.User) -> bool:
@@ -203,9 +221,13 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket:
                     raise AuthorizationError()
         
         cache_ticket(_to_api_ticket(ticket))
+        access_state = ticket
+    else:
+        access_state = operations.get_ticket_access_state(id)
+        if access_state is None:
+            raise TicketNotFoundError()
 
-
-    if _can_read_ticket(ticket, requester) is False:
+    if _can_read_ticket(access_state, requester) is False:
         raise AuthorizationError()
 
     return _to_api_ticket(ticket)
@@ -512,6 +534,13 @@ def get_ticket_history(
             if is_customer
             else _history_json(event.new_value)
         )
+        if event.entity_type == constants.EntityType.COMMENT and comment_visibilities is not None:
+            allowed = {visibility.value for visibility in comment_visibilities}
+            for snapshot in (old_value, new_value):
+                # Current comment visibility cannot authorize historical text.
+                # Legacy body-only events have no proof of public visibility.
+                if snapshot is not None and snapshot.get("visibility") not in allowed:
+                    snapshot.pop("body", None)
         result.append(api_models.TicketHistoryEvent(
             id=event.id,
             entity_type=event.entity_type,
@@ -535,6 +564,15 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
 
     old_status = ticket.status
     old_assigned_agent_id = ticket.assigned_agent_id
+    # Snapshot the state this authorization decision depends on. The mutation
+    # transaction re-checks it under a row lock so a concurrent reassignment,
+    # status change, or deletion makes this write lose with a conflict.
+    read_guard = operations.TicketMutationGuard(
+        assigned_agent_id=ticket.assigned_agent_id,
+        status=ticket.status,
+        department_id=ticket.department_id,
+        deleted_at=ticket.deleted_at,
+    )
 
     # ================= STANDARDIZATION PROCESS ========================
     # For audit logs, JSON-friendly.
@@ -625,6 +663,20 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
             raise InvalidAssigneeError("Assignee not found", code="assignee_not_found")
         if agent.role is not constants.Role.AGENT:
             raise InvalidAssigneeError("Assignee must be an agent", code="assignee_must_be_agent")
+        if agent.user_status is not constants.UserStatus.ACTIVE or agent.deleted_at is not None:
+            raise InvalidAssigneeError("Assignee must be active", code="assignee_inactive")
+        # Validate the assignee against the *proposed* department so a combined
+        # {"department_id": ..., "assigned_agent_id": ...} PATCH cannot produce
+        # an assignee that does not belong to the ticket's new department.
+        proposed_department_id = updated_info.get(
+            "department_id", ticket.department_id
+        )
+        _require_same_active_department(
+            ticket,
+            agent.id,
+            department_id=proposed_department_id,
+        )
+        _require_agent_available(agent.id)
 
         # The generic manager PATCH is also the current transfer/reassignment
         # path. Receiving an assignment means waiting in OPEN; starting the
@@ -715,7 +767,7 @@ def update_ticket(updated_info_id: str, updated_info: api_models.TicketUpdate, r
     if 'status' in updated_info.keys():
         event.event_type = constants.EventType.TICKET_STATUS_CHANGED
 
-    ticket = operations.update_ticket(updated_info_id, updated_info, event)
+    ticket = operations.update_ticket(updated_info_id, updated_info, event, read_guard)
 
     if ticket is None:
         raise InternalOperationError("Ticket could not be updated", code="ticket_update_failed")
@@ -933,6 +985,15 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
         raise TicketStatusConflictError(
             "Terminal tickets must be reopened before assignment",
         )
+    # Snapshot the decision state so the assignment transaction can reject a
+    # stale request that loses a race to a reassignment, deletion, or status
+    # change.
+    read_guard = operations.TicketMutationGuard(
+        assigned_agent_id=ticket.assigned_agent_id,
+        status=ticket.status,
+        department_id=ticket.department_id,
+        deleted_at=ticket.deleted_at,
+    )
     is_reassign = False
     if ticket.assigned_agent_id is not None:
         is_reassign = True
@@ -950,7 +1011,10 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
 
     if agent.role != constants.Role.AGENT:
         raise InvalidAssigneeError("Assignee must be an agent", code="assignee_must_be_agent")
+    if agent.user_status is not constants.UserStatus.ACTIVE or agent.deleted_at is not None:
+        raise InvalidAssigneeError("Assignee must be active", code="assignee_inactive")
     _require_same_active_department(ticket, agent.id)
+    _require_agent_available(agent.id)
 
     transition_at = constants.utc_now()
     new_due_at = constants.calculate_sla_due_at(
@@ -981,7 +1045,7 @@ def assign_ticket(ticket_id: str, agent_id: str, requester: api_models.User) -> 
     if is_reassign:
         event.event_type = constants.EventType.TICKET_REASSIGNED
 
-    res = operations.assign_ticket(ticket.id, agent.id, event)
+    res = operations.assign_ticket(ticket.id, agent.id, event, read_guard)
     if res is None:
         raise InternalOperationError("Ticket could not be assigned", code="ticket_assignment_failed")
 

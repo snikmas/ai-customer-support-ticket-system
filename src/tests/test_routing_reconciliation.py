@@ -237,6 +237,15 @@ def test_periodic_reconciliation_uses_configured_bounded_batch():
     assert schedule["kwargs"]["batch_size"] > 0
 
 
+def test_shared_worker_drains_analysis_before_routing():
+    from src.jobs import queue as queue_config
+
+    # Dispatch fairness rotates which waiting tickets are scanned; worker
+    # priority is a separate concern. Analysis is listed first so a routing
+    # backlog can never delay it on the shared worker.
+    assert queue_config.WORKER_QUEUE_ORDER == ("ticket_jobs", "ticket_routing")
+
+
 def test_agent_capacity_events_trigger_dispatch_but_promotion_does_not(
     monkeypatch,
     tmp_path,
@@ -356,7 +365,7 @@ def test_ticket_leaving_active_workload_triggers_dispatch(
         lambda _ticket_id: ticket,
     )
 
-    def fake_update(_ticket_id, new_info, _event):
+    def fake_update(_ticket_id, new_info, _event, expected=None):
         for field, value in new_info.items():
             setattr(ticket, field, value)
         return ticket

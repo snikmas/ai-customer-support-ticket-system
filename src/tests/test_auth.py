@@ -278,14 +278,14 @@ def test_refresh_session_expiry_remains_utc_aware_after_sqlite_round_trip(
 @pytest.mark.parametrize(
     "forwarded_for, client_host, expected",
     [
-        ("203.0.113.5", "10.0.0.1", "203.0.113.5"),
-        ("203.0.113.5, 198.51.100.2", "10.0.0.1", "198.51.100.2"),
-        ("  203.0.113.5  ,  198.51.100.2  ", "10.0.0.1", "198.51.100.2"),
+        ("203.0.113.5", "10.0.0.1", "10.0.0.1"),
+        ("203.0.113.5, 198.51.100.2", "10.0.0.1", "10.0.0.1"),
+        ("  203.0.113.5  ,  198.51.100.2  ", "10.0.0.1", "10.0.0.1"),
         (None, "10.0.0.1", "10.0.0.1"),
         (None, None, "unknown"),
     ],
 )
-def test_get_client_host_uses_last_x_forwarded_for_or_falls_back(
+def test_get_client_host_uses_server_validated_client_address(
     forwarded_for, client_host, expected
 ):
     raw_headers = []
@@ -376,3 +376,8 @@ def test_login_user_runs_dummy_password_check_for_inactive_user(monkeypatch, mak
     assert result is None
     assert len(calls) == 1
     assert calls[0][0] == "any-password"
+
+
+def test_untrusted_forwarded_header_cannot_change_login_rate_limit_identity():
+    request = SimpleNamespace(headers=Headers({"x-forwarded-for": "198.51.100.99"}), client=SimpleNamespace(host="203.0.113.20"))
+    assert _get_client_host(request) == "203.0.113.20"

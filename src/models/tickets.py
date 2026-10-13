@@ -43,6 +43,13 @@ class TicketUpdate(BaseModel):
     department_id: EntityId | None = None
     skill_ids: list[EntityId] | None = Field(default=None, max_length=20)
 
+    @field_validator("tags", "assigned_agent_id", "status", "priority", "department_id", "skill_ids")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("update_field_cannot_be_null")
+        return value
+
     @field_validator("skill_ids")
     @classmethod
     def reject_duplicate_skill_ids(cls, value: list[str] | None):

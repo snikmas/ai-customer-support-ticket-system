@@ -10,6 +10,7 @@ from .base import (
     PermanentAnalysisError,
     RetryableAnalysisError,
 )
+from src.core.config import ANALYZER_MAX_OUTPUT_TOKENS
 
 
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -229,6 +230,7 @@ class OpenRouterAnalyzer:
                 "zdr": True,
             },
             "stream": False,
+            "max_tokens": ANALYZER_MAX_OUTPUT_TOKENS,
         }
 
     def analyze(self, snapshot: AnalysisInputSnapshot) -> AnalysisOutput:

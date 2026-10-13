@@ -31,7 +31,7 @@ def check_ticket(ticket_id: str) -> Ticket | None:
         data = json.loads(json_text)
         return Ticket.model_validate(data)
 
-    except RedisError as exc:
+    except (RedisError, ValueError, UnicodeError, TypeError) as exc:
         logger.warning(
             "Ticket cache read failed",
             extra={"operation": "get", "ticket_id": ticket_id},

@@ -2,6 +2,20 @@ import type { SessionIdentity, Tokens } from "../api/types";
 
 const SESSION_KEY = "resolveai.demo.session";
 
+// A monotonic marker for the current session. Login and logout advance it so
+// an in-flight refresh that started under an older session can detect that the
+// session was replaced or cleared and refuse to write its tokens back.
+let sessionGeneration = 0;
+
+export function currentSessionGeneration(): number {
+  return sessionGeneration;
+}
+
+export function bumpSessionGeneration(): number {
+  sessionGeneration += 1;
+  return sessionGeneration;
+}
+
 export function readTokens(): Tokens | null {
   const raw = sessionStorage.getItem(SESSION_KEY);
   if (!raw) return null;

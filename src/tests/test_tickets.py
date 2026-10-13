@@ -40,7 +40,7 @@ def test_ticket_owner_can_update_tags(monkeypatch, make_user, make_ticket):
     requester = make_user(id="customer")
     ticket = make_ticket(creator_user_id=requester.id, tags=constants.serialize_tags([constants.Tag.API_KEY]))
     monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: ticket)
-    monkeypatch.setattr(tickets_service.operations, "update_ticket", lambda ticket_id, info, event: ticket)
+    monkeypatch.setattr(tickets_service.operations, "update_ticket", lambda ticket_id, info, event, expected=None: ticket)
 
     result = tickets_service.update_ticket(
         ticket.id,
@@ -80,7 +80,7 @@ def test_assigned_agent_can_update_tags_after_triage(monkeypatch, make_user, mak
         tags=constants.serialize_tags([constants.Tag.API_KEY]),
     )
     monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda ticket_id: ticket)
-    monkeypatch.setattr(tickets_service.operations, "update_ticket", lambda ticket_id, info, event: ticket)
+    monkeypatch.setattr(tickets_service.operations, "update_ticket", lambda ticket_id, info, event, expected=None: ticket)
 
     result = tickets_service.update_ticket(
         ticket.id,
@@ -391,7 +391,8 @@ def test_manager_can_assign_ticket_to_agent(monkeypatch, make_user, make_ticket)
     monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(tickets_service.operations, "get_user", lambda _: agent)
     monkeypatch.setattr(tickets_service.operations, "assign_ticket", lambda *_: ticket)
-    monkeypatch.setattr(tickets_service, "_require_same_active_department", lambda *_: None)
+    monkeypatch.setattr(tickets_service, "_require_same_active_department", lambda *_, **__: None)
+    monkeypatch.setattr(tickets_service, "_require_agent_available", lambda *_, **__: None)
 
     tickets_service.assign_ticket(ticket.id, agent.id, requester)
 
@@ -414,7 +415,7 @@ def _stub_claimable_ticket(monkeypatch, make_user, make_ticket, profile):
     agent = make_user(id="agent-1", role=constants.Role.AGENT)
     ticket = make_ticket(id="ticket-1", status=constants.Status.NEW, assigned_agent_id=None)
     monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
-    monkeypatch.setattr(tickets_service, "_require_same_active_department", lambda *_: None)
+    monkeypatch.setattr(tickets_service, "_require_same_active_department", lambda *_, **__: None)
     monkeypatch.setattr(tickets_service.operations, "get_agent_profile", lambda _: profile)
     return agent, ticket
 

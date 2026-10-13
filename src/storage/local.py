@@ -1,4 +1,10 @@
 from pathlib import Path
+import re
+
+# Keys are generated as 32 lowercase hex characters (`uuid4().hex`) plus one
+# allowed extension. User-supplied filenames never become storage keys, so a
+# cleanup command can safely restrict itself to names matching this shape.
+GENERATED_STORAGE_KEY = re.compile(r"^[0-9a-f]{32}\.[a-z0-9]{1,8}$")
 
 
 class LocalAttachmentStorage:
@@ -29,3 +35,17 @@ class LocalAttachmentStorage:
         path = self._path(storage_key)
         if path.exists():
             path.unlink()
+
+    def generated_keys(self) -> list[str]:
+        """List direct children whose names match the generated-key shape."""
+        if not self.root.is_dir():
+            return []
+        return sorted(
+            entry.name
+            for entry in self.root.iterdir()
+            if entry.is_file() and GENERATED_STORAGE_KEY.match(entry.name)
+        )
+
+    def modified_at(self, storage_key: str) -> float:
+        """Return the mtime of a generated key, or raise if it is absent."""
+        return self._path(storage_key).stat().st_mtime

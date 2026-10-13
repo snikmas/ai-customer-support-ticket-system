@@ -468,6 +468,7 @@ def test_claim_and_manual_assignment_leave_ticket_open(
     with Session(test_engine) as session, session.begin():
         session.add_all(
             [
+                db_models.Department(id="support", name="Support", normalized_name="support", created_at=now, updated_at=now),
                 _user("customer", constants.Role.USER, now),
                 _user("agent-a", constants.Role.AGENT, now),
                 _user("agent-b", constants.Role.AGENT, now),
@@ -510,6 +511,9 @@ def test_claim_and_manual_assignment_leave_ticket_open(
             ]
         )
 
+    with Session(test_engine) as session, session.begin():
+        session.get(db_models.Ticket, "claimed").department_id = "support"
+
     claimed = operations.claim_ticket("claimed", "agent-a")
     assigned = operations.assign_ticket("assigned", "agent-a")
     reassigned = operations.assign_ticket("assigned", "agent-b")
@@ -534,8 +538,10 @@ def test_manager_patch_assignment_forces_open_and_rejects_implicit_start(
     captured = {}
     monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(tickets_service.operations, "get_user", lambda _: agent)
+    monkeypatch.setattr(tickets_service, "_require_same_active_department", lambda *_, **__: None)
+    monkeypatch.setattr(tickets_service, "_require_agent_available", lambda *_, **__: None)
 
-    def fake_update(_ticket_id, info, _event):
+    def fake_update(_ticket_id, info, _event, expected=None):
         captured.update(info)
         ticket.assigned_agent_id = info["assigned_agent_id"]
         ticket.status = info["status"]

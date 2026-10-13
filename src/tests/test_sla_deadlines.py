@@ -124,7 +124,7 @@ def test_status_transition_replaces_deadline_and_audits_old_and_new_values(
     ticket.due_at = old_due_at
     captured = {}
 
-    def fake_update(ticket_id, changes, event):
+    def fake_update(ticket_id, changes, event, expected=None):
         captured.update(changes=changes.copy(), event=event)
         for field, value in changes.items():
             setattr(ticket, field, value)

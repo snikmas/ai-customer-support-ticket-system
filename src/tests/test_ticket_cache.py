@@ -100,13 +100,14 @@ def test_ticket_service_uses_database_only_after_a_cache_miss(
     assert [ticket.id for ticket in cached] == [database_ticket.id]
 
 
-def test_ticket_service_cache_hit_skips_database_and_cache_write(
+def test_ticket_service_cache_hit_checks_access_without_loading_ticket_content(
     monkeypatch, make_user, make_ticket
 ):
     requester = make_user()
     cached_ticket = _api_ticket(lambda: make_ticket(creator_user_id=requester.id))
 
     monkeypatch.setattr(ticket_service, "check_cached_ticket", lambda _: cached_ticket)
+    monkeypatch.setattr(ticket_service.operations, "get_ticket_access_state", lambda _: cached_ticket)
     monkeypatch.setattr(
         ticket_service.operations,
         "get_ticket",
@@ -148,7 +149,7 @@ def test_ticket_claim_invalidates_its_cache_entry(monkeypatch, make_user, make_t
 
     monkeypatch.setattr(ticket_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(ticket_service.operations, "claim_ticket", lambda *_: ticket)
-    monkeypatch.setattr(ticket_service, "_require_same_active_department", lambda *_: None)
+    monkeypatch.setattr(ticket_service, "_require_same_active_department", lambda *_, **__: None)
     monkeypatch.setattr(ticket_service, "_require_agent_can_take_ticket", lambda *_: None)
     monkeypatch.setattr(
         ticket_service, "delete_cached_ticket", lambda ticket_id: invalidated_ids.append(ticket_id) or True
@@ -168,7 +169,8 @@ def test_ticket_assignment_invalidates_its_cache_entry(monkeypatch, make_user, m
     monkeypatch.setattr(ticket_service.operations, "get_ticket", lambda _: ticket)
     monkeypatch.setattr(ticket_service.operations, "get_user", lambda _: agent)
     monkeypatch.setattr(ticket_service.operations, "assign_ticket", lambda *_: ticket)
-    monkeypatch.setattr(ticket_service, "_require_same_active_department", lambda *_: None)
+    monkeypatch.setattr(ticket_service, "_require_same_active_department", lambda *_, **__: None)
+    monkeypatch.setattr(ticket_service, "_require_agent_available", lambda *_, **__: None)
     monkeypatch.setattr(
         ticket_service, "delete_cached_ticket", lambda ticket_id: invalidated_ids.append(ticket_id) or True
     )
@@ -176,3 +178,22 @@ def test_ticket_assignment_invalidates_its_cache_entry(monkeypatch, make_user, m
     ticket_service.assign_ticket(ticket.id, agent.id, requester)
 
     assert invalidated_ids == [ticket.id]
+
+
+def test_malformed_cache_entry_is_a_miss(monkeypatch):
+    redis = FakeRedis()
+    redis.values["ticket:ticket-1"] = b"not-json"
+    monkeypatch.setattr(ticket_cache, "get_redis_client", lambda: redis)
+    assert ticket_cache.check_ticket("ticket-1") is None
+
+
+def test_stale_cached_assignment_cannot_authorize_previous_agent(monkeypatch, make_user, make_ticket):
+    import pytest
+    from src.exceptions import AuthorizationError
+    previous_agent = make_user(id="previous-agent", role=ticket_service.constants.Role.AGENT)
+    cached = _api_ticket(lambda: make_ticket(assigned_agent_id=previous_agent.id, status=ticket_service.constants.Status.OPEN))
+    current = make_ticket(assigned_agent_id="new-agent", status=ticket_service.constants.Status.OPEN)
+    monkeypatch.setattr(ticket_service, "check_cached_ticket", lambda _: cached)
+    monkeypatch.setattr(ticket_service.operations, "get_ticket_access_state", lambda _: current, raising=False)
+    with pytest.raises(AuthorizationError):
+        ticket_service.get_ticket(cached.id, previous_agent)

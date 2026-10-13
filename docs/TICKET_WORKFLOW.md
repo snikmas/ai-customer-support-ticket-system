@@ -20,9 +20,12 @@ Availability and capacity are enforced wherever an agent takes work for
 themselves: automatic routing and self-service claiming both reject agents who
 are not `AVAILABLE` or who already hold `max_active_tickets` active tickets.
 Manual assignment by a manager or admin (the assign endpoint and the
-`assigned_agent_id` PATCH) is an intentional override: it bypasses availability
-and capacity so managers can force-assign during escalations or rebalancing,
-and it never unassigns existing work when capacity is later lowered.
+`assigned_agent_id` PATCH) is a deliberate capacity override: it may assign an
+`AVAILABLE` agent who is already at capacity, so managers can force-assign
+during escalations or rebalancing. It never overrides availability: an agent
+who is Offline (or otherwise not `AVAILABLE`) is rejected, and the candidate
+list shows only `AVAILABLE` agents in the same active department. Lowering an
+agent's capacity later never unassigns existing work.
 
 Search supports exact ID and text matching across title/description plus
 department, assignee, category, tag, status, priority, overdue, sort, and

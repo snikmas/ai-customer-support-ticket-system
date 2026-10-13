@@ -283,7 +283,7 @@ def test_delete_user_allows_super_admin_when_others_remain(monkeypatch, make_use
         lambda user_id: requester if user_id == requester.id else target,
     )
     monkeypatch.setattr(users_service.operations, "count_active_superadmins", lambda: 2)
-    monkeypatch.setattr(users_service.operations, "delete_user", lambda *_: True)
+    monkeypatch.setattr(users_service.operations, "delete_user", lambda *_, **__: True)
 
     users_service.delete_user(target.id, requester)
 
@@ -305,7 +305,7 @@ def test_delete_user_allows_ordinary_user_deletion(monkeypatch, make_user):
         "get_user",
         lambda user_id: admin if user_id == admin.id else target,
     )
-    monkeypatch.setattr(users_service.operations, "delete_user", lambda *_: True)
+    monkeypatch.setattr(users_service.operations, "delete_user", lambda *_, **__: True)
 
     users_service.delete_user(target.id, admin)
 

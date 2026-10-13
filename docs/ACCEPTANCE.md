@@ -1,9 +1,19 @@
 # Final v1 acceptance evidence
 
+> **Historical document.** The automated numbers recorded on 2026-08-24 for the
+> provider-selection closure are kept below for provenance and are **not**
+> current. For the current repaired working tree on top of revision `0f95921`,
+> the release pass records 525 backend tests passing (28 skipped) on SQLite and
+> 578 passing (0 skipped) with PostgreSQL 16 enabled, 39 frontend tests passing,
+> and clean builds; the full-stack nginx smoke reports healthy readiness,
+> recovered readiness after a stopped worker, permitted/oversized uploads, token
+> refresh, and API discovery. Evidence is classified by type: **fake-provider**
+> (automatic tests), **real-provider** (manual, synthetic only, and **not
+> included** in this release), and **human demo** (browser journeys).
+
 Recorded locally on 2026-08-24 during the ResolveAI provider-selection closure.
-The existing closure changes remain in the working tree and are listed in the
-root `TODO.md`; this document distinguishes current checks from historical
-Compose/browser evidence.
+The sections below are historical Compose/browser evidence, not the current
+release gate. See `docs/OPERATIONS.md` for current operations evidence.
 
 ## Automated checks
 
@@ -64,22 +74,18 @@ keyboard-focusable; the current screenshot is under the ignored
 
 ## Scope notes and historical evidence
 
-- The two legacy `UnsupportedButton` files and the tracked mockup sandbox were
-  moved into the recoverable [archive](archive/README.md). The active frontend
-  has no `UnsupportedButton` references and no mockup-sandbox source tree.
-  Physical deletion was refused by the repository safety hook, so the exact
-  source remains recoverable in `docs/archive/`.
+- The two legacy `UnsupportedButton` files and the tracked mockup sandbox live
+  under the recoverable `docs/archive/` directory (not part of the release
+  allowlist). The active frontend has no `UnsupportedButton` references and no
+  mockup-sandbox source tree.
 - GitHub Actions run `31474154749` passed all three jobs on commit `c6a8597`.
-  The current closure pass additionally verified the changed working tree
-  locally; it does not claim that the later commits have remote CI evidence.
-- The deterministic fake analyzer remains the verified local-demo provider.
-  Direct DeepSeek was also exercised with synthetic live requests during this
-  closure pass: the provider test and two queued analyses completed, including
-  a provenance check where a pending DeepSeek job completed after the global
-  setting was changed back to fake. OpenRouter has adapters and automated tests,
-  but its live test and queued analysis remain pending until its key is
-  configured. The recorded DeepSeek calls stayed below the approved US$0.10
-  aggregate spend limit.
+  The current pass verified the changed working tree locally and through the
+  full-stack smoke; it does not claim that later commits have remote CI evidence.
+- The deterministic fake analyzer is the verified local-demo provider. Real
+  providers (OpenRouter, direct DeepSeek) have adapters and offline tests, but
+  real-model output quality is **unverified** in v1: no authorized, budgeted
+  evaluation was run and the automatic suite never calls a paid provider. Any
+  historical live synthetic call is dated evidence, not a v1 quality claim.
 - The database-backed AI settings surface is implemented for Admin and Super
   Admin. Provider/model provenance is snapshotted before enqueue and provider
   tests are audited without changing the active setting.
