@@ -321,6 +321,12 @@ label textarea {
 
 .search-placeholder input {
   width: 100%;
+  /* The global input rule (padding 10px 12px) would make this input 42px tall,
+     which plus the form padding equals the 60px topbar height, so the box sat
+     flush against the top edge and looked clipped. Reset it to a compact,
+     naturally-centered control. */
+  min-height: 0;
+  padding: 0;
   border: 0;
   outline: 0;
   background: transparent;
@@ -529,6 +535,11 @@ label textarea {
 .routing-section {
   display: grid;
   gap: 14px;
+  /* The parent grid stretches both cards to equal height. Without this, the
+     default `align-content: stretch` spreads that extra height between the
+     header, form, and list rows, opening odd gaps in the shorter card. Keep
+     rows at their natural height and let the spare space collect below. */
+  align-content: start;
   padding: 22px;
 }
 
@@ -905,6 +916,30 @@ label textarea {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
+}
+
+/* Expanded inline routing editor (one full-width cell per edit row).
+   The generic rules above give every cell a fixed 62px height and turn the
+   first cell into a flex column. Applied to this colSpan cell that makes the
+   form overflow its row and overlap the next user. Restore normal table-cell
+   flow and let the row grow to its content. */
+.routing-edit-row,
+.routing-edit-row:hover {
+  cursor: default;
+  background: transparent;
+}
+
+.routing-edit-row td,
+.routing-edit-row td:first-child {
+  display: table-cell;
+  height: auto;
+  min-width: 0;
+  padding: 16px 20px;
+  background: #f8fafc;
+}
+
+.routing-edit-row .staff-create-form {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .ticket-table td strong {
