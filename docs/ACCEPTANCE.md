@@ -5,7 +5,7 @@
 > current.
 >
 > Local verification on 2026-10-14 (working tree on `b2b147b`):
-> backend **543 passed / 44 skipped** on SQLite with dotenv disabled and Redis
+> backend **544 passed / 44 skipped** on SQLite with dotenv disabled and Redis
 > off. Before the packaging regression was added, the application suite recorded
 > **586 passed / 0 skipped** with a task-owned PostgreSQL 16 target
 > (`TEST_POSTGRES_URL` + `TEST_POSTGRES_ALLOW_DESTRUCTIVE=1`), frontend **51
@@ -33,6 +33,12 @@ ticket behind five blocked tickets was reached within three batches of two,
 with fresh scanner and worker processes, a new arrival, and mixed fake analysis
 work. This check used disposable SQLite and Redis; the earlier PostgreSQL suite
 covers database concurrency.
+
+Migration verification now launches Alembic through the active Python
+interpreter. It works in an installed environment without a repository-local
+`myvenv` directory. A regression exercises that environment boundary, and the
+empty and populated PostgreSQL 16 migration paths passed on a fresh disposable
+server after the change.
 
 Recorded locally on 2026-08-24 during the ResolveAI provider-selection closure.
 The sections below are historical Compose/browser evidence, not the current

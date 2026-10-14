@@ -41,7 +41,7 @@ HEAD = "c3d4e5f6a7b8"
 
 def _alembic(env: dict[str, str], *args: str) -> None:
     completed = subprocess.run(
-        [str(ROOT / "myvenv" / "bin" / "alembic"), *args],
+        [sys.executable, "-m", "alembic", *args],
         cwd=ROOT,
         env=env,
         text=True,
