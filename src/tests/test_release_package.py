@@ -19,7 +19,7 @@ def test_release_contains_a_working_launcher_and_setup_files(tmp_path):
         ):
             assert f"{prefix}/{relative}" in names
         assert all(
-            not {"notes", ".project-workflow", "keys", ".env"}.intersection(
+            not {"AGENTS.md", "notes", ".project-workflow", "keys", ".env"}.intersection(
                 member.name.split("/")
             )
             for member in members
