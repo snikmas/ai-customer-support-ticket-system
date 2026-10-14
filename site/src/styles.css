@@ -412,7 +412,9 @@ label textarea {
   list-style: none;
 }
 
-.notification-popover li button {
+.notification-popover li button,
+.notification-popover li a,
+.notification-popover li .notification-static {
   display: grid;
   width: 100%;
   gap: 5px;
@@ -423,15 +425,21 @@ label textarea {
   cursor: pointer;
   padding: 9px;
   text-align: left;
+  text-decoration: none;
 }
 
-.notification-popover li.unread button {
+.notification-popover li.unread button,
+.notification-popover li.unread a {
   background: #f1f6ff;
 }
 
 .notification-popover li span {
   color: #7d8694;
   font-size: 0.7rem;
+}
+
+.notification-popover li strong {
+  overflow-wrap: anywhere;
 }
 
 .page {
@@ -455,6 +463,12 @@ label textarea {
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 22px;
+  min-width: 0;
+}
+
+.page-heading > *,
+.detail-heading > * {
+  min-width: 0;
 }
 
 .page-heading h1,
@@ -903,11 +917,56 @@ label textarea {
 
 .ticket-table tbody tr {
   transition: background 120ms ease;
-  cursor: pointer;
 }
 
 .ticket-table tbody tr:hover {
   background: #f5f9ff;
+}
+
+.ticket-title-link {
+  color: #1d4ed8;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ticket-title-link:hover {
+  text-decoration: underline;
+}
+
+.ticket-title-link:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.ticket-link {
+  color: #1d4ed8;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ticket-link:hover {
+  text-decoration: underline;
+}
+
+.ticket-table-wrap:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.scroll-hint {
+  display: none;
+  margin: 0;
+  border-top: 1px solid #edf0f4;
+  color: #7a8494;
+  padding: 8px 16px;
+  font-size: 0.72rem;
+}
+
+@media (max-width: 1000px) {
+  .scroll-hint {
+    display: block;
+  }
 }
 
 .ticket-table td:first-child {
@@ -1294,6 +1353,45 @@ label textarea {
   margin-top: 8px;
 }
 
+.selected-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.selected-tags li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #b8cdf9;
+  border-radius: 999px;
+  background: #edf4ff;
+  color: #1d4ed8;
+  padding: 5px 6px 5px 10px;
+  font-size: 0.75rem;
+}
+
+.selected-tags button {
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 5px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.tag-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .choice-grid label {
   display: inline-flex;
   align-items: center;
@@ -1333,6 +1431,25 @@ label textarea {
 
 .detail-heading h1 {
   max-width: 840px;
+  overflow-wrap: anywhere;
+}
+
+/* Long unbroken text must wrap instead of widening the whole document. */
+.detail-heading,
+.description-card p,
+.comment > div > p,
+.comment header strong,
+.related-list a,
+.ticket-title-link,
+.info-card dd,
+.selected-files li span,
+.comment-attachments li span {
+  overflow-wrap: anywhere;
+}
+
+.info-card dt,
+.info-card dd {
+  min-width: 0;
 }
 
 .detail-grid {
@@ -1595,6 +1712,10 @@ label textarea {
 }
 
 .reply-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 8px;
 }
 

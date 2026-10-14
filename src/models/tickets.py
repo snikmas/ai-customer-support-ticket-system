@@ -13,6 +13,7 @@ class Ticket(BaseModel):
     skill_ids: list[str] = Field(default_factory=list)
 
     assigned_agent_id: str | None = None # cor assignee_id
+    assigned_agent_name: str | None = None
     creator_user_id: str
     status: Status = Status.NEW
     priority: Priority = Priority.NORMAL

@@ -318,6 +318,8 @@ def test_agent_can_read_comment_on_unassigned_new_ticket(monkeypatch, make_user,
     comment = _make_comment("comment-1", ticket.id, "user-1", constants.Visibility.INTERNAL)
     monkeypatch.setattr(comments_service.operations, "get_comment", lambda comment_id: comment)
     monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
+    # Display identity is a separate lookup; keep this unit test off the real DB.
+    monkeypatch.setattr(comments_service.operations, "get_user", lambda user_id: None)
 
     result = comments_service.get_comment(ticket.id, comment.id, agent)
 
@@ -330,6 +332,7 @@ def test_private_to_manager_comment_does_not_notify_assigned_agent(monkeypatch, 
     ticket = make_ticket(assigned_agent_id=assigned_agent.id, status=constants.Status.IN_PROGRESS)
     monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
     monkeypatch.setattr(comments_service.operations, "create_comment_with_event", lambda comment, event: comment)
+    monkeypatch.setattr(comments_service.operations, "get_user", lambda user_id: None)
     emitted = []
     monkeypatch.setattr(comments_service.s_notifications, "emit", lambda *args, **kwargs: emitted.append((args, kwargs)))
 
@@ -348,6 +351,7 @@ def test_visible_comment_notifies_assigned_agent(monkeypatch, make_user, make_ti
     ticket = make_ticket(assigned_agent_id=assigned_agent.id, status=constants.Status.IN_PROGRESS)
     monkeypatch.setattr(comments_service.operations, "get_ticket", lambda ticket_id: ticket)
     monkeypatch.setattr(comments_service.operations, "create_comment_with_event", lambda comment, event: comment)
+    monkeypatch.setattr(comments_service.operations, "get_user", lambda user_id: None)
     emitted = []
     monkeypatch.setattr(comments_service.s_notifications, "emit", lambda *args, **kwargs: emitted.append((args, kwargs)))
 

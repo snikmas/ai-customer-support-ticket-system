@@ -28,11 +28,20 @@ from src.db import models as db_models
 from src.db import operations
 from src.exceptions.domain import AlreadyDeletedError, AuditLogError, AuthorizationError, CommentNotFoundError, EmptyUpdateError, TicketNotFoundError
 from src.services import notifications as s_notifications
+from src.services import identity as s_identity
 import json
 
 
 def _to_api_comment(comment: db_models.Comment) -> api_models.Comment:
-    return api_models.Comment.model_validate(comment, from_attributes=True)
+    response = api_models.Comment.model_validate(comment, from_attributes=True)
+    return response.model_copy(
+        update={
+            "author_display_name": s_identity.display_name(
+                operations.get_user(comment.author_user_id),
+                source=comment.source,
+            )
+        }
+    )
 
 
 def _check_comment_belongs_to_ticket(comment: db_models.Comment, ticket_id: str) -> None:

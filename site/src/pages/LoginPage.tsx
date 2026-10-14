@@ -51,7 +51,7 @@ export function LoginPage() {
         </div>
         <section className="login-card">
           <h1>Customer support, resolved.</h1>
-          <p>Sign in to work with real ticket data.</p>
+          <p>Sign in to manage support tickets.</p>
           {error && (
             <div className="alert error" role="alert">
               <AlertCircle size={17} />
@@ -94,10 +94,10 @@ export function LoginPage() {
         <div className={`health-label health-${health}`}>
           <span />
           {health === "checking"
-            ? "Checking API…"
+            ? "Checking service…"
             : health === "healthy"
-              ? "API and dependencies operational"
-              : "API or dependency unavailable"}
+              ? "Support service is ready"
+              : "Support service unavailable"}
         </div>
       </div>
     </main>

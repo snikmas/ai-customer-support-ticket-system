@@ -1,5 +1,31 @@
-import type { Priority, Role } from "../api/types";
+import type { Category, Priority, Role } from "../api/types";
 import { PRIORITY_LABELS } from "../api/types";
+
+// Display labels only. Request values and stored enum values stay unchanged.
+const CATEGORY_LABELS: Record<Category, string> = {
+  API_Error: "API error",
+  Authentication: "Authentication",
+  "Model Output": "Model output",
+  "Rag Retrieval": "RAG retrieval",
+  "Agent Workflow": "Agent workflow",
+  Performance: "Performance",
+  Billing: "Billing",
+  "Account Access": "Account access",
+  Documentation: "Documentation",
+  "Feature Request": "Feature request",
+};
+
+const ROLE_LABELS: Record<Role, string> = {
+  super_admin: "Super admin",
+  admin: "Admin",
+  manager: "Manager",
+  agent: "Agent",
+  agent_readonly: "Read-only agent",
+  user: "Customer",
+  guest: "Guest",
+  bot: "Bot",
+  api: "API",
+};
 
 export function formatDate(value: string | null): string {
   if (!value) return "—";
@@ -30,10 +56,11 @@ export function priorityLabel(priority: Priority): string {
 }
 
 export function roleLabel(role: Role): string {
-  return role
-    .split("_")
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
+  return ROLE_LABELS[role] ?? role;
+}
+
+export function categoryLabel(category: Category): string {
+  return CATEGORY_LABELS[category] ?? category;
 }
 
 export function initials(firstName?: string, lastName?: string): string {

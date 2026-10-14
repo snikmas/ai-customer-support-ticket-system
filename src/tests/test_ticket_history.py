@@ -186,6 +186,7 @@ def test_ticket_history_is_chronological_paginated_and_includes_mutation_types(
     history = first_page + second_page
 
     assert [event.id for event in history] == [f"0{index}" for index in range(1, 9)]
+    assert all(event.actor_display_name == "History Tester" for event in history)
     assert {event.event_type for event in history} >= {
         constants.EventType.TICKET_CREATED,
         constants.EventType.TICKET_UPDATED,
@@ -216,6 +217,7 @@ def test_customer_history_hides_internal_comments_and_staff_only_details(
         "due_at": (now + timedelta(hours=6)).isoformat(),
     }
     assert assignment.actor_user_id is None
+    assert assignment.actor_display_name is None
     assert assignment.metadata is None
     public_comment = next(event for event in history if event.id == "06")
     assert public_comment.new_value == {

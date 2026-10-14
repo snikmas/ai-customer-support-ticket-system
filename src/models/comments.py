@@ -7,6 +7,7 @@ class Comment(BaseModel):
     id: str
     ticket_id: str
     author_user_id: str
+    author_display_name: str | None = None
     body: str
     visibility: Visibility
 

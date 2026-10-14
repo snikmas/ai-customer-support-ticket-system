@@ -2,6 +2,12 @@
 
 **30 September 2026 · repository baseline `0f95921` plus the local changes from this review**
 
+> **Historical rehearsal record.** The counts below describe that 30 September
+> review, not the final v1 candidate. Current candidate numbers, dated
+> 2026-10-14, are in [ACCEPTANCE.md](ACCEPTANCE.md). The `audit/2026-09-30/`
+> records referenced below are local working files and are **not** part of the
+> release allowlist.
+
 ## Assessment
 
 The reviewed checkout builds and passes the checks below. The normal Docker application has been rebuilt with the fixes. Ordinary ticket handling and the local fake analysis workflow were exercised against real PostgreSQL, Redis, RQ, and Nginx, and through the browser.
@@ -26,13 +32,13 @@ The review followed request and job paths, including alternate endpoints and dir
 | Production frontend build | Passed in Docker, including `npm ci` and `npm run build`. | Secret frontend configuration excluded from build context. |
 | Dependency audit | **0 known npm vulnerabilities** at check time. | Full `npm audit`; initial audit found three moderate and one high development dependency advisories. |
 | Fresh PostgreSQL migrations | All revisions applied successfully. | Disposable PostgreSQL 16, migration head `4c417c90dada`. |
-| Main HTTP journey | **56/56 checks passed**. | [Recorded statuses](audit/2026-09-30/http-journey.json) |
-| Additional adversarial journey | **11/11 checks passed**. | [Recorded checks](audit/2026-09-30/adversarial-journey.json) |
-| PostgreSQL automatic-routing race | One assignment, one no-eligible-agent result; capacity one, workload one. | Before fix: both assigned, workload two. [Recorded final outcomes](audit/2026-09-30/postgres-capacity.json), distinct tickets and concurrent transactions. |
+| Main HTTP journey | **56/56 checks passed**. | `audit/2026-09-30/http-journey.json` |
+| Additional adversarial journey | **11/11 checks passed**. | `audit/2026-09-30/adversarial-journey.json` |
+| PostgreSQL automatic-routing race | One assignment, one no-eligible-agent result; capacity one, workload one. | Before fix: both assigned, workload two. `audit/2026-09-30/postgres-capacity.json`, distinct tickets and concurrent transactions. |
 | PostgreSQL claim race | One claimed, one capacity conflict; workload one. | Claim repeats eligibility/capacity checks under the write transaction. |
-| Retry failure | Three attempts, final Failed, `provider_unavailable`. | [Retry evidence](audit/2026-09-30/retry.json); real worker/scheduler, deliberately failing fake adapter. |
-| Cached access after reassignment | Previous agent gets 403; current agent gets 200. | [Cache evidence](audit/2026-09-30/cache-access.json); SQL changed without cache invalidation intentionally. |
-| Proxy DNS change | Backend moved to a different container IP; proxy recovered without frontend restart. | [DNS evidence](audit/2026-09-30/proxy-dns.json) |
+| Retry failure | Three attempts, final Failed, `provider_unavailable`. | `audit/2026-09-30/retry.json`; real worker/scheduler, deliberately failing fake adapter. |
+| Cached access after reassignment | Previous agent gets 403; current agent gets 200. | `audit/2026-09-30/cache-access.json`; SQL changed without cache invalidation intentionally. |
+| Proxy DNS change | Backend moved to a different container IP; proxy recovered without frontend restart. | `audit/2026-09-30/proxy-dns.json` |
 | Normal launcher | `./project.sh` exited 0 after final rebuild. | Existing runtime configuration and administrator preserved; private values not inspected. |
 | Normal Docker deployment | API and proxy health return 200 with SQL/Redis up. Worker registered and consumes operational work. Migration exited 0. | Checked after rebuilding. Health is not provider/worker/business acceptance. |
 | Browser | Login, pages, creation, reply/file upload, download, analysis, transitions, availability reasons, role-specific controls. | Synthetic admin, agent, and customer sessions. Screenshots below. |
@@ -51,7 +57,7 @@ The additional journey checks refresh rotation/replay/revocation, related links/
 | Generic assignment PATCH bypassed department validation. | Alternate route violated routing ownership rules. | Enforce active agent and active same-department validation. | Domain regression and HTTP 400. |
 | Admin could modify/promote the highest role through broader update logic. | Administrative privilege boundary was inconsistent. | Require Super Admin authority for these operations. | Explicit denial tests. |
 | Unique profile-field updates surfaced database errors. | Duplicate nickname/email/phone changes could produce 500. | Map uniqueness failure to a domain conflict. | IntegrityError regression. |
-| Concurrent automatic routing used an old workload count after waiting for a lock. | Agent capacity could be exceeded. | Acquire department lock before the workload query starts. | [PostgreSQL capacity evidence](audit/2026-09-30/postgres-capacity.json). |
+| Concurrent automatic routing used an old workload count after waiting for a lock. | Agent capacity could be exceeded. | Acquire department lock before the workload query starts. | `audit/2026-09-30/postgres-capacity.json`. |
 | Claim capacity was checked outside the write transaction. | Different tickets could be claimed concurrently beyond capacity. | Lock and recheck eligibility/workload during the claim transaction. | Database regression and real PostgreSQL race. |
 | Priority sort depended on enum representation. | “Most urgent first” could show Normal/Low first. | Explicit SQL numeric priority ranking. | `[4, 3, 2, 1]` regression. |
 | Cached assignment could authorize the previous agent. | Failed invalidation could preserve stale access. | Fresh SQL authorization projection on cache hits. | Red/green test and live stale-cache probe. |
@@ -71,9 +77,9 @@ The changes add 23 backend regression cases and one frontend case. Two existing 
 
 All screenshots use disposable synthetic data.
 
-- [Agent ticket](audit/2026-09-30/agent-ticket.png): completed fake summary, comments/files, permitted actions.
-- [Customer ticket](audit/2026-09-30/customer-ticket.png): restricted customer controls; customer-summary panel is not available to that role.
-- [Mobile ticket](audit/2026-09-30/ticket-mobile.png), [tablet ticket](audit/2026-09-30/ticket-tablet.png), [desktop ticket](audit/2026-09-30/ticket-desktop.png).
+- `audit/2026-09-30/agent-ticket.png`: completed fake summary, comments/files, permitted actions.
+- `audit/2026-09-30/customer-ticket.png`: restricted customer controls; customer-summary panel is not available to that role.
+- `audit/2026-09-30/ticket-mobile.png`, `audit/2026-09-30/ticket-tablet.png`, `audit/2026-09-30/ticket-desktop.png`.
 
 Expected authorization errors and brief outages during deliberate process restarts appeared in browser diagnostics. A fresh customer panel check had no console errors. This is not a claim that every possible browser action was exhaustively tested.
 

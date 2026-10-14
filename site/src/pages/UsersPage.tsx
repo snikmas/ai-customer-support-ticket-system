@@ -1,4 +1,4 @@
-import { RefreshCw, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -14,8 +14,13 @@ import { useAuth } from "../auth/AuthContext";
 import { StatePanel } from "../components/StatePanel";
 import { useToast } from "../components/ToastContext";
 import { agentReadiness } from "../lib/agents";
+import { roleLabel } from "../lib/format";
 
 const PAGE_SIZE = 20;
+
+/** Roles a directory filter may select. Separate from roles allowed for
+ * staff creation and role assignment, which stay staff-only. */
+const FILTER_ROLES: Role[] = [...STAFF_ROLES, "user"];
 
 interface RoutingForm {
   department_id: string;
@@ -41,6 +46,7 @@ export function UsersPage() {
   const { notify } = useToast();
   const [params, setParams] = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [departments, setDepartments] = useState<RoutingCatalog[]>([]);
   const [skills, setSkills] = useState<RoutingCatalog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +74,10 @@ export function UsersPage() {
     setLoading(true);
     setError("");
     const query = new URLSearchParams({
-      limit: String(PAGE_SIZE),
+      // Request one extra record so the pager can tell whether a next page
+      // exists without a total count from the API (same rule as the ticket
+      // list). Offsets stay PAGE_SIZE-aligned.
+      limit: String(PAGE_SIZE + 1),
       offset: String((page - 1) * PAGE_SIZE),
       sort_by: "first_name",
       sort_order: "asc",
@@ -78,8 +87,10 @@ export function UsersPage() {
     if (status) query.set("user_status", status);
     try {
       const listed = await apiRequest<User[]>(`/users/?${query}`);
+      const visible = listed.slice(0, PAGE_SIZE);
+      setHasMore(listed.length > PAGE_SIZE);
       const withProfiles = await Promise.all(
-        listed.map(async (item) => {
+        visible.map(async (item) => {
           if (item.role !== "agent") return item;
           try {
             return {
@@ -230,7 +241,7 @@ export function UsersPage() {
           <label>Email<input required type="email" value={staff.email} onChange={(event) => setStaff({ ...staff, email: event.target.value })} /></label>
           <label>Phone<input required value={staff.phone} onChange={(event) => setStaff({ ...staff, phone: event.target.value })} /></label>
           <label>Temporary password<input required minLength={15} type="password" value={staff.password} onChange={(event) => setStaff({ ...staff, password: event.target.value })} /></label>
-          <label>Role<select value={staff.role} onChange={(event) => setStaff({ ...staff, role: event.target.value as Role })}>{STAFF_ROLES.filter((value) => value !== "agent_readonly").map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>Role<select value={staff.role} onChange={(event) => setStaff({ ...staff, role: event.target.value as Role })}>{STAFF_ROLES.filter((value) => value !== "agent_readonly").map((value) => <option key={value} value={value}>{roleLabel(value)}</option>)}</select></label>
           {staff.role === "agent" && (
             <>
               <label>Department<select required value={staff.department_id} onChange={(event) => setStaff({ ...staff, department_id: event.target.value })}><option value="">Select a department</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -251,11 +262,13 @@ export function UsersPage() {
       </section>}
       <section className="filter-bar" aria-label="User filters">
         <label className="search-filter">Search<input aria-label="Search users" value={search} onChange={(event) => updateParam("search", event.target.value)} placeholder="Name, email, or ID" /></label>
-        <label>Role<select value={role} onChange={(event) => updateParam("role", event.target.value)}><option value="">All roles</option>{STAFF_ROLES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Role<select value={role} onChange={(event) => updateParam("role", event.target.value)}><option value="">All roles</option>{FILTER_ROLES.map((item) => <option key={item} value={item}>{roleLabel(item)}</option>)}</select></label>
         <label>Status<select value={status} onChange={(event) => updateParam("user_status", event.target.value)}><option value="">All statuses</option><option value="Active">Active</option><option value="Banned">Banned</option><option value="Deleted">Deleted</option></select></label>
       </section>
-      {users.length === 0 ? <StatePanel kind="empty" title="No users found" message="Try clearing a role, status, or search filter." /> : (
-        <div className="table-card ticket-table-wrap">
+      {users.length === 0 ? <StatePanel kind="empty" title="No users found" message="No accounts match these filters. Try clearing a role, status, or search filter." /> : (
+        <>
+        <div className="table-card">
+          <div className="ticket-table-wrap" role="region" aria-label="Users table" tabIndex={0}>
           <table className="ticket-table"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Availability</th><th>Workload</th><th>Capacity</th><th>Routing setup</th>{showManage && <th>Manage</th>}</tr></thead>
             <tbody>{users.map((item) => {
               const profile = item.agent_profile;
@@ -264,7 +277,7 @@ export function UsersPage() {
                 <Fragment key={item.id}>
                   <tr>
                     <td><strong>{item.first_name} {item.last_name}</strong><span className="table-subline">@{item.nickname} · {item.email}</span></td>
-                    <td>{canAdmin ? <select aria-label={`Role for ${item.nickname}`} value={item.role} disabled={busy === item.id || item.role === "super_admin" && user?.role !== "super_admin"} onChange={(event) => void updateUser(item.id, { role: event.target.value as Role })}>{STAFF_ROLES.concat(["user"]).map((value) => <option key={value} value={value}>{value}</option>)}</select> : item.role}</td>
+                    <td>{canAdmin ? <select aria-label={`Role for ${item.nickname}`} value={item.role} disabled={busy === item.id || item.role === "super_admin" && user?.role !== "super_admin"} onChange={(event) => void updateUser(item.id, { role: event.target.value as Role })}>{STAFF_ROLES.concat(["user"]).map((value) => <option key={value} value={value}>{roleLabel(value)}</option>)}</select> : roleLabel(item.role)}</td>
                     <td>{canAdmin ? <select aria-label={`Status for ${item.nickname}`} value={item.user_status} disabled={busy === item.id} onChange={(event) => void updateUser(item.id, { user_status: event.target.value as User["user_status"] })}><option>Active</option><option>Banned</option><option>Deleted</option></select> : item.user_status}</td>
                     <td>{profile?.availability_status || "—"}</td>
                     <td>{profile ? profile.current_active_tickets : "—"}</td>
@@ -298,7 +311,31 @@ export function UsersPage() {
               );
             })}</tbody>
           </table>
+          </div>
+          <p className="scroll-hint">Scroll horizontally for more columns</p>
         </div>
+        <footer className="pagination">
+          <span>
+            Page {page} · {users.length} result{users.length === 1 ? "" : "s"}
+          </span>
+          <div>
+            <button
+              aria-label="Previous page"
+              disabled={page <= 1}
+              onClick={() => updateParam("page", String(page - 1))}
+            >
+              <ChevronLeft size={17} />
+            </button>
+            <button
+              aria-label="Next page"
+              disabled={!hasMore}
+              onClick={() => updateParam("page", String(page + 1))}
+            >
+              <ChevronRight size={17} />
+            </button>
+          </div>
+        </footer>
+        </>
       )}
     </>
   );

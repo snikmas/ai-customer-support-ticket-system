@@ -150,6 +150,7 @@ export interface Ticket {
   department_id: string | null;
   skill_ids: string[];
   assigned_agent_id: string | null;
+  assigned_agent_name: string | null;
   creator_user_id: string;
   status: TicketStatus;
   priority: Priority;
@@ -182,6 +183,7 @@ export interface Comment {
   id: string;
   ticket_id: string;
   author_user_id: string;
+  author_display_name: string | null;
   body: string;
   visibility: Visibility;
   edited_at: string | null;
@@ -218,6 +220,7 @@ export interface HistoryEvent {
   entity_id: string | null;
   actor_type: "human" | "system";
   actor_user_id: string | null;
+  actor_display_name: string | null;
   event_type: string;
   old_value: Record<string, unknown> | null;
   new_value: Record<string, unknown>;

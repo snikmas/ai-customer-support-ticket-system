@@ -2,14 +2,37 @@
 
 > **Historical document.** The automated numbers recorded on 2026-08-24 for the
 > provider-selection closure are kept below for provenance and are **not**
-> current. For the current repaired working tree on top of revision `0f95921`,
-> the release pass records 525 backend tests passing (28 skipped) on SQLite and
-> 578 passing (0 skipped) with PostgreSQL 16 enabled, 39 frontend tests passing,
-> and clean builds; the full-stack nginx smoke reports healthy readiness,
-> recovered readiness after a stopped worker, permitted/oversized uploads, token
-> refresh, and API discovery. Evidence is classified by type: **fake-provider**
+> current.
+>
+> Local verification on 2026-10-14 (working tree on `b2b147b`):
+> backend **543 passed / 44 skipped** on SQLite with dotenv disabled and Redis
+> off. Before the packaging regression was added, the application suite recorded
+> **586 passed / 0 skipped** with a task-owned PostgreSQL 16 target
+> (`TEST_POSTGRES_URL` + `TEST_POSTGRES_ALLOW_DESTRUCTIVE=1`), frontend **51
+> passed (12 files)**, Ruff, Python compilation, TypeScript and the production
+> build clean, and `scripts/verify_release.py --compose` reporting PASS for all
+> eight checks. The full-stack nginx smoke reports healthy readiness, readiness
+> recovery after a real worker stop, a permitted upload above 1 MiB, an
+> oversized 413, refresh-token rotation, and API discovery after the API
+> container is recreated.
+>
+> The 44 SQLite skips are all opt-in integration cases: the PostgreSQL-parameter
+> tests plus the Redis/RQ and provider-opt-in cases. They are skipped by design
+> when no task-owned target is supplied; the PostgreSQL 16 run above executes
+> them (0 skipped). Evidence is classified by type: **fake-provider**
 > (automatic tests), **real-provider** (manual, synthetic only, and **not
 > included** in this release), and **human demo** (browser journeys).
+
+The final packaging check found that the archive omitted the documented
+`project.sh` launcher. The allowlist now includes that executable launcher,
+the frontend setup template, and the frontend README. A regression verifies
+the archived launcher, its manifest entry, executable permissions, and
+`--help` behavior without reading configuration or starting services. Archive
+members are unique. A live routing check also verified that an assignable
+ticket behind five blocked tickets was reached within three batches of two,
+with fresh scanner and worker processes, a new arrival, and mixed fake analysis
+work. This check used disposable SQLite and Redis; the earlier PostgreSQL suite
+covers database concurrency.
 
 Recorded locally on 2026-08-24 during the ResolveAI provider-selection closure.
 The sections below are historical Compose/browser evidence, not the current

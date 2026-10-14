@@ -149,6 +149,7 @@ def test_agent_list_and_detail_share_support_queue_policy(monkeypatch, make_user
         return tickets
 
     monkeypatch.setattr(tickets_service.operations, "get_tickets", fake_get_tickets)
+    monkeypatch.setattr(tickets_service.operations, "get_user", lambda user_id: None)
     visible = tickets_service.get_all_tickets(requester, 20, 0, "created_at", "desc", None, None)
     assert {ticket.id for ticket in visible} == {"assigned", "claimable"}
 
@@ -164,10 +165,42 @@ def test_agent_list_and_detail_share_support_queue_policy(monkeypatch, make_user
         raise AssertionError("an agent must not read another agent's assigned ticket")
 
 
+def test_ticket_assignee_display_name_falls_back_for_deleted_and_missing_accounts(
+    monkeypatch, make_user, make_ticket
+):
+    requester = make_user(id="manager-1", role=constants.Role.MANAGER)
+    monkeypatch.setattr(tickets_service, "check_cached_ticket", lambda _: None)
+    monkeypatch.setattr(tickets_service, "cache_ticket", lambda _: True)
+    ticket = make_ticket(
+        id="ticket-1",
+        assigned_agent_id="agent-gone",
+        status=constants.Status.IN_PROGRESS,
+    )
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: ticket)
+
+    deleted_agent = SimpleNamespace(
+        first_name="Gone",
+        last_name="Agent",
+        nickname="gone",
+        deleted_at=datetime.now(timezone.utc),
+        user_status=constants.UserStatus.DELETED,
+    )
+    monkeypatch.setattr(tickets_service.operations, "get_user", lambda _: deleted_agent)
+    assert tickets_service.get_ticket(ticket.id, requester).assigned_agent_name == "Deleted user"
+
+    monkeypatch.setattr(tickets_service.operations, "get_user", lambda _: None)
+    assert tickets_service.get_ticket(ticket.id, requester).assigned_agent_name == "Unknown user"
+
+    unassigned = make_ticket(id="ticket-2", assigned_agent_id=None, status=constants.Status.NEW)
+    monkeypatch.setattr(tickets_service.operations, "get_ticket", lambda _: unassigned)
+    assert tickets_service.get_ticket(unassigned.id, requester).assigned_agent_name is None
+
+
 def test_manager_and_readonly_agent_list_all_non_deleted_tickets(monkeypatch, make_user, make_ticket):
     first = make_ticket(id="first")
     second = make_ticket(id="second", assigned_agent_id="agent-b", status=constants.Status.IN_PROGRESS)
     monkeypatch.setattr(tickets_service.operations, "get_tickets", lambda *args, **kwargs: [first, second])
+    monkeypatch.setattr(tickets_service.operations, "get_user", lambda user_id: None)
 
     for role in [constants.Role.MANAGER, constants.Role.AGENT_READONLY]:
         requester = make_user(role=role)
@@ -216,6 +249,44 @@ def test_get_tickets_requires_authentication():
     response = client.get("/tickets/")
 
     assert response.status_code == 401
+
+
+def test_priority_query_accepts_1_to_4_and_maps_to_enum(monkeypatch, make_user, make_ticket):
+    requester = make_user()
+    ticket = make_ticket(id="ticket-priority", creator_user_id=requester.id)
+    captured = {}
+    app.dependency_overrides[tickets_router.get_current_user] = lambda: requester
+
+    def fake_get_all_tickets(current_user, limit, offset, sort_by, sort_order, priority, status, overdue, **kwargs):
+        captured["priority"] = priority
+        return [ticket] if priority is constants.Priority.HIGH else []
+
+    monkeypatch.setattr(tickets_router.s_tickets, "get_all_tickets", fake_get_all_tickets)
+
+    cases = [
+        (1, constants.Priority.LOW, 0),
+        (2, constants.Priority.NORMAL, 0),
+        (3, constants.Priority.HIGH, 1),
+        (4, constants.Priority.CRITICAL, 0),
+    ]
+    for value, expected, expected_count in cases:
+        captured.clear()
+        response = client.get(f"/tickets/?priority={value}")
+        assert response.status_code == 200, response.text
+        assert captured["priority"] is expected
+        # Matching (priority=3) and empty-result (other values) cases both succeed.
+        assert len(response.json()["data"]) == expected_count
+
+
+def test_priority_query_rejects_invalid_values(monkeypatch, make_user):
+    requester = make_user()
+    app.dependency_overrides[tickets_router.get_current_user] = lambda: requester
+    monkeypatch.setattr(tickets_router.s_tickets, "get_all_tickets", lambda *args, **kwargs: [])
+
+    for value in ("0", "5", "abc"):
+        response = client.get(f"/tickets/?priority={value}")
+        assert response.status_code == 422, f"priority={value} must be rejected"
+
 
 
 def test_get_tickets_returns_current_service_shape(monkeypatch, make_user, make_ticket):

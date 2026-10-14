@@ -59,9 +59,9 @@ def main() -> None:
         session.add_all([department, skill])
         session.flush()
 
-        manager = make_user(session, "demo-manager", first_name="Demo", last_name="Manager", phone="+15550001001", email="demo-manager@example.invalid", role=constants.Role.MANAGER)
-        agent = make_user(session, "demo-agent", first_name="Demo", last_name="Agent", phone="+15550001002", email="demo-agent@example.invalid", role=constants.Role.AGENT)
-        customer = make_user(session, "demo-customer", first_name="Demo", last_name="Customer", phone="+15550001003", email="demo-customer@example.invalid", role=constants.Role.USER)
+        manager = make_user(session, "demo-manager", first_name="Demo", last_name="Manager", phone="+15550001001", email="demo-manager@example.com", role=constants.Role.MANAGER)
+        agent = make_user(session, "demo-agent", first_name="Demo", last_name="Agent", phone="+15550001002", email="demo-agent@example.com", role=constants.Role.AGENT)
+        customer = make_user(session, "demo-customer", first_name="Demo", last_name="Customer", phone="+15550001003", email="demo-customer@example.com", role=constants.Role.USER)
         profile = AgentProfile(
             user_id=agent.id, availability_status=constants.AvailabilityStatus.AVAILABLE,
             availability_reason=None, availability_note="Synthetic demo agent",

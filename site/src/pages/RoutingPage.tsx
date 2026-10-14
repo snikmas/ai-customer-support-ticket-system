@@ -30,6 +30,15 @@ function CatalogSection({ kind, items, onRefresh }: { kind: CatalogKind; items: 
     catch (caught) { setError(toErrorMessage(caught)); } finally { setBusy(""); }
   };
 
+  const rename = async (item: RoutingCatalog) => {
+    const result = window.prompt("New name", item.name);
+    if (result === null) return; // Cancelled: no request, no toast.
+    const nextName = result.trim();
+    if (!nextName) { setError("Enter a name, or cancel the rename."); return; }
+    if (nextName === item.name) return; // Unchanged: nothing to mutate.
+    await update(item, { name: nextName });
+  };
+
   const archive = async (item: RoutingCatalog) => {
     setBusy(item.id); setError("");
     try { await apiRequest(`${endpoint}${item.id}`, { method: "DELETE" }); onRefresh(); notify("Routing catalog archived."); }
@@ -42,7 +51,7 @@ function CatalogSection({ kind, items, onRefresh }: { kind: CatalogKind; items: 
     <form className="routing-create" onSubmit={create}><label>Name<input value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} /></label><button className="button primary" disabled={!name.trim() || busy === "create"}>{busy === "create" ? "Creating…" : "Create"}</button></form>
     <div className="routing-list">{items.map((item) => <div className={`routing-row ${item.deleted_at ? "archived" : ""}`} key={item.id}>
       <div><strong>{item.name}</strong><span>{item.description || "No description"}</span>{item.deleted_at && <em>Archived</em>}</div>
-      {!item.deleted_at && <div className="inline-action"><button className="button subtle" disabled={Boolean(busy)} onClick={() => void update(item, { name: window.prompt("New name", item.name) || item.name })}>Rename</button><button className="button subtle danger" disabled={Boolean(busy)} onClick={() => void archive(item)}>Archive</button></div>}
+      {!item.deleted_at && <div className="inline-action"><button className="button subtle" disabled={Boolean(busy)} onClick={() => void rename(item)}>Rename</button><button className="button subtle danger" disabled={Boolean(busy)} onClick={() => void archive(item)}>Archive</button></div>}
     </div>)}</div>
   </section>;
 }
@@ -52,13 +61,14 @@ export function RoutingPage() {
   const [skills, setSkills] = useState<RoutingCatalog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
+  const load = useCallback(async (initial = false) => {
+    if (initial) setLoading(true);
+    setError("");
     try { const [departmentData, skillData] = await Promise.all([apiRequest<RoutingCatalog[]>("/departments/?include_archived=true"), apiRequest<RoutingCatalog[]>("/skills/?include_archived=true")]); setDepartments(departmentData); setSkills(skillData); }
-    catch (caught) { setError(toErrorMessage(caught)); } finally { setLoading(false); }
+    catch (caught) { setError(toErrorMessage(caught)); } finally { if (initial) setLoading(false); }
   }, []);
-  useEffect(() => void load(), [load]);
-  if (loading) return <StatePanel kind="loading" title="Loading routing" message="Requesting departments and skills…" />;
-  if (error) return <StatePanel kind="error" title="Routing unavailable" message={error} action={<button className="button secondary" onClick={() => void load()}>Try again</button>} />;
+  useEffect(() => void load(true), [load]);
+  if (loading) return <StatePanel kind="loading" title="Loading routing" message="Loading departments and skills…" />;
+  if (error) return <StatePanel kind="error" title="Routing unavailable" message={error} action={<button className="button secondary" onClick={() => void load(true)}>Try again</button>} />;
   return <><div className="page-heading"><div><p className="eyebrow">Administration</p><h1>Routing</h1><p>Configure active departments and skills. Archived records stay visible here and cannot be selected for new routing.</p></div></div><div className="routing-grid"><CatalogSection kind="departments" items={departments} onRefresh={() => void load()} /><CatalogSection kind="skills" items={skills} onRefresh={() => void load()} /></div></>;
 }

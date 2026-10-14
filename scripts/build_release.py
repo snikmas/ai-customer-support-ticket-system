@@ -69,7 +69,7 @@ def build(output_dir: Path) -> Path:
     # Deterministic-ish archive: sorted members, fixed mtime for the top dir.
     with tarfile.open(archive, "w:gz") as tar:
         for path in sorted(staging.rglob("*")):
-            tar.add(path, arcname=path.relative_to(output_dir))
+            tar.add(path, arcname=path.relative_to(output_dir), recursive=False)
     return archive
 
 

@@ -21,6 +21,7 @@ const createdTicket: Ticket = {
   department_id: null,
   skill_ids: [],
   assigned_agent_id: null,
+  assigned_agent_name: null,
   creator_user_id: "customer-1",
   status: "New",
   priority: 2,
@@ -50,6 +51,7 @@ describe("customer ticket creation", () => {
 
     await user.type(screen.getByLabelText(/title/i), "Unicode problem");
     await user.type(screen.getByLabelText(/description/i), "I cannot see clearly");
+    await user.click(screen.getByRole("button", { name: "Add tags" }));
     await user.click(screen.getByLabelText("timeout"));
     await user.click(screen.getByRole("button", { name: "Create ticket" }));
 

@@ -12,11 +12,30 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { initials, roleLabel } from "../lib/format";
 import { NotificationBell } from "./NotificationBell";
+
+const MOBILE_QUERY = "(max-width: 760px)";
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(query).matches
+      : false,
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const list = window.matchMedia(query);
+    const update = () => setMatches(list.matches);
+    update();
+    list.addEventListener("change", update);
+    return () => list.removeEventListener("change", update);
+  }, [query]);
+  return matches;
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -24,12 +43,89 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const isMobile = useMediaQuery(MOBILE_QUERY);
   const isTicketList = location.pathname === "/tickets";
-  const isOverdue = new URLSearchParams(location.search).get("overdue") === "true";
+  const sidebarRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLButtonElement>(null);
+
+  // Collapse the three ticket-list destinations to exactly one active item.
+  // Precedence: the Overdue destination, then My queue, then All tickets.
+  const listParams = new URLSearchParams(location.search);
+  const activeDestination = !isTicketList
+    ? null
+    : listParams.get("overdue") === "true"
+      ? "overdue"
+      : listParams.get("assigned_to_me") === "true"
+        ? "queue"
+        : "all";
 
   useEffect(() => {
     setSearch(new URLSearchParams(location.search).get("search") || "");
   }, [location.search]);
+
+  // The closed mobile drawer must leave the tab order entirely; a transform and
+  // aria-hidden alone keep its links focusable. Desktop keeps the sidebar live.
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    const main = mainRef.current;
+    if (sidebar) {
+      const hidden = isMobile && !mobileOpen;
+      if (hidden) sidebar.setAttribute("inert", "");
+      else sidebar.removeAttribute("inert");
+      sidebar.setAttribute("aria-hidden", hidden ? "true" : "false");
+    }
+    if (main) {
+      if (isMobile && mobileOpen) main.setAttribute("inert", "");
+      else main.removeAttribute("inert");
+    }
+  }, [isMobile, mobileOpen]);
+
+  // Move focus into the modal drawer on open so Escape/Tab act on it.
+  useEffect(() => {
+    if (!(isMobile && mobileOpen)) return;
+    const sidebar = sidebarRef.current;
+    const first = sidebar?.querySelector<HTMLElement>(
+      'a[href], button:not([disabled])',
+    );
+    first?.focus();
+  }, [isMobile, mobileOpen]);
+
+  const close = useCallback(() => {
+    setMobileOpen(false);
+    menuRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!(isMobile && mobileOpen)) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const sidebar = sidebarRef.current;
+      if (!sidebar) return;
+      const focusable = Array.from(
+        sidebar.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [close, isMobile, mobileOpen]);
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -40,10 +136,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate(`/tickets?${params.toString()}`);
   };
 
-  const close = () => setMobileOpen(false);
   return (
     <div className="app-frame">
       <button
+        ref={menuRef}
         className="mobile-menu"
         aria-label="Open navigation"
         onClick={() => setMobileOpen(true)}
@@ -51,7 +147,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Menu />
       </button>
       {mobileOpen && <button className="nav-scrim" aria-label="Close navigation" onClick={close} />}
-      <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
+      <aside
+        ref={sidebarRef}
+        className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}
+      >
         <div className="brand-row">
           <div className="brand-mark" />
           <strong>ResolveAI</strong>
@@ -62,7 +161,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className="nav-list" aria-label="Main navigation">
           <Link
             to="/tickets"
-            className={isTicketList && !isOverdue ? "active" : undefined}
+            className={activeDestination === "all" ? "active" : undefined}
+            aria-current={activeDestination === "all" ? "page" : undefined}
             onClick={close}
           >
             <Inbox size={17} /> All tickets
@@ -70,7 +170,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           {user?.role === "agent" && (
             <Link
               to="/tickets?assigned_to_me=true"
-              className={isTicketList && new URLSearchParams(location.search).get("assigned_to_me") === "true" ? "active" : undefined}
+              className={activeDestination === "queue" ? "active" : undefined}
+              aria-current={activeDestination === "queue" ? "page" : undefined}
               onClick={close}
             >
               <Layers size={17} /> My queue
@@ -78,7 +179,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
           <Link
             to="/tickets?overdue=true"
-            className={isTicketList && isOverdue ? "active" : undefined}
+            className={activeDestination === "overdue" ? "active" : undefined}
+            aria-current={activeDestination === "overdue" ? "page" : undefined}
             onClick={close}
           >
             <AlertTriangle size={17} /> Overdue
@@ -114,7 +216,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
         </div>
       </aside>
-      <div className="app-main">
+      <div className="app-main" ref={mainRef}>
         <header className="topbar">
           <form className="search-placeholder" role="search" onSubmit={submitSearch}>
             <Search size={16} />

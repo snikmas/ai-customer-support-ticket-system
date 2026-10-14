@@ -9,6 +9,9 @@ import {
   type Tag,
   type Ticket,
 } from "../api/types";
+import { categoryLabel } from "../lib/format";
+
+const MAX_TAGS = 10;
 
 export function CreateTicketPage() {
   const navigate = useNavigate();
@@ -18,6 +21,25 @@ export function CreateTicketPage() {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<Category>("API_Error");
   const [tags, setTags] = useState<Tag[]>([]);
+  const [tagQuery, setTagQuery] = useState("");
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [tagError, setTagError] = useState("");
+
+  const toggleTag = (tag: Tag, checked: boolean) => {
+    setTagError("");
+    if (checked) {
+      if (tags.length >= MAX_TAGS) {
+        setTagError(`You can add up to ${MAX_TAGS} tags.`);
+        return;
+      }
+      setTags((current) => [...current, tag]);
+    } else {
+      setTags((current) => current.filter((value) => value !== tag));
+    }
+  };
+
+  const availableTags = TAGS.filter((tag) => !tags.includes(tag))
+    .filter((tag) => tag.includes(tagQuery.trim().toLowerCase()));
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -89,31 +111,62 @@ export function CreateTicketPage() {
           <select value={category} onChange={(event) => setCategory(event.target.value as Category)}>
             {CATEGORIES.map((value) => (
               <option key={value} value={value}>
-                {value.replaceAll("_", " ")}
+                {categoryLabel(value)}
               </option>
             ))}
           </select>
         </label>
         <fieldset className="full choice-field">
-          <legend>Tags</legend>
-          <div className="choice-grid tags">
-            {TAGS.map((tag) => (
-              <label key={tag}>
-                <input
-                  type="checkbox"
-                  checked={tags.includes(tag)}
-                  onChange={(event) =>
-                    setTags((current) =>
-                      event.target.checked
-                        ? [...current, tag]
-                        : current.filter((value) => value !== tag),
-                    )
-                  }
-                />
-                {tag}
-              </label>
-            ))}
-          </div>
+          <legend>Tags <span className="muted small">Optional · up to {MAX_TAGS}</span></legend>
+          {tags.length > 0 && (
+            <ul className="selected-tags">
+              {tags.map((tag) => (
+                <li key={tag}>
+                  <span>{tag}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${tag}`}
+                    onClick={() => setTags((current) => current.filter((value) => value !== tag))}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="button subtle"
+            aria-expanded={tagsOpen}
+            onClick={() => setTagsOpen((value) => !value)}
+          >
+            {tagsOpen ? "Hide tags" : "Add tags"}
+          </button>
+          {tagsOpen && (
+            <div className="tag-choices">
+              <input
+                type="search"
+                aria-label="Search tags"
+                value={tagQuery}
+                onChange={(event) => setTagQuery(event.target.value)}
+                placeholder="Search tags"
+              />
+              <div className="choice-grid tags">
+                {availableTags.map((tag) => (
+                  <label key={tag}>
+                    <input
+                      type="checkbox"
+                      checked={tags.includes(tag)}
+                      onChange={(event) => toggleTag(tag, event.target.checked)}
+                    />
+                    {tag}
+                  </label>
+                ))}
+                {availableTags.length === 0 && <p className="muted small">No tags match.</p>}
+              </div>
+            </div>
+          )}
+          {tagError && <p className="field-error" role="alert">{tagError}</p>}
         </fieldset>
         <footer className="form-actions full">
           <button type="button" className="button secondary" onClick={() => navigate("/tickets")}>

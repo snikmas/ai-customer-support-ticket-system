@@ -86,6 +86,7 @@ class TicketHistoryEvent(BaseModel):
     entity_id: str | None = None
     actor_type: ActorType
     actor_user_id: str | None = None
+    actor_display_name: str | None = None
     event_type: EventType
     old_value: dict[str, Any] | None = None
     new_value: dict[str, Any]

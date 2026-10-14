@@ -1,8 +1,9 @@
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
+import { DraftProvider } from "./components/DraftContext";
 import { StatePanel } from "./components/StatePanel";
-import { ToastProvider } from "./components/ToastContext";
+import { ToastNavigationScope, ToastProvider } from "./components/ToastContext";
 import { CreateTicketPage } from "./pages/CreateTicketPage";
 import { LoginPage } from "./pages/LoginPage";
 import { TicketDetailPage } from "./pages/TicketDetailPage";
@@ -33,7 +34,9 @@ function ProtectedLayout() {
 export function App() {
   return (
     <ToastProvider>
-      <Routes>
+      <DraftProvider>
+        <ToastNavigationScope />
+        <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route element={<ProtectedLayout />}>
           <Route path="/tickets" element={<TicketListPage />} />
@@ -46,6 +49,7 @@ export function App() {
         </Route>
         <Route path="*" element={<Navigate to="/tickets" replace />} />
       </Routes>
+      </DraftProvider>
     </ToastProvider>
   );
 }

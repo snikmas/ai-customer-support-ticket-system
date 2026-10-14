@@ -6,10 +6,9 @@ agent routing, SLA deadlines, Redis caching/rate limiting, RQ background jobs,
 and AI-assisted ticket summarization. A Vite/React/TypeScript staff workspace in
 `site/` talks to the real API.
 
-![ResolveAI staff ticket workspace showing SQL-backed tickets, customer info, and routing](docs/media/stage10-ticket-detail.png)
-
-The screenshot uses synthetic local demo data. Acceptance evidence is in
-[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
+A staff workspace screenshot (kept under the local `docs/media/` directory that
+is intentionally **not** part of the release allowlist) uses synthetic local
+demo data. Acceptance evidence is in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
 ## Tech stack
 

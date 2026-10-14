@@ -12,6 +12,7 @@ const ticket: Ticket = {
   department_id: "department-1",
   skill_ids: [],
   assigned_agent_id: "agent-1",
+  assigned_agent_name: null,
   creator_user_id: "customer-1",
   status: "In progress",
   priority: 2,
@@ -104,7 +105,7 @@ describe("role-aware ticket transitions", () => {
 
 describe("analysis states", () => {
   it.each([
-    ["pending", "Pending analysis"],
+    ["pending", "Analysis queued"],
     ["running", "Analyzing ticket"],
   ] as const)("renders the %s worker state", (status, label) => {
     render(

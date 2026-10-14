@@ -160,7 +160,7 @@ export async function downloadFile(path: string, retryUnauthorized = true): Prom
 export function toErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof TypeError) {
-    return "The API is unavailable. Check that FastAPI is running and the API URL is correct.";
+    return "Support service unavailable. Try again.";
   }
   return "Something unexpected happened.";
 }

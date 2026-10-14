@@ -77,7 +77,7 @@ export function AISettingsPage() {
         body: { provider, model },
       });
       setTestResult(result);
-      if (result.ok) notify("Synthetic provider test completed.");
+      if (result.ok) notify("Provider test passed.");
     } catch (caught) {
       setError(toErrorMessage(caught));
     } finally {
@@ -85,7 +85,7 @@ export function AISettingsPage() {
     }
   };
 
-  if (loading) return <StatePanel kind="loading" title="Loading AI settings" message="Reading the global provider selection…" />;
+  if (loading) return <StatePanel kind="loading" title="Loading AI settings" message="Loading AI settings…" />;
   if (error && !settings) return <StatePanel kind="forbidden" title="AI settings unavailable" message={error} action={<button className="button secondary" onClick={() => void load()}>Try again</button>} />;
   if (!settings) return null;
 
@@ -95,7 +95,7 @@ export function AISettingsPage() {
         <div>
           <p className="eyebrow">Administration</p>
           <h1>AI settings</h1>
-          <p>Choose the provider for new analyses. Queued analyses keep their original provenance.</p>
+          <p>Choose the provider that handles new analyses. Analyses already queued keep the provider they started with.</p>
         </div>
       </div>
       {error && <div className="alert error" role="alert">{error}</div>}
@@ -105,14 +105,14 @@ export function AISettingsPage() {
           <label>Provider<select value={provider} onChange={(event) => changeProvider(event.target.value as AIProvider)}><option value="fake">{providerLabels.fake}</option><option value="openrouter">{providerLabels.openrouter}</option><option value="deepseek">{providerLabels.deepseek}</option></select></label>
           <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}>{(selectedCapability?.selectable_models || []).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
           <p className="privacy-note"><strong>Privacy:</strong> {selectedCapability?.privacy_notice}</p>
-          <p className="muted">Provider keys stay in server environment configuration and are never shown here.</p>
+          <p className="muted">Provider keys are kept on the server and are never shown here.</p>
           <div className="settings-actions"><button className="button primary" onClick={() => void save()} disabled={busy !== ""}>{busy === "save" ? "Saving…" : "Save selection"}</button><button className="button secondary" onClick={() => void test()} disabled={busy !== ""}>{busy === "test" ? "Testing…" : "Test provider"}</button></div>
         </section>
         <section className="card settings-card">
           <h2>Provider test</h2>
-          <p className="muted">The test uses fixed synthetic ticket content and does not change the active selection.</p>
-          {testResult ? <div className={`test-result ${testResult.ok ? "success" : "failure"}`} role="status"><strong>{testResult.ok ? "Test passed" : "Test failed"}</strong><span>{testResult.provider} · {testResult.model}</span>{testResult.safe_error_code && <span>Safe error: {testResult.safe_error_code}</span>}{testResult.ok && <span>Tokens: {testResult.input_tokens ?? "—"} in / {testResult.output_tokens ?? "—"} out</span>}</div> : <div className="empty-inline">No provider test has run in this session.</div>}
-          <div className="settings-note"><strong>External providers:</strong> use synthetic data only. Direct DeepSeek does not receive an equivalent request-level ZDR claim.</div>
+          <p className="muted">This test uses sample content and does not change your selection.</p>
+          {testResult ? <div className={`test-result ${testResult.ok ? "success" : "failure"}`} role="status"><strong>{testResult.ok ? "Test passed" : "Test failed"}</strong><span>{testResult.provider} · {testResult.model}</span>{testResult.safe_error_code && <span>Error code: {testResult.safe_error_code}</span>}{testResult.ok && <span>Tokens: {testResult.input_tokens ?? "—"} in / {testResult.output_tokens ?? "—"} out</span>}</div> : <div className="empty-inline">No provider test has run in this session.</div>}
+          <div className="settings-note"><strong>External providers:</strong> use sample data only. Direct DeepSeek does not offer the same zero-data-retention terms as OpenRouter.</div>
         </section>
       </div>
     </>

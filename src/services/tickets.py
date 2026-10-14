@@ -26,6 +26,7 @@ from src.cache import check_ticket as check_cached_ticket, cache_ticket, delete_
 from src.jobs import enqueue_ticket_routing_job
 from src.services.routing import dispatch_waiting_tickets_after_capacity_event
 from src.services import notifications as s_notifications
+from src.services import identity as s_identity
 from src.constants import logger
 import json
 
@@ -60,6 +61,24 @@ def _to_api_ticket(
             now or constants.utc_now(),
         )
     })
+
+
+def _with_assignee_name(
+    ticket: api_models.Ticket,
+    names: dict[str | None, str | None] | None = None,
+) -> api_models.Ticket:
+    """Attach an authorized display name without widening any privacy boundary."""
+    if not ticket.assigned_agent_id:
+        return ticket
+    if names is None:
+        names = {}
+    if ticket.assigned_agent_id not in names:
+        names[ticket.assigned_agent_id] = s_identity.display_name(
+            operations.get_user(ticket.assigned_agent_id)
+        )
+    return ticket.model_copy(
+        update={"assigned_agent_name": names[ticket.assigned_agent_id]}
+    )
 
 
 def _validate_routing_catalog_selection(
@@ -230,7 +249,7 @@ def get_ticket(id: str, requester: api_models.User) -> api_models.Ticket:
     if _can_read_ticket(access_state, requester) is False:
         raise AuthorizationError()
 
-    return _to_api_ticket(ticket)
+    return _with_assignee_name(_to_api_ticket(ticket))
 
 
 def get_ticket_customer_summary(
@@ -457,8 +476,9 @@ def get_all_tickets(
         tag=tag,
         search=search,
     )
-    return [_to_api_ticket(ticket, now=now) for ticket in tickets]
-
+    resolved = [_to_api_ticket(ticket, now=now) for ticket in tickets]
+    names: dict[str | None, str | None] = {}
+    return [_with_assignee_name(ticket, names) for ticket in resolved]
 
 _CUSTOMER_HISTORY_FIELDS = frozenset({
     "status",
@@ -547,6 +567,20 @@ def get_ticket_history(
             entity_id=event.entity_id,
             actor_type=event.actor_type,
             actor_user_id=None if is_customer else event.actor_user_id,
+            actor_display_name=(
+                None
+                if is_customer
+                else s_identity.display_name(
+                    operations.get_user(event.actor_user_id)
+                    if event.actor_user_id
+                    else None,
+                    source=(
+                        constants.Source.SYSTEM
+                        if event.actor_type is constants.ActorType.SYSTEM
+                        else None
+                    ),
+                )
+            ),
             event_type=event.event_type,
             old_value=old_value,
             new_value=new_value or {},
